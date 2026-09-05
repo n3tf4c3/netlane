@@ -48,7 +48,19 @@ Comprovar que e possivel associar regras de saida por executavel para interfaces
    - Resultado de IP publico por app
    - Limitacoes encontradas
 
-6. Gate de avanço
+### Evidencias coletadas (2026-09-05)
+
+- Ferramenta instalada: .NET SDK 8.0.424 (C:\Program Files\dotnet\dotnet.exe), permitindo `dotnet build` e execução do PoC.
+- Comandos e resultados:
+  - `dotnet run --project poc/NetLane.NetworkPoC/NetLane.NetworkPoC.csproj -- --firewall --target-wifi explorer --target-ethernet msedge`
+    - Modo ativo: `firewall (experimental)` com aplicação de regras para `explorer.exe` e `msedge.exe` sem erro.
+  - `dotnet run --project poc/NetLane.NetworkPoC/NetLane.NetworkPoC.csproj -- --firewall --target-wifi explorer --target-ethernet msedge --check-public-ip`
+    - IP público coletado por app (Wi-Fi e Ethernet), com valores distintos no instante da execução.
+  - `dotnet run --project poc/NetLane.NetworkPoC/NetLane.NetworkPoC.csproj -- --wfp --target-wifi explorer --target-ethernet msedge`
+    - Queda controlada para `dry-run` com mensagem de permissão insuficiente, validando fallback do motor.
+- Limitação observada: sem privilégios de administrador não é possível validar implementação ativa de WFP neste ambiente.
+
+6. Gate de avancÌ§o
 
 Somente avancar para Fase 1 quando:
 - O PoC funcionar de forma repetivel com motor real de roteamento.
