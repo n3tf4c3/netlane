@@ -1,0 +1,11 @@
+[Bb]in/
+[Oo]bj/
+
+.vs/
+*.user
+*.suo
+*.cache
+*.log
+*.tmp
+*.swp
+*.swo
