@@ -2,6 +2,7 @@ using NetLane.Core.Contracts;
 using NetLane.Core.Models;
 using NetLane.Network;
 using System.Diagnostics;
+using System.IO;
 
 namespace NetLane.NetworkPoC;
 
@@ -9,6 +10,7 @@ internal static class Program
 {
     private const string ChromeExecutable = "chrome.exe";
     private const string CurlExecutable = "curl.exe";
+    private const int PublicIpTimeoutMs = 10000;
 
     private static void Main(string[] args)
     {
@@ -90,31 +92,37 @@ internal static class Program
             return;
         }
 
-        var engine = ResolveRoutingEngine(args);
-        if (engine is null)
+        var mappedRules = ResolveEngineRules(mapping, applications, interfaces);
+        if (mappedRules.Count == 0)
+        {
+            Console.WriteLine("Nao foram encontrados processos-alvo para criar mapeamento (chrome.exe e/ou curl.exe).");
+            Console.WriteLine("Inicie chrome.exe e curl.exe para validar o caso de uso completo.");
+            return;
+        }
+
+        var engineSelection = ResolveRoutingEngine(args);
+        if (engineSelection.Engine is null)
         {
             Console.WriteLine("Nao foi possivel inicializar o motor solicitado.");
             return;
         }
 
-        var chrome = applications.FirstOrDefault(a => string.Equals(a.Name, ChromeExecutable, StringComparison.OrdinalIgnoreCase));
-        var curl = applications.FirstOrDefault(a => string.Equals(a.Name, CurlExecutable, StringComparison.OrdinalIgnoreCase));
+        Console.WriteLine();
+        Console.WriteLine($"Modo ativo: {engineSelection.Mode}");
+        Console.WriteLine($"Roteamento aplicado: {(engineSelection.IsEnforced ? "Sim (intencional)" : "Nao (dry-run/simulacao)")}");
+        Console.WriteLine($"Detalhes: {engineSelection.Note}");
 
-        if (chrome is not null && mapping.TryGetValue("wifi", out var wifiId))
+        var engine = engineSelection.Engine;
+        foreach (var rule in mappedRules)
         {
-            engine.ApplyRule(chrome, CreateRule(chrome.Id, wifiId, NetworkRouteMode.WiFi));
+            engine.ApplyRule(rule.Application, rule.Rule);
         }
 
-        if (curl is not null && mapping.TryGetValue("ethernet", out var ethernetId))
-        {
-            engine.ApplyRule(curl, CreateRule(curl.Id, ethernetId, NetworkRouteMode.Ethernet));
-        }
-
-        if (chrome is null || curl is null)
+        if (mappedRules.Any(r => r.Rule.RouteMode == NetworkRouteMode.WiFi && !r.TargetAdapter.IsConnected) ||
+            mappedRules.Any(r => r.Rule.RouteMode == NetworkRouteMode.Ethernet && !r.TargetAdapter.IsConnected))
         {
             Console.WriteLine();
-            Console.WriteLine("Obs: alguns executaveis esperados nao estao em execucao no momento.");
-            Console.WriteLine("Inicie chrome.exe e curl.exe para validar regra no ambiente real.");
+            Console.WriteLine("Atenção: alguma interface alvo esta indisponivel no momento.");
         }
 
         Console.WriteLine();
@@ -126,9 +134,7 @@ internal static class Program
 
         if (args.Any(a => string.Equals(a, "--check-public-ip", StringComparison.OrdinalIgnoreCase)))
         {
-            Console.WriteLine();
-            Console.WriteLine("Verificacao de IP publico (curl):");
-            ValidatePublicIpForCurl(curl, engine is FirewallRoutingEngine);
+            CheckPublicIpPerMappedApplication(mappedRules, engineSelection);
         }
 
         Console.WriteLine();
@@ -141,6 +147,182 @@ internal static class Program
         {
             disposable.Dispose();
         }
+    }
+
+    private static List<MappedRule> ResolveEngineRules(
+        IReadOnlyDictionary<string, string> mapping,
+        IReadOnlyList<ApplicationIdentity> applications,
+        IReadOnlyList<NetworkAdapter> adapters
+    )
+    {
+        var rules = new List<MappedRule>();
+
+        var chrome = applications.FirstOrDefault(a => string.Equals(a.Name, ChromeExecutable, StringComparison.OrdinalIgnoreCase));
+        if (chrome is not null &&
+            mapping.TryGetValue("wifi", out var wifiId) &&
+            TryFindAdapter(adapters, wifiId, out var wifiAdapter))
+        {
+            rules.Add(new MappedRule(chrome, CreateRule(chrome.Id, wifiId, NetworkRouteMode.WiFi), wifiAdapter));
+        }
+
+        var curl = applications.FirstOrDefault(a => string.Equals(a.Name, CurlExecutable, StringComparison.OrdinalIgnoreCase));
+        if (curl is not null &&
+            mapping.TryGetValue("ethernet", out var ethernetId) &&
+            TryFindAdapter(adapters, ethernetId, out var ethernetAdapter))
+        {
+            rules.Add(new MappedRule(curl, CreateRule(curl.Id, ethernetId, NetworkRouteMode.Ethernet), ethernetAdapter));
+        }
+
+        return rules;
+
+        static bool TryFindAdapter(IReadOnlyList<NetworkAdapter> list, string id, out NetworkAdapter adapter)
+        {
+            adapter = default!;
+            foreach (var item in list)
+            {
+                if (string.Equals(item.AdapterId, id, StringComparison.OrdinalIgnoreCase))
+                {
+                    adapter = item;
+                    return true;
+                }
+            }
+
+            return false;
+        }
+    }
+
+    private static void CheckPublicIpPerMappedApplication(
+        IReadOnlyList<MappedRule> mappedRules,
+        RoutingEngineSelection engineSelection
+    )
+    {
+        Console.WriteLine();
+        Console.WriteLine("Verificacao de IP publico por mapeamento:");
+
+        if (!engineSelection.IsEnforced)
+        {
+            Console.WriteLine(
+                "- Sem roteamento efetivo neste ciclo. Consulta ainda ajuda a mapear o estado atual, mas não prova isolamento por app.");
+        }
+
+        var curlExecutable = ResolveSystemCurlExecutable();
+        if (string.IsNullOrWhiteSpace(curlExecutable))
+        {
+            Console.WriteLine("- curl nao encontrado no sistema para consulta externa.");
+            return;
+        }
+
+        foreach (var rule in mappedRules)
+        {
+            var interfaceIp = rule.TargetAdapter.IpAddress;
+            if (string.IsNullOrWhiteSpace(interfaceIp))
+            {
+                Console.WriteLine(
+                    $"- {rule.Application.Name}: sem IPV4 local na interface alvo ({rule.TargetAdapter.Name}).");
+                continue;
+            }
+
+            var ipResult = TryQueryPublicIpByInterface(curlExecutable, interfaceIp);
+            if (ipResult.IsSuccess)
+            {
+                Console.WriteLine(
+                    $"- {rule.Application.Name} -> {rule.Rule.RouteMode} [{rule.TargetAdapter.Name}] | IP publico: {ipResult.Value}");
+            }
+            else
+            {
+                Console.WriteLine(
+                    $"- {rule.Application.Name} -> {rule.Rule.RouteMode} [{rule.TargetAdapter.Name}] | Falha IP publico: {ipResult.Error}");
+            }
+        }
+    }
+
+    private static (bool IsSuccess, string? Value, string? Error) TryQueryPublicIpByInterface(string curlPath, string interfaceIp)
+    {
+        var escapedIp = interfaceIp.Replace("\"", "\"\"");
+        var startInfo = new ProcessStartInfo(curlPath)
+        {
+            Arguments = $"--interface \"{escapedIp}\" --ipv4 --silent --show-error --connect-timeout 10 https://api.ipify.org",
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        try
+        {
+            using var process = Process.Start(startInfo);
+            if (process is null)
+            {
+                return (false, null, "falha ao iniciar curl");
+            }
+
+            if (!process.WaitForExit(PublicIpTimeoutMs))
+            {
+                try
+                {
+                    process.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                return (false, null, "timeout");
+            }
+
+            var output = process.StandardOutput.ReadToEnd().Trim();
+            var error = process.StandardError.ReadToEnd().Trim();
+
+            if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
+            {
+                return (true, output, null);
+            }
+
+            var reason = !string.IsNullOrWhiteSpace(error) ? error : $"exit {process.ExitCode}";
+            return (false, null, reason);
+        }
+        catch (Exception ex)
+        {
+            return (false, null, ex.Message);
+        }
+    }
+
+    private static string? ResolveSystemCurlExecutable()
+    {
+        var systemCurl = Path.Combine(Environment.SystemDirectory, "curl.exe");
+        if (File.Exists(systemCurl))
+        {
+            return systemCurl;
+        }
+
+        var pathEnv = Environment.GetEnvironmentVariable("PATH");
+        if (string.IsNullOrWhiteSpace(pathEnv))
+        {
+            return null;
+        }
+
+        foreach (var folder in pathEnv.Split(';'))
+        {
+            if (string.IsNullOrWhiteSpace(folder))
+            {
+                continue;
+            }
+
+            try
+            {
+                var candidate = Path.Combine(folder.Trim(), "curl.exe");
+                if (File.Exists(candidate))
+                {
+                    return candidate;
+                }
+            }
+            catch
+            {
+                // ignore invalid PATH entries
+            }
+        }
+
+        return null;
     }
 
     private static Dictionary<string, string> ResolveInitialRules(IReadOnlyList<NetworkAdapter> interfaces)
@@ -194,7 +376,7 @@ internal static class Program
         };
     }
 
-    private static IRoutingEngine? ResolveRoutingEngine(string[] args)
+    private static RoutingEngineSelection ResolveRoutingEngine(string[] args)
     {
         var useWfp = args.Any(a => string.Equals(a, "--wfp", StringComparison.OrdinalIgnoreCase));
         var useFirewall = args.Any(a => string.Equals(a, "--firewall", StringComparison.OrdinalIgnoreCase));
@@ -203,8 +385,12 @@ internal static class Program
         {
             try
             {
-                Console.WriteLine("Modo ativo: Firewall (aplicacao por processo/interface via regra de firewall, experimental).");
-                return new FirewallRoutingEngine();
+                return new RoutingEngineSelection(
+                    new FirewallRoutingEngine(),
+                    "firewall (experimental)",
+                    true,
+                    "Regras por processo/interface via firewall do Windows."
+                );
             }
             catch (UnauthorizedAccessException ex)
             {
@@ -216,16 +402,25 @@ internal static class Program
                 Console.WriteLine("Fallback para dry-run.");
             }
         }
-        else if (!useWfp)
+
+        if (!useWfp)
         {
-            Console.WriteLine("Modo ativo: dry-run (sem alteracao real de rede).");
-            return new DryRunRoutingEngine();
+            return new RoutingEngineSelection(
+                new DryRunRoutingEngine(),
+                "dry-run (padrao)",
+                false,
+                "Sem alteracao real de rede."
+            );
         }
 
         try
         {
-            Console.WriteLine("Modo ativo: WFP (requer implementacao real).");
-            return new WfpRoutingEngine();
+            return new RoutingEngineSelection(
+                new WfpRoutingEngine(),
+                "wfp (preflight)",
+                false,
+                "Sessao WFP aberta; etapa inicial apenas registra metadados em memoria."
+            );
         }
         catch (NotSupportedException ex)
         {
@@ -255,7 +450,12 @@ internal static class Program
             Console.WriteLine("Erro desconhecido ao iniciar WFP. Fallback para dry-run.");
         }
 
-        return new DryRunRoutingEngine();
+        return new RoutingEngineSelection(
+            new DryRunRoutingEngine(),
+            "dry-run (fallback)",
+            false,
+            "WFP indisponivel no ambiente atual."
+        );
     }
 
     private static bool IsRunningAsAdministrator()
@@ -270,64 +470,16 @@ internal static class Program
         return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
     }
 
-    private static void ValidatePublicIpForCurl(ApplicationIdentity? curl, bool expectedEnforcedRouting)
-    {
-        if (curl is null)
-        {
-            Console.WriteLine("- curl.exe nao localizado no momento.");
-            return;
-        }
+    private sealed record RoutingEngineSelection(
+        IRoutingEngine? Engine,
+        string Mode,
+        bool IsEnforced,
+        string Note
+    );
 
-        if (!expectedEnforcedRouting)
-        {
-            Console.WriteLine("- Esta validacao e apenas informativa em modo dry-run/preflight.");
-        }
-
-        if (string.IsNullOrWhiteSpace(curl.ExecutablePath))
-        {
-            Console.WriteLine("- curl.exe sem caminho de executavel para verificacao.");
-            return;
-        }
-
-        var startInfo = new ProcessStartInfo(curl.ExecutablePath)
-        {
-            Arguments = "https://api.ipify.org",
-            RedirectStandardOutput = true,
-            RedirectStandardError = true,
-            UseShellExecute = false,
-            CreateNoWindow = true
-        };
-
-        try
-        {
-            using var process = Process.Start(startInfo);
-            if (process is null)
-            {
-                Console.WriteLine("- Falha ao iniciar curl para verificacao de IP.");
-                return;
-            }
-
-            if (!process.WaitForExit(10000))
-            {
-                process.Kill(entireProcessTree: true);
-                Console.WriteLine("- Timeout ao consultar api.ipify.org com curl.");
-                return;
-            }
-
-            var output = process.StandardOutput.ReadToEnd().Trim();
-            var error = process.StandardError.ReadToEnd().Trim();
-
-            if (process.ExitCode == 0 && !string.IsNullOrWhiteSpace(output))
-            {
-                Console.WriteLine($"- IP publico via curl: {output}");
-                return;
-            }
-
-            Console.WriteLine($"- Falha ao consultar IP com curl. Exit={process.ExitCode} Err={error}");
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"- Erro durante consulta de IP com curl: {ex.Message}");
-        }
-    }
+    private sealed record MappedRule(
+        ApplicationIdentity Application,
+        NetworkRule Rule,
+        NetworkAdapter TargetAdapter
+    );
 }
