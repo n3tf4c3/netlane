@@ -1,4 +1,4 @@
-using NetLane.Core.Contracts;
+﻿using NetLane.Core.Contracts;
 using NetLane.Core.Models;
 using NetLane.Network;
 using System.Diagnostics;
@@ -85,6 +85,12 @@ internal static class Program
             Console.WriteLine($"- {procName} [{connection.Protocol}] PID {connection.ProcessId} -> {destination} ({connection.State})");
         }
 
+        var targets = ResolveTargetApplications(args);
+        Console.WriteLine();
+        Console.WriteLine($"Alvos definidos:");
+        Console.WriteLine($"- Wi-Fi: {targets.WiFiApplication}");
+        Console.WriteLine($"- Ethernet: {targets.EthernetApplication}");
+
         var mapping = ResolveInitialRules(interfaces);
         if (mapping.Count == 0)
         {
@@ -92,11 +98,13 @@ internal static class Program
             return;
         }
 
-        var mappedRules = ResolveEngineRules(mapping, applications, interfaces);
+        var mappedRules = ResolveEngineRules(mapping, applications, interfaces, targets);
         if (mappedRules.Count == 0)
         {
-            Console.WriteLine("Nao foram encontrados processos-alvo para criar mapeamento (chrome.exe e/ou curl.exe).");
-            Console.WriteLine("Inicie chrome.exe e curl.exe para validar o caso de uso completo.");
+            Console.WriteLine("Nao foram encontrados os processos-alvo para criar mapeamento.");
+            var available = string.Join(", ", applications.Select(a => a.Name).OrderBy(a => a, StringComparer.OrdinalIgnoreCase));
+            Console.WriteLine($"Processos disponÃ­veis: {available}");
+            Console.WriteLine("Inicie os processos informados em --target-wifi e --target-ethernet ou ajuste os alvos.");
             return;
         }
 
@@ -122,7 +130,7 @@ internal static class Program
             mappedRules.Any(r => r.Rule.RouteMode == NetworkRouteMode.Ethernet && !r.TargetAdapter.IsConnected))
         {
             Console.WriteLine();
-            Console.WriteLine("Atenção: alguma interface alvo esta indisponivel no momento.");
+            Console.WriteLine("AtenÃ§Ã£o: alguma interface alvo esta indisponivel no momento.");
         }
 
         Console.WriteLine();
@@ -152,20 +160,21 @@ internal static class Program
     private static List<MappedRule> ResolveEngineRules(
         IReadOnlyDictionary<string, string> mapping,
         IReadOnlyList<ApplicationIdentity> applications,
-        IReadOnlyList<NetworkAdapter> adapters
+        IReadOnlyList<NetworkAdapter> adapters,
+        TargetApplications targets
     )
     {
         var rules = new List<MappedRule>();
 
-        var chrome = applications.FirstOrDefault(a => string.Equals(a.Name, ChromeExecutable, StringComparison.OrdinalIgnoreCase));
-        if (chrome is not null &&
+        var wifiApp = applications.FirstOrDefault(a => string.Equals(a.Name, targets.WiFiApplication, StringComparison.OrdinalIgnoreCase));
+        if (wifiApp is not null &&
             mapping.TryGetValue("wifi", out var wifiId) &&
             TryFindAdapter(adapters, wifiId, out var wifiAdapter))
         {
-            rules.Add(new MappedRule(chrome, CreateRule(chrome.Id, wifiId, NetworkRouteMode.WiFi), wifiAdapter));
+            rules.Add(new MappedRule(wifiApp, CreateRule(wifiApp.Id, wifiId, NetworkRouteMode.WiFi), wifiAdapter));
         }
 
-        var curl = applications.FirstOrDefault(a => string.Equals(a.Name, CurlExecutable, StringComparison.OrdinalIgnoreCase));
+        var curl = applications.FirstOrDefault(a => string.Equals(a.Name, targets.EthernetApplication, StringComparison.OrdinalIgnoreCase));
         if (curl is not null &&
             mapping.TryGetValue("ethernet", out var ethernetId) &&
             TryFindAdapter(adapters, ethernetId, out var ethernetAdapter))
@@ -191,6 +200,65 @@ internal static class Program
         }
     }
 
+    private static TargetApplications ResolveTargetApplications(string[] args)
+    {
+        var wifiTarget = ChromeExecutable;
+        var ethernetTarget = CurlExecutable;
+
+        for (var i = 0; i < args.Length; i++)
+        {
+            var arg = args[i];
+            if (string.Equals(arg, "--target-wifi", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < args.Length)
+                {
+                    wifiTarget = args[i + 1];
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (string.Equals(arg, "--target-ethernet", StringComparison.OrdinalIgnoreCase))
+            {
+                if (i + 1 < args.Length)
+                {
+                    ethernetTarget = args[i + 1];
+                    i++;
+                }
+
+                continue;
+            }
+
+            if (arg.StartsWith("--target-wifi=", StringComparison.OrdinalIgnoreCase))
+            {
+                wifiTarget = arg[(arg.IndexOf('=') + 1)..];
+            }
+            else if (arg.StartsWith("--target-ethernet=", StringComparison.OrdinalIgnoreCase))
+            {
+                ethernetTarget = arg[(arg.IndexOf('=') + 1)..];
+            }
+        }
+
+        return new TargetApplications(
+            NormalizeExecutableName(wifiTarget?.Trim() ?? ChromeExecutable),
+            NormalizeExecutableName(ethernetTarget?.Trim() ?? CurlExecutable)
+        );
+    }
+
+    private static string NormalizeExecutableName(string value)
+    {
+        var normalized = value?.Trim() ?? string.Empty;
+        if (normalized.Length == 0)
+        {
+            return string.Empty;
+        }
+
+        return normalized.EndsWith(".exe", StringComparison.OrdinalIgnoreCase)
+            ? normalized
+            : $"{normalized}.exe";
+    }
+
     private static void CheckPublicIpPerMappedApplication(
         IReadOnlyList<MappedRule> mappedRules,
         RoutingEngineSelection engineSelection
@@ -202,7 +270,7 @@ internal static class Program
         if (!engineSelection.IsEnforced)
         {
             Console.WriteLine(
-                "- Sem roteamento efetivo neste ciclo. Consulta ainda ajuda a mapear o estado atual, mas não prova isolamento por app.");
+                "- Sem roteamento efetivo neste ciclo. Consulta ainda ajuda a mapear o estado atual, mas nÃ£o prova isolamento por app.");
         }
 
         var curlExecutable = ResolveSystemCurlExecutable();
@@ -481,5 +549,10 @@ internal static class Program
         ApplicationIdentity Application,
         NetworkRule Rule,
         NetworkAdapter TargetAdapter
+    );
+
+    private sealed record TargetApplications(
+        string WiFiApplication,
+        string EthernetApplication
     );
 }
