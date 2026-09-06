@@ -105,3 +105,11 @@ Somente avancar para Fase 1 quando:
 - Risco remanescente para Fase 1:
   - validar comportamento sob carga, protocolos adicionais (HTTP3/QUIC, UDP), e endurecer lifecycle do agente/serviço.
 - Próximo ciclo: abrir a Fase 1 com serviço Windows + policy manager persistente e plano de rollback robusto.
+
+### Transicao para Fase 1
+
+- A Fase 1 (Monitor) foi iniciada com o serviço `NetLane.Service` operando em loop de coleta:
+  - detecta adaptadores;
+  - detecta aplicações com conexões (processo/executável);
+  - detecta conexões ativas e associa por PID para ranking de apps.
+- Não há mudanças de rota nesta fase; continua como observabilidade.
