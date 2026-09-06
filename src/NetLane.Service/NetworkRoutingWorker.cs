@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -9,6 +10,12 @@ namespace NetLane.Service;
 
 internal sealed class NetworkRoutingWorker : BackgroundService
 {
+    private static readonly JsonSerializerOptions PolicyFileJsonOptions = new(JsonSerializerDefaults.Web)
+    {
+        PropertyNameCaseInsensitive = true,
+        Converters = { new JsonStringEnumConverter() }
+    };
+
     private readonly INetworkInterfaceDetector _interfaceDetector;
     private readonly IApplicationCatalog _applicationCatalog;
     private readonly IRoutingEngine _routingEngine;
@@ -342,7 +349,7 @@ internal sealed class NetworkRoutingWorker : BackgroundService
             {
                 try
                 {
-                    var persisted = JsonSerializer.Deserialize<List<RoutingPolicy>>(fileContent);
+                    var persisted = JsonSerializer.Deserialize<List<RoutingPolicy>>(fileContent, PolicyFileJsonOptions);
                     if (persisted is not null)
                     {
                         foreach (var policy in persisted.Where(IsValidPolicy))
