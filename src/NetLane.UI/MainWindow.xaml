@@ -1,0 +1,39 @@
+<Window x:Class="NetLane.UI.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="NetLane - Regras por Aplicação"
+        Height="420"
+        Width="760"
+        WindowStartupLocation="CenterScreen">
+    <DockPanel Margin="12">
+        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
+            <TextBlock Text="NetLane — Interface de Regras" FontSize="20" FontWeight="Bold" />
+            <TextBlock Text="Visualização inicial de políticas de roteamento por aplicação." />
+            <TextBlock Text="Fase 3 (progresso inicial): consulta e visualização."
+                       FontStyle="Italic" Margin="0,4,0,0" />
+            <TextBlock x:Name="StatusTextBlock"
+                       Margin="0,8,0,0"
+                       Text="Carregando políticas..." />
+        </StackPanel>
+        <DataGrid x:Name="RulesGrid"
+                  AutoGenerateColumns="False"
+                  CanUserAddRows="False"
+                  IsReadOnly="True">
+            <DataGrid.Columns>
+                <DataGridTextColumn Header="Aplicativo" Width="*"
+                                    Binding="{Binding ApplicationId}" />
+                <DataGridTextColumn Header="Caminho"
+                                    Width="2*"
+                                    Binding="{Binding ExecutablePath}" />
+                <DataGridTextColumn Header="Modo"
+                                    Width="140"
+                                    Binding="{Binding RouteMode}" />
+                <DataGridTextColumn Header="InterfaceId"
+                                    Width="*"
+                                    Binding="{Binding InterfaceId}" />
+                <DataGridCheckBoxColumn Header="Ativo" Width="70"
+                                        Binding="{Binding Enabled}" />
+            </DataGrid.Columns>
+        </DataGrid>
+    </DockPanel>
+</Window>
