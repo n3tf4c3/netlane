@@ -1,0 +1,14 @@
+﻿[
+  {
+    "ApplicationId": "explorer.exe",
+    "ExecutablePath": "C:\\WINDOWS\\Explorer.EXE",
+    "RouteMode": "WiFi",
+    "Enabled": true
+  },
+  {
+    "ApplicationId": "steam.exe",
+    "ExecutablePath": "C:\\Program Files (x86)\\Steam\\steam.exe",
+    "RouteMode": "Ethernet",
+    "Enabled": true
+  }
+]
