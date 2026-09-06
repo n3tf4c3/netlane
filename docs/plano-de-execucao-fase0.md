@@ -69,3 +69,17 @@ Somente avancar para Fase 1 quando:
 - O PoC funcionar de forma repetivel com motor real de roteamento.
 - Houver comportamento fail-open em caso de falha.
 - Nao houver efeito colateral global de roteamento.
+
+### Validacao WFP em modo kernel (administrador)
+
+- Executar em PowerShell elevado:
+  - `dotnet run --project poc/NetLane.NetworkPoC -- --wfp --target-wifi explorer.exe --target-ethernet steam.exe --check-public-ip`
+- Validacao esperada:
+  - `Modo ativo: wfp (kernel)`.
+  - `Roteamento aplicado: Sim (intencional)`.
+  - `Regras preparadas:` com contagem de filtros por app (`filtros > 0`).
+- Critério de aceitação:
+  - IP publico por app deve refletir interfaces distintas (ou evidência equivalente de isolamento por aplicação).
+- Falhas:
+  - Se cair em dry-run, revisar privilégio de administrador.
+  - Se `filtros=0`, registrar `code=` retornado em falha de criação de filtro e ajustar regra de camada/condição.
