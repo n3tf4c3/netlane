@@ -29,4 +29,13 @@ Pontos de risco:
 - fallback inicial usa nomes de processo conhecidos (catálogo simplificado).
 
 Concluimos:
-- A Fase 2 foi iniciada com worker de enforçamento de política e persistência bootstrap.
+- Fase 2 concluída com `NetworkRoutingWorker` aplicando política por arquivo JSON e rollback em `StopAsync`.
+- Critérios validados:
+  - Build da solução sem erros.
+  - Aplicação de política em ciclo de monitoramento com `RouteMode` por aplicação.
+  - Persistência de política em `src/NetLane.Service/netlane-rules.json` com criação por bootstrap quando necessário.
+  - `Dry-run` com fallback automático quando WFP exige privilégios de admin.
+  - Remoção de estado ativo no encerramento do worker.
+
+Próximo ciclo:
+- Fase 3 — Interface final: criar a interface de edição/visualização de `App → Interface`, com início de persistência e operação do serviço via UI.

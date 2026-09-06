@@ -25,9 +25,9 @@ Critérios de sucesso desta etapa:
 - Logs de snapshot emitindo contadores e ranking de aplicações com conexões.
 
 Observações de transição:
-- A Fase 2 foi iniciada com worker de policy/roteamento em `NetLane.Service`.
+- A Fase 2 foi concluída com worker de policy/roteamento em `NetLane.Service`.
 
-Próximo ciclo (Fase 2 — Routing Engine):
-- Persistência de regra por aplicação;
-- Aplicação das regras ao detectar abertura de processos;
-- Fail-open + rollback seguro.
+Próximo ciclo (Fase 3 — Interface final):
+- UI para cadastro e manutenção de regras por aplicação;
+- Visão de estado de aplicação (interface alvo, status, filtros ativos);
+- Início da integração do serviço com `NetLane.UI`.

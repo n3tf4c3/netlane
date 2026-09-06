@@ -27,16 +27,18 @@ Objetivo desta execucao: iniciar pela Fase 0 (PoC tecnica) antes da UI.
 3. Coletar evidencia de IP publico distinto por app (incluindo `--check-public-ip`).
 
 Estado atual:
-- a etapa de regra esta em modo `dry-run` por padrao.
-- o modo `--wfp` tenta inicializar preflight WFP e cai para `dry-run` se indisponivel.
+- Fase 2 (routing engine no serviço) está implementada e validada em ciclo de política por aplicação.
+- O serviço mantém `fail-open` com fallback para `dry-run` quando WFP não está disponível.
 - o modo `--firewall` habilita prova experimental por interface usando firewall do Windows.
 - a base para engine WFP esta preparada para evolucao.
 - correlacao de apps com conexoes ativas (PID/TCP/UDP IPv4) foi adicionada.
 
 ## Fase imediata
 
-- implementacao real do `WfpRoutingEngine` e validacao end-to-end.
-- manter `fail-open` e rollback seguro.
+- Fase 3: interface visual (`NetLane.UI`) para criação/edição/visualização das regras:
+  - mapa `App -> Interface`;
+  - status e filtros ativos;
+  - operação básica do ciclo de serviço.
 
 Documentacao da proxima etapa:
 - `docs/wfp-engine-roadmap.md`
