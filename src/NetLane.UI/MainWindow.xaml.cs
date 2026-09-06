@@ -9,10 +9,12 @@ public partial class MainWindow : Window
 {
     private const string PolicyFile = "netlane-rules.json";
     private readonly ObservableCollection<NetLanePolicyRow> _rows = new();
+    private readonly string _policyFilePath;
 
     public MainWindow()
     {
         InitializeComponent();
+        _policyFilePath = ResolvePolicyFile() ?? Path.Combine(Directory.GetCurrentDirectory(), "src", "NetLane.Service", PolicyFile);
         RulesGrid.ItemsSource = _rows;
         RefreshPolicies();
     }
@@ -21,20 +23,20 @@ public partial class MainWindow : Window
     {
         _rows.Clear();
 
-        foreach (var policy in LoadPolicies())
+        foreach (var policy in LoadPolicies(_policyFilePath))
         {
             _rows.Add(policy);
         }
 
+        PolicyPathTextBlock.Text = string.IsNullOrWhiteSpace(_policyFilePath) ? "Arquivo: não localizado" : $"Arquivo: {_policyFilePath}";
         StatusTextBlock.Text = _rows.Count == 0
             ? "Nenhuma política encontrada."
             : $"Políticas carregadas: {_rows.Count}";
     }
 
-    private static List<NetLanePolicyRow> LoadPolicies()
+    private static List<NetLanePolicyRow> LoadPolicies(string policyFilePath)
     {
-        var policyPath = ResolvePolicyFile();
-        if (string.IsNullOrWhiteSpace(policyPath) || !File.Exists(policyPath))
+        if (string.IsNullOrWhiteSpace(policyFilePath) || !File.Exists(policyFilePath))
         {
             return GetFallbackRows();
         }
@@ -45,7 +47,7 @@ public partial class MainWindow : Window
             {
                 PropertyNameCaseInsensitive = true
             };
-            var serialized = File.ReadAllText(policyPath);
+            var serialized = File.ReadAllText(policyFilePath);
             var policies = JsonSerializer.Deserialize<List<NetLanePolicyRow>>(serialized, options);
             if (policies is { Count: > 0 })
             {
@@ -91,13 +93,42 @@ public partial class MainWindow : Window
             new() { ApplicationId = "steam.exe", ExecutablePath = @"C:\Program Files (x86)\Steam\steam.exe", RouteMode = "Ethernet", Enabled = true }
         };
     }
+
+    private void RefreshButton_Click(object sender, RoutedEventArgs e)
+    {
+        RefreshPolicies();
+    }
+
+    private void SaveButton_Click(object sender, RoutedEventArgs e)
+    {
+        try
+        {
+            var options = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+            {
+                WriteIndented = true
+            };
+            var payload = JsonSerializer.Serialize(_rows, options);
+            var directory = Path.GetDirectoryName(_policyFilePath);
+            if (!string.IsNullOrWhiteSpace(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+
+            File.WriteAllText(_policyFilePath, payload);
+            StatusTextBlock.Text = $"Arquivo salvo com sucesso: {_rows.Count} regras.";
+        }
+        catch (Exception ex)
+        {
+            StatusTextBlock.Text = $"Falha ao salvar: {ex.Message}";
+        }
+    }
 }
 
 public sealed class NetLanePolicyRow
 {
-    public string ApplicationId { get; init; } = string.Empty;
-    public string? ExecutablePath { get; init; }
-    public string RouteMode { get; init; } = "Automatic";
-    public string? InterfaceId { get; init; }
-    public bool Enabled { get; init; }
+    public string ApplicationId { get; set; } = string.Empty;
+    public string? ExecutablePath { get; set; }
+    public string RouteMode { get; set; } = "Automatic";
+    public string? InterfaceId { get; set; }
+    public bool Enabled { get; set; }
 }
