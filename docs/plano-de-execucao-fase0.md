@@ -94,3 +94,14 @@ Somente avancar para Fase 1 quando:
     - `steam.exe => Ethernet (...) | filtros=2`
   - Provas coletadas: IP publico reportado por app com mapeamento esperado para Wi-Fi e Ethernet (valores distintos no instante do teste).
   - Status Fase 0: objetivo central de enforce por app em kernel atingido nesta execucao de PoC (sem alterar rota global).
+
+### Conclusao da fase
+
+- Fase 0 concluida: implementação do caminho WFP em kernel funcional no PoC, com fallback seguro para dry-run.
+- Critérios de aceite atingidos:
+  - Modo `wfp (kernel)` em sessão admin.
+  - Roteamento intencional ativo (`Sim (intencional)`).
+  - `filtros > 0` por app (`2`) em regras aplicadas.
+- Risco remanescente para Fase 1:
+  - validar comportamento sob carga, protocolos adicionais (HTTP3/QUIC, UDP), e endurecer lifecycle do agente/serviço.
+- Próximo ciclo: abrir a Fase 1 com serviço Windows + policy manager persistente e plano de rollback robusto.
