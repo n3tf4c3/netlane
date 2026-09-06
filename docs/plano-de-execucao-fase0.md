@@ -113,3 +113,6 @@ Somente avancar para Fase 1 quando:
   - detecta aplicações com conexões (processo/executável);
   - detecta conexões ativas e associa por PID para ranking de apps.
 - Não há mudanças de rota nesta fase; continua como observabilidade.
+
+- Transição para a Fase 2:
+  - implementação inicial de aplicação de política de rota por aplicativo com rollback no `StopAsync` do serviço.

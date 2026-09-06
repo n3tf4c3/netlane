@@ -1,4 +1,4 @@
-﻿# Fase 1 — Monitor (NetLane)
+# Fase 1 — Monitor (NetLane)
 
 Objetivo desta fase:
 - Criar o esqueleto do runtime de monitoramento (Windows Service) com coleta periódica de:
@@ -23,6 +23,9 @@ Critérios de sucesso desta etapa:
 - `dotnet build NetLane.sln` sem erros.
 - Serviço consegue iniciar sem falhar por infraestrutura.
 - Logs de snapshot emitindo contadores e ranking de aplicações com conexões.
+
+Observações de transição:
+- A Fase 2 foi iniciada com worker de policy/roteamento em `NetLane.Service`.
 
 Próximo ciclo (Fase 2 — Routing Engine):
 - Persistência de regra por aplicação;
