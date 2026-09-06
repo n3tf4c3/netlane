@@ -485,9 +485,9 @@ internal static class Program
         {
             return new RoutingEngineSelection(
                 new WfpRoutingEngine(),
-                "wfp (preflight)",
-                false,
-                "Sessao WFP aberta; etapa inicial apenas registra metadados em memoria."
+                "wfp (kernel)",
+                true,
+                "Sessao WFP com sublayer e filtros do driver para tentativa de enforce por app."
             );
         }
         catch (NotSupportedException ex)
