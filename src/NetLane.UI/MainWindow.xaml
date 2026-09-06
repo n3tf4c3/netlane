@@ -14,25 +14,40 @@
             <TextBlock x:Name="StatusTextBlock"
                        Margin="0,8,0,0"
                        Text="Carregando políticas..." />
+
+            <StackPanel Orientation="Horizontal"
+                        Margin="0,8,0,0"
+                        HorizontalAlignment="Left">
+                <Button x:Name="RefreshButton" Width="110" Height="28" Margin="0,0,8,0"
+                        Content="Atualizar"
+                        Click="RefreshButton_Click" />
+                <Button x:Name="SaveButton" Width="90" Height="28" Margin="0,0,8,0"
+                        Content="Salvar"
+                        Click="SaveButton_Click" />
+                <TextBlock x:Name="PolicyPathTextBlock"
+                           VerticalAlignment="Center"
+                           TextWrapping="Wrap" />
+            </StackPanel>
         </StackPanel>
         <DataGrid x:Name="RulesGrid"
                   AutoGenerateColumns="False"
-                  CanUserAddRows="False"
-                  IsReadOnly="True">
+                  CanUserAddRows="True"
+                  CanUserDeleteRows="True"
+                  IsReadOnly="False">
             <DataGrid.Columns>
                 <DataGridTextColumn Header="Aplicativo" Width="*"
-                                    Binding="{Binding ApplicationId}" />
+                                    Binding="{Binding ApplicationId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                 <DataGridTextColumn Header="Caminho"
                                     Width="2*"
-                                    Binding="{Binding ExecutablePath}" />
+                                    Binding="{Binding ExecutablePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                 <DataGridTextColumn Header="Modo"
                                     Width="140"
-                                    Binding="{Binding RouteMode}" />
+                                    Binding="{Binding RouteMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                 <DataGridTextColumn Header="InterfaceId"
                                     Width="*"
-                                    Binding="{Binding InterfaceId}" />
+                                    Binding="{Binding InterfaceId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
                 <DataGridCheckBoxColumn Header="Ativo" Width="70"
-                                        Binding="{Binding Enabled}" />
+                                        Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
             </DataGrid.Columns>
         </DataGrid>
     </DockPanel>
