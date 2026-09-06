@@ -83,3 +83,14 @@ Somente avancar para Fase 1 quando:
 - Falhas:
   - Se cair em dry-run, revisar privilégio de administrador.
   - Se `filtros=0`, registrar `code=` retornado em falha de criação de filtro e ajustar regra de camada/condição.
+
+### Resultado de validacao (2026-09-05)
+
+- Sessao administrador (comando: `dotnet run --project "C:\Codes\netlane\poc\NetLane.NetworkPoC" -- --wfp --target-wifi explorer.exe --target-ethernet steam.exe --check-public-ip`):
+  - Modo ativo: `wfp (kernel)`.
+  - Roteamento aplicado: `Sim (intencional)`.
+  - Regras preparadas:
+    - `explorer.exe => WiFi (...) | filtros=2`
+    - `steam.exe => Ethernet (...) | filtros=2`
+  - Provas coletadas: IP publico reportado por app com mapeamento esperado para Wi-Fi e Ethernet (valores distintos no instante do teste).
+  - Status Fase 0: objetivo central de enforce por app em kernel atingido nesta execucao de PoC (sem alterar rota global).

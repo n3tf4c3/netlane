@@ -256,6 +256,7 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
         {
             if (TryAddFilter(
                     appIdBytes,
+                    exePath: appName,
                     action: FwpApiInterop.FwpActionType.FWP_ACTION_BLOCK,
                     localInterfaceIndex: null,
                     matchType: null,
@@ -282,6 +283,7 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
 
         if (TryAddFilter(
                 appIdBytes,
+                exePath: appName,
                 action: FwpApiInterop.FwpActionType.FWP_ACTION_PERMIT,
                 localInterfaceIndex: interfaceIndex,
                 matchType: FwpApiInterop.FwpMatchType.FWP_MATCH_EQUAL,
@@ -298,6 +300,7 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
 
         if (TryAddFilter(
                 appIdBytes,
+                exePath: appName,
                 action: FwpApiInterop.FwpActionType.FWP_ACTION_BLOCK,
                 localInterfaceIndex: interfaceIndex,
                 matchType: FwpApiInterop.FwpMatchType.FWP_MATCH_NOT_EQUAL,
@@ -325,6 +328,7 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
 
     private bool TryAddFilter(
         byte[] appIdBytes,
+        string exePath,
         FwpApiInterop.FwpActionType action,
         uint? localInterfaceIndex,
         FwpApiInterop.FwpMatchType? matchType,
@@ -343,6 +347,8 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
 
         var appIdBlobData = IntPtr.Zero;
         var appIdBlob = IntPtr.Zero;
+        var filterName = IntPtr.Zero;
+        var filterDescription = IntPtr.Zero;
         GCHandle conditionHandle = default;
 
         try
@@ -353,6 +359,12 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
             appIdBlob = Marshal.AllocHGlobal(Marshal.SizeOf<FwpApiInterop.FWP_BYTE_BLOB>());
             var blob = new FwpApiInterop.FWP_BYTE_BLOB { Size = (uint)appIdBytes.Length, Data = appIdBlobData };
             Marshal.StructureToPtr(blob, appIdBlob, false);
+
+            var exeName = Path.GetFileNameWithoutExtension(exePath);
+            filterName = Marshal.StringToCoTaskMemUni($"NetLane {action} {exeName}");
+            filterDescription = Marshal.StringToCoTaskMemUni(
+                $"NetLane kernel filter for {exeName} on interface {(localInterfaceIndex?.ToString() ?? "ANY")}"
+            );
 
             var conditions = new[]
             {
@@ -388,6 +400,11 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
 
             var filter = new FwpApiInterop.FWPM_FILTER0
             {
+                displayData = new FwpApiInterop.FWPM_DISPLAY_DATA0
+                {
+                    name = filterName,
+                    description = filterDescription
+                },
                 layerKey = FwpApiInterop.FWPM_LAYER_ALE_AUTH_CONNECT_V4,
                 subLayerKey = NetLaneSublayerKey,
                 numFilterConditions = conditionCount,
@@ -409,6 +426,16 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
         }
         finally
         {
+            if (filterName != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(filterName);
+            }
+
+            if (filterDescription != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(filterDescription);
+            }
+
             if (conditionHandle.IsAllocated)
             {
                 conditionHandle.Free();
@@ -429,18 +456,25 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
     private bool TryCreateNetLaneSublayer()
     {
         uint addSubLayerResult;
-
-        var subLayer = new FwpApiInterop.FWPM_SUBLAYER0
+        var subLayerName = Marshal.StringToCoTaskMemUni("NetLane");
+        var subLayerDescription = Marshal.StringToCoTaskMemUni("NetLane kernel sublayer for per-app routing");
+        try
         {
-            subLayerKey = NetLaneSublayerKey,
-            displayData = default,
-            flags = 0,
-            providerKey = IntPtr.Zero,
-            providerData = default,
-            weight = 0x800
-        };
+            var subLayer = new FwpApiInterop.FWPM_SUBLAYER0
+            {
+                subLayerKey = NetLaneSublayerKey,
+                displayData = new FwpApiInterop.FWPM_DISPLAY_DATA0
+                {
+                    name = subLayerName,
+                    description = subLayerDescription
+                },
+                flags = 0,
+                providerKey = IntPtr.Zero,
+                providerData = default,
+                weight = 0x800
+            };
 
-        addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
+            addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
             if (addSubLayerResult != 0)
             {
                 Console.WriteLine($"[WFP] Falha ao adicionar sublayer dedicada. code={addSubLayerResult}");
@@ -456,6 +490,19 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
                     }
                 }
             }
+        }
+        finally
+        {
+            if (subLayerName != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(subLayerName);
+            }
+
+            if (subLayerDescription != IntPtr.Zero)
+            {
+                Marshal.FreeCoTaskMem(subLayerDescription);
+            }
+        }
 
         return addSubLayerResult == 0;
     }
