@@ -114,7 +114,7 @@ public static class FwpApiInterop
     {
         public Guid subLayerKey;
         public FWPM_DISPLAY_DATA0 displayData;
-        public ushort flags;
+        public uint flags;
         public IntPtr providerKey;
         public FWP_BYTE_BLOB providerData;
         public ushort weight;

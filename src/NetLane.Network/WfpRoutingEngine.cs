@@ -441,15 +441,21 @@ public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
         };
 
         addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
-        if (addSubLayerResult != 0)
-        {
-            var sublayerKey = NetLaneSublayerKey;
-            var deleted = FwpApiInterop.FwpmSubLayerDeleteByKey0(_engineHandle, ref sublayerKey);
-            if (deleted == 0)
+            if (addSubLayerResult != 0)
             {
-                addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
+                Console.WriteLine($"[WFP] Falha ao adicionar sublayer dedicada. code={addSubLayerResult}");
+                var sublayerKey = NetLaneSublayerKey;
+                var deleted = FwpApiInterop.FwpmSubLayerDeleteByKey0(_engineHandle, ref sublayerKey);
+                Console.WriteLine($"[WFP] Tentativa de reset do sublayer: delete code={deleted}");
+                if (deleted == 0)
+                {
+                    addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
+                    if (addSubLayerResult != 0)
+                    {
+                        Console.WriteLine($"[WFP] Falha novamente ao adicionar sublayer dedicada. code={addSubLayerResult}");
+                    }
+                }
             }
-        }
 
         return addSubLayerResult == 0;
     }
