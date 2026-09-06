@@ -1,14 +1,16 @@
-﻿[
+[
   {
-    "ApplicationId": "explorer.exe",
-    "ExecutablePath": "C:\\WINDOWS\\Explorer.EXE",
-    "RouteMode": "WiFi",
-    "Enabled": true
+    "applicationId": "explorer.exe",
+    "executablePath": "C:\\WINDOWS\\Explorer.EXE",
+    "routeMode": "WiFi",
+    "interfaceId": "AA6F3B88-072A-45B6-B0CB-8AFE9567E62F",
+    "enabled": true
   },
   {
-    "ApplicationId": "steam.exe",
-    "ExecutablePath": "C:\\Program Files (x86)\\Steam\\steam.exe",
-    "RouteMode": "Ethernet",
-    "Enabled": true
+    "applicationId": "steam.exe",
+    "executablePath": "C:\\Program Files (x86)\\Steam\\steam.exe",
+    "routeMode": "Ethernet",
+    "interfaceId": "D3AE43D2-8203-41D6-9D7F-0B6FA59518FD",
+    "enabled": true
   }
 ]
