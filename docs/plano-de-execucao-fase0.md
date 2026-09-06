@@ -58,6 +58,9 @@ Comprovar que e possivel associar regras de saida por executavel para interfaces
     - IP público coletado por app (Wi-Fi e Ethernet), com valores distintos no instante da execução.
   - `dotnet run --project poc/NetLane.NetworkPoC/NetLane.NetworkPoC.csproj -- --wfp --target-wifi explorer --target-ethernet msedge`
     - Queda controlada para `dry-run` com mensagem de permissão insuficiente, validando fallback do motor.
+  - `dotnet run --project poc/NetLane.NetworkPoC -- --wfp --target-wifi explorer.exe --target-ethernet steam.exe --check-public-ip`
+    - Mantido em `dry-run` por falta de privilégios de administrador; não há enforcement WFP neste ambiente.
+    - IP público por app exibido e diferente por interface, útil como baseline, mas não prova isolamento por app no kernel.
 - Limitação observada: sem privilégios de administrador não é possível validar implementação ativa de WFP neste ambiente.
 
 6. Gate de avancÌ§o
