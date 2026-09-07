@@ -1,40 +1,34 @@
-# Roteiro de implementacao WFP para NetLane
+# Motor WFP — política nativa de conexão
 
-Objetivo da etapa:
-- Interceptar novas conexoes por processo (executavel) e associar interface de saida.
+## Estratégia implementada em 2026-09-06
 
-Camadas recomendadas para a primeira iteracao:
-- `FWPM_LAYER_ALE_AUTH_CONNECT_V4` para fluxo outbound TCP/UDP IPv4.
-- Aplicar condicao:
-  - `FWPM_CONDITION_ALE_APP_ID` (executavel)
-  - opcional: `FWPM_CONDITION_IP_PROTOCOL`
-- Regra:
-  - `BLOCK` para fallback Bloqueado.
-  - `PERMIT` com metadata de interface alvo para aplicacao no callout local.
+A API [FwpmConnectionPolicyAdd0](https://learn.microsoft.com/en-us/windows/win32/api/fwpmu/nf-fwpmu-fwpmconnectionpolicyadd0) permite roteamento por executável no próprio Windows. O motor usa AppId do caminho completo e LUID da interface escolhida. Não necessita de callout ou driver próprio neste Windows compatível.
 
-Observacoes:
-- WFP e uma engine de filtro de pacotes, nao um roteador pronto.
-- Para forcar interface por app geralmente e necessario callout em sublayer para reescrever/selecionar `FWP_DIRECTION_OUTBOUND` context e interface index.
-- Evitar regressao global:
-  - usar `provider` e `sublayer` dedicados.
-- Fail open em erro:
-  - remover sublayer e filtros no stop/falha do servico.
-- Primeira entrega:
-  - tratar apenas IPv4 e estados conectados.
+- Sessão dinâmica com limpeza pelo BFE ao encerrar.
+- Políticas IPv4/IPv6 em transação por executável; atualização com rollback.
+- Condições de AppId e tráfego unicast não-loopback.
+- LUID marshaled como ponteiro UINT64, com testes de layout nativo de 64 bits.
+- BLOCK apenas para o modo de bloqueio explícito; não há bloqueio de outras interfaces para emular direcionamento.
+- Sem API/privilégio/routepolicies, o serviço informa não aplicado.
+- JSON preservado; heartbeat com revisão, estado e resultado por executável.
+- Steam pode incluir o auxiliar conhecido steamwebhelper.exe, com opção de desativar e precedência de regra explícita.
 
-Status desta iteracao:
-- `WfpRoutingEngine` abre sessao WFP via `FwpmEngineOpen0` e valida permissoes (Windows + admin), com estado interno de regras.
-- Falhas de preflight retornam para `DryRunRoutingEngine` para manter PoC executavel.
-- Existe `FirewallRoutingEngine` (`--firewall`) como alternativa experimental para validar direcionamento por app/interface via regra de firewall.
+A [documentação operacional](roteamento-nativo.md) contém os pré-requisitos, comandos de teste e reversão.
 
-Checklist de implementacao no NetLane:
-- Criar sessao WFP (`FwpmEngineOpen0`).
-- Criar provider + sublayer.
-- Registrar callout para bind de encaminhamento.
-- Criar filtro por `appId` + protocolo -> action redirecionada por contexto interno.
-- Persistir regra para reversao rapida.
-- Testar com chrome.exe e curl.exe (HTTP/HTTPS + UDP baseline).
+## Evidências e pendências
 
-Criticos de risco:
-- `GetExtendedTcpTable`/`GetExtendedUdpTable` sao apenas monitoramento; o enforcement real requer WFP.
-- Necessita privilegio de admin/servico persistente.
+O build e 95 testes passaram. A prova TCP/UDP sem política funciona. A sessão atual não é administrativa e as opções routepolicies estão desativadas, então a prova elevada foi recusada antes de instalar políticas.
+
+Ainda é necessário verificar:
+
+1. --verify-routing elevado: novas conexões IPv4 TCP/UDP alternando Ethernet/Wi-Fi, e retorno automático após remoção.
+2. Steam e steamwebhelper.exe reais após reinício normal, inclusive conexões IPv6.
+3. Tráfego IPv6 em ambas as interfaces, aplicativos simultâneos, queda de interface, parada abrupta/BFE e interação com VPN/antivírus.
+4. Tabela de rotas/métricas antes/depois e isolamento de aplicativos não selecionados.
+5. Implantação do serviço e localização/ACL compartilhadas fora do checkout.
+
+## Correção do diagnóstico anterior
+
+O PERMIT/BLOCK anterior e o log filtros=2/2 não provavam seleção de saída. A consulta --check-public-ip continua sendo apenas uma referência da interface, pois usa curl com bind manual. A nova --verify-routing cria sockets sem bind/opções de interface no próprio executável alvo. Um sucesso nessa prova não certifica automaticamente o Steam.
+
+O roteiro anterior de driver ALE bind/connect é uma alternativa de arquitetura para outros cenários, não um requisito do caminho nativo selecionado. Não foram instalados drivers nem desativadas proteções do Windows.

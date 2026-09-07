@@ -12,8 +12,18 @@ internal static class Program
     private const string CurlExecutable = "curl.exe";
     private const int PublicIpTimeoutMs = 10000;
 
-    private static void Main(string[] args)
+    private static async Task Main(string[] args)
     {
+        if (args.Contains("--probe-child", StringComparer.OrdinalIgnoreCase))
+        {
+            Environment.ExitCode = await RouteVerification.RunChildAsync();
+            return;
+        }
+        if (args.Contains("--verify-routing", StringComparer.OrdinalIgnoreCase))
+        {
+            Environment.ExitCode = await RouteVerification.RunAsync(args);
+            return;
+        }
         Console.WriteLine("NetLane PoC - Fase 0");
         Console.WriteLine("Escopo: validar pipeline de regras por aplicacao (sem alterar rota global ainda).");
         Console.WriteLine();
@@ -117,13 +127,14 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine($"Modo ativo: {engineSelection.Mode}");
-        Console.WriteLine($"Roteamento aplicado: {(engineSelection.IsEnforced ? "Sim (intencional)" : "Nao (dry-run/simulacao)")}");
+        Console.WriteLine("Confirmação de políticas: consulte os resultados individuais abaixo; registro não comprova tráfego.");
         Console.WriteLine($"Detalhes: {engineSelection.Note}");
 
         var engine = engineSelection.Engine;
         foreach (var rule in mappedRules)
         {
-            engine.ApplyRule(rule.Application, rule.Rule);
+            var result = engine.ApplyRule(rule.Application, rule.Rule);
+            Console.WriteLine($"{rule.Application.Name}: {(result.Applied ? "ACEITA" : "NÃO APLICADA")} · {result.Detail}");
         }
 
         if (mappedRules.Any(r => r.Rule.RouteMode == NetworkRouteMode.WiFi && !r.TargetAdapter.IsConnected) ||
@@ -147,8 +158,8 @@ internal static class Program
 
         Console.WriteLine();
         Console.WriteLine("Proximo passo:");
-        Console.WriteLine("- Substituir DryRunRoutingEngine por implementacao real de WFP.");
-        Console.WriteLine("- Validar IP publico por app (publico A e B) sem mudar rota global.");
+        Console.WriteLine("- Executar --verify-routing para testar conexões TCP/UDP de um processo-alvo sem bind manual.");
+        Console.WriteLine("- Verificar conexões novas do aplicativo real (o teste da PoC não valida o Steam).");
         Console.WriteLine("- Registrar resultado no docs/plano-de-execucao-fase0.md");
 
         if (engine is IDisposable disposable)
@@ -265,7 +276,7 @@ internal static class Program
     )
     {
         Console.WriteLine();
-        Console.WriteLine("Verificacao de IP publico por mapeamento:");
+        Console.WriteLine("IP público da interface (curl com bind manual; NÃO verifica o aplicativo mapeado):");
 
         if (!engineSelection.IsEnforced)
         {
@@ -485,9 +496,9 @@ internal static class Program
         {
             return new RoutingEngineSelection(
                 new WfpRoutingEngine(),
-                "wfp (kernel)",
+                "wfp (políticas de conexão)",
                 true,
-                "Sessao WFP com sublayer e filtros do driver para tentativa de enforce por app."
+                "Políticas IPv4/IPv6 por executável e LUID. Requer Administrador e routepolicies habilitado."
             );
         }
         catch (NotSupportedException ex)

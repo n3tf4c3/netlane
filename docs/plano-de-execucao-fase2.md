@@ -1,8 +1,10 @@
 # Fase 2 — Routing Engine
 
+Atualização em 2026-09-06: o motor foi substituído por [políticas nativas de conexão por AppId/LUID](roteamento-nativo.md), com resultado explícito e heartbeat para a UI. O serviço não mais apresenta dry-run como aplicação real. A prova de tráfego elevado continua pendente. Os registros abaixo de filtros PERMIT/BLOCK documentam a implementação anterior, não o funcionamento do novo motor.
+
 Objetivo:
 - Implementar aplicação de política de rota por aplicativo dentro do `NetLane.Service`, com persistência simples em arquivo JSON e aplicação por varredura.
-- Garantir fail-open quando o kernel WFP não estiver disponível (via fallback para `DryRunRoutingEngine`).
+- Garantir fail-open quando o WFP não estiver disponível, com resultado não aplicado (`UnavailableRoutingEngine`).
 - Validar rollback de segurança: remoção de regras ativas ao encerrar o serviço.
 
 Entregas esperadas:

@@ -1,5 +1,7 @@
 # Plano de execucao - Fase 0 (PoC obrigatoria)
 
+Revisão em 2026-09-06: instalação de filtros confirmada pelos logs anteriores; viabilidade de redirecionamento por aplicativo ainda pendente. A leitura do código mostrou que `--check-public-ip` usa `curl --interface`, e não o tráfego dos executáveis mapeados. Ver os limites no [plano da Fase 3](plano-de-execucao-fase3.md).
+
 ## Objetivo
 
 Comprovar que e possivel associar regras de saida por executavel para interfaces diferentes, sem alterar a rota global do Windows.
@@ -92,19 +94,21 @@ Somente avancar para Fase 1 quando:
   - Regras preparadas:
     - `explorer.exe => WiFi (...) | filtros=2`
     - `steam.exe => Ethernet (...) | filtros=2`
-  - Provas coletadas: IP publico reportado por app com mapeamento esperado para Wi-Fi e Ethernet (valores distintos no instante do teste).
-  - Status Fase 0: objetivo central de enforce por app em kernel atingido nesta execucao de PoC (sem alterar rota global).
+  - Evidência coletada: IP público reportado sob o nome de cada app, mas consultado via `curl --interface`; valores distintos comprovam apenas o acesso das interfaces naquele instante.
+  - Status revisado: instalação de filtros por app validada; direcionamento real do tráfego por aplicativo não demonstrado.
 
 ### Conclusao da fase
 
-- Fase 0 concluida: implementação do caminho WFP em kernel funcional no PoC, com fallback seguro para dry-run.
-- Critérios de aceite atingidos:
+- Caminho de instalação WFP funcional no PoC, com fallback inicial para dry-run. A conclusão anterior de viabilidade de roteamento foi revista.
+- Evidências obtidas:
   - Modo `wfp (kernel)` em sessão admin.
   - Roteamento intencional ativo (`Sim (intencional)`).
   - `filtros > 0` por app (`2`) em regras aplicadas.
-- Risco remanescente para Fase 1:
-  - validar comportamento sob carga, protocolos adicionais (HTTP3/QUIC, UDP), e endurecer lifecycle do agente/serviço.
-- Próximo ciclo: abrir a Fase 1 com serviço Windows + policy manager persistente e plano de rollback robusto.
+- Critérios ainda pendentes:
+  - implementar e comprovar direcionamento de novas conexões dos executáveis alvo; PERMIT/BLOCK não escolhem uma nova saída;
+  - verificar a tabela de rotas antes/depois, fail-open em falhas e encerramento abrupto;
+  - validar TCP, UDP/QUIC e comportamento sob carga.
+- As fases de monitoramento, políticas e editor avançaram como infraestrutura; não substituem essa prova de viabilidade.
 
 ### Transicao para Fase 1
 

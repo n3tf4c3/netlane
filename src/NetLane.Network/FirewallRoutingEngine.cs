@@ -10,26 +10,29 @@ public sealed class FirewallRoutingEngine : IRoutingEngine
 {
     private readonly Dictionary<string, NetworkRule> _appliedRules = new(StringComparer.OrdinalIgnoreCase);
 
-    public void ApplyRule(ApplicationIdentity application, NetworkRule rule)
+    public RoutingApplyResult ApplyRule(ApplicationIdentity application, NetworkRule rule)
     {
+        // The legacy firewall experiment must not emulate routing by blocking other interfaces.
+        if (rule.RouteMode is NetworkRouteMode.WiFi or NetworkRouteMode.Ethernet)
+            return new(false, "Firewall não redireciona conexões. Use políticas de conexão WFP.");
         var appKey = application.Name;
 
         if (string.IsNullOrWhiteSpace(appKey))
         {
             Console.WriteLine("[FW] Aplicacao sem nome valida nao pode receber regra.");
-            return;
+            return new(false, "Aplicação sem nome.");
         }
 
         if (rule.RouteMode == NetworkRouteMode.Automatic)
         {
             RemoveRule(appKey);
-            return;
+            return new(false, "Automático: nenhuma regra de direcionamento.");
         }
 
         if (string.IsNullOrWhiteSpace(application.ExecutablePath))
         {
             Console.WriteLine($"[FW] Caminho do executavel indisponivel para {appKey}. Regra de firewall depende de caminho completo.");
-            return;
+            return new(false, "Caminho indisponível.");
         }
 
         var adapter = FindAdapterById(rule.InterfaceId);
@@ -37,7 +40,7 @@ public sealed class FirewallRoutingEngine : IRoutingEngine
         if (string.IsNullOrWhiteSpace(interfaceName))
         {
             Console.WriteLine($"[FW] Interface {rule.InterfaceId} nao encontrada para {appKey}.");
-            return;
+            return new(false, "Interface indisponível.");
         }
 
         RemoveRule(appKey);
@@ -47,7 +50,7 @@ public sealed class FirewallRoutingEngine : IRoutingEngine
             ApplyBlockRule(application, interfaceName: null, suffix: "blocked");
             _appliedRules[appKey] = rule;
             Console.WriteLine($"[FW] Bloqueio aplicado para {appKey}.");
-            return;
+            return new(false, "Bloqueio legado solicitado, mas não confirmado pelo Windows.");
         }
 
         ApplyAllowOnInterface(application, interfaceName!, suffix: "allow");
@@ -58,6 +61,7 @@ public sealed class FirewallRoutingEngine : IRoutingEngine
 
         _appliedRules[appKey] = rule;
         Console.WriteLine($"[FW] Regra aplicada para {appKey}: {rule.RouteMode} -> {interfaceName}.");
+        return new(false, "Regras de firewall não comprovam direcionamento.");
     }
 
     public void RemoveRule(string applicationId)
