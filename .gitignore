@@ -9,3 +9,10 @@
 *.tmp
 *.swp
 *.swo
+
+artifacts/
+TestResults/
+*.json.bak
+*.json.lock
+*.runtime.json
+*.runtime.lock

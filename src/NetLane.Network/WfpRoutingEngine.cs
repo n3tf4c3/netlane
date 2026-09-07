@@ -1,585 +1,185 @@
+using System.Net.NetworkInformation;
 using NetLane.Core.Contracts;
 using NetLane.Core.Models;
-using System;
-using System.IO;
-using System.Linq;
-using System.Net.NetworkInformation;
-using System.Runtime.InteropServices;
+using NetLane.Network.Wfp;
 
 namespace NetLane.Network;
 
 public sealed class WfpRoutingEngine : IRoutingEngine, IDisposable
 {
-    private static readonly Guid NetLaneSublayerKey = new(
-        0x6f5bd67a,
-        0x0ca4,
-        0x4f2d,
-        0x95, 0x63, 0xac, 0xba, 0xc1, 0x67, 0x91, 0x6f
-    );
+    private readonly IWfpPolicySession _session;
+    private readonly Func<string, InterfaceRouteTarget> _resolveInterface;
+    private readonly Func<RoutingPrerequisites> _checkPrerequisites;
+    private readonly Dictionary<string, AppliedPolicy> _applied = new(StringComparer.OrdinalIgnoreCase);
+    private readonly object _gate = new();
+    private bool _disposed;
+    private RoutingPrerequisites? _prerequisites;
+    private long _prerequisitesAt;
 
-    private readonly Dictionary<string, WfpRuleState> _appliedRules = new(StringComparer.OrdinalIgnoreCase);
-    private readonly string _probeApplicationPath;
-    private readonly bool _kernelReady;
-    private IntPtr _engineHandle = IntPtr.Zero;
+    public WfpRoutingEngine() : this(new NativePolicySession(), ResolveInterface, WindowsRoutingPrerequisites.Check) { }
 
-    public WfpRoutingEngine()
+    internal WfpRoutingEngine(IWfpPolicySession session, Func<string, InterfaceRouteTarget> resolveInterface,
+        Func<RoutingPrerequisites> checkPrerequisites)
     {
-        if (!OperatingSystem.IsWindows())
-        {
-            throw new PlatformNotSupportedException("WFP routing only runs on Windows.");
-        }
-
-        if (!IsAdministrator())
-        {
-            throw new UnauthorizedAccessException("WFP requires administrator privileges.");
-        }
-
-        var openResult = FwpApiInterop.FwpmEngineOpen0(
-            null,
-            FwpApiInterop.RPC_C_AUTHN_WINNT,
-            IntPtr.Zero,
-            IntPtr.Zero,
-            out _engineHandle
-        );
-
-        if (openResult != 0)
-        {
-            throw new InvalidOperationException($"Falha ao abrir sessao WFP: code={openResult}");
-        }
-
-        _probeApplicationPath = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.System),
-            "cmd.exe"
-        );
-
-        if (!File.Exists(_probeApplicationPath))
-        {
-            throw new InvalidOperationException("Falha no preflight WFP: arquivo de probe nao encontrado.");
-        }
-
-        var probeAppId = ResolveApplicationId(_probeApplicationPath, out var probeAppIdHex, out var probeAppIdError);
-        if (probeAppId is null)
-        {
-            throw new InvalidOperationException(
-                $"Falha no preflight WFP: nao foi possivel resolver AppId para {_probeApplicationPath}. Motivo: {probeAppIdError}"
-            );
-        }
-
-        _kernelReady = TryCreateNetLaneSublayer();
-        if (_kernelReady)
-        {
-            Console.WriteLine($"[WFP] Sessao aberta e sublayer dedicada ativa: {_probeApplicationPath} | appId={probeAppIdHex}");
-        }
-        else
-        {
-            Console.WriteLine("[WFP] Sublayer dedicada indisponivel. Regras ficarao em preflight apenas.");
-        }
+        _session = session;
+        _resolveInterface = resolveInterface;
+        _checkPrerequisites = checkPrerequisites;
     }
 
-    public void ApplyRule(ApplicationIdentity application, NetworkRule rule)
+    public RoutingApplyResult ApplyRule(ApplicationIdentity application, NetworkRule rule)
     {
-        if (string.IsNullOrWhiteSpace(application.Name))
+        lock (_gate)
         {
-            throw new ArgumentException("Application name is required.");
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            ArgumentException.ThrowIfNullOrWhiteSpace(application.Name);
+            if (!rule.Enabled || rule.RouteMode == NetworkRouteMode.Automatic)
+            {
+                RemoveRule(application.Name);
+                return new(false, "Automático/desabilitado: Windows decide; política NetLane removida.");
+            }
+            if (!Enum.IsDefined(rule.RouteMode)) throw new ArgumentOutOfRangeException(nameof(rule));
+            if (!Path.IsPathFullyQualified(application.ExecutablePath) || !File.Exists(application.ExecutablePath))
+                throw new FileNotFoundException("É necessário o caminho completo de um executável existente.", application.ExecutablePath);
+
+            InterfaceRouteTarget? target = null;
+            if (rule.RouteMode != NetworkRouteMode.Blocked)
+            {
+                if (_prerequisites is null || Environment.TickCount64 - _prerequisitesAt >= 2000)
+                {
+                    _prerequisites = _checkPrerequisites();
+                    _prerequisitesAt = Environment.TickCount64;
+                }
+                if (!_prerequisites.Ready)
+                {
+                    RemoveRule(application.Name);
+                    return new(false, _prerequisites.Summary);
+                }
+                target = _resolveInterface(rule.InterfaceId);
+                if (target.Mode != rule.RouteMode)
+                    throw new InvalidOperationException("A interface escolhida não corresponde ao tipo da regra.");
+                if (!target.SupportsIpv4 && !target.SupportsIpv6)
+                    throw new InvalidOperationException("A interface escolhida não tem IPv4 nem IPv6 habilitado.");
+            }
+            var path = Path.GetFullPath(application.ExecutablePath);
+            // The families are part of the signature: enabling IPv6 on the adapter must re-apply, not hit the cache.
+            var signature = new PolicySignature(path.ToUpperInvariant(), rule.RouteMode, target?.Luid ?? 0,
+                target?.SupportsIpv4 ?? true, target?.SupportsIpv6 ?? true);
+            _applied.TryGetValue(application.Name, out var previous);
+            if (previous?.Signature == signature) return previous.Result;
+
+            var routeKeys = new List<Guid>();
+            var blockIds = new List<ulong>();
+            _session.Begin();
+            try
+            {
+                if (previous is not null) Delete(previous);
+                for (uint ipVersion = 0; ipVersion <= 1; ipVersion++)
+                {
+                    // Blocking stays dual-stack: a family we cannot route must not become a way out.
+                    if (target is null) { blockIds.Add(_session.AddBlock(path, ipVersion)); continue; }
+                    // Pinning a family the adapter does not carry sends traffic to a stack that cannot answer.
+                    if (!target.Supports(ipVersion)) continue;
+                    var key = Guid.NewGuid();
+                    _session.AddRoute(key, path, ipVersion, target.Luid);
+                    routeKeys.Add(key);
+                }
+                _session.Commit();
+            }
+            catch
+            {
+                try { _session.Abort(); }
+                catch { _session.Dispose(); _disposed = true; _applied.Clear(); }
+                throw;
+            }
+
+            var result = new RoutingApplyResult(true, target is null ? "Bloqueio IPv4/IPv6 aceito pelo Windows."
+                : $"Política {target.Families} aceita: {target.Name}. Vale para novas conexões; tráfego ainda não verificado.");
+            _applied[application.Name] = new(signature, routeKeys, blockIds, result);
+            return result;
         }
-
-        RemoveRule(application.Name);
-
-        if (string.IsNullOrWhiteSpace(application.ExecutablePath))
-        {
-            _appliedRules[application.Name] = new WfpRuleState(rule);
-            Console.WriteLine($"[WFP] Aplicacao sem caminho disponivel. Regra registrada no modo preflight: {application.Name}.");
-            return;
-        }
-
-        var appIdBytes = ResolveApplicationId(application.ExecutablePath, out var appIdHex, out var appIdError);
-        if (appIdBytes is null)
-        {
-            _appliedRules[application.Name] = new WfpRuleState(rule);
-            Console.WriteLine(
-                $"[WFP] Nao foi possivel resolver AppId de {application.Name} ({application.ExecutablePath}). Motivo: {appIdError}. " +
-                "Regra permanece em preflight."
-            );
-            return;
-        }
-
-        var filterIds = Array.Empty<ulong>();
-        if (_kernelReady)
-        {
-            var displayAppId = appIdHex ?? "n/a";
-            filterIds = ApplyKernelRule(rule, appIdBytes, application.Name, displayAppId);
-        }
-
-        _appliedRules[application.Name] = new WfpRuleState(
-            Rule: rule,
-            FilterIds: filterIds,
-            AppIdHex: appIdHex
-        );
     }
 
     public void RemoveRule(string applicationId)
     {
-        if (string.IsNullOrWhiteSpace(applicationId))
+        lock (_gate)
         {
-            return;
+            ObjectDisposedException.ThrowIf(_disposed, this);
+            if (!_applied.TryGetValue(applicationId, out var previous)) return;
+            InTransaction(() => Delete(previous));
+            _applied.Remove(applicationId);
         }
-
-        var found = _appliedRules.Keys.FirstOrDefault(
-            key => string.Equals(key, applicationId, StringComparison.OrdinalIgnoreCase)
-                   || string.Equals(_appliedRules[key].Rule.ApplicationId, applicationId, StringComparison.OrdinalIgnoreCase)
-        );
-        if (string.IsNullOrWhiteSpace(found))
-        {
-            return;
-        }
-
-        var state = _appliedRules[found];
-        if (_kernelReady)
-        {
-            foreach (var filterId in state.FilterIds)
-            {
-                if (filterId == 0)
-                {
-                    continue;
-                }
-
-                var deleteResult = FwpApiInterop.FwpmFilterDeleteById0(_engineHandle, filterId);
-                if (deleteResult != 0)
-                {
-                    Console.WriteLine($"[WFP] Falha ao remover filtro id={filterId} para {found}: code={deleteResult}");
-                }
-            }
-        }
-
-        _appliedRules.Remove(found);
-        Console.WriteLine($"[WFP] Regra removida: {applicationId}");
     }
 
     public void RemoveAllRules()
     {
-        var applied = _appliedRules.Values.ToList();
-        foreach (var state in applied)
+        lock (_gate)
         {
-            foreach (var filterId in state.FilterIds)
-            {
-                if (filterId == 0)
-                {
-                    continue;
-                }
-
-                var deleteResult = FwpApiInterop.FwpmFilterDeleteById0(_engineHandle, filterId);
-                if (deleteResult != 0)
-                {
-                    Console.WriteLine($"[WFP] Falha ao remover filtro id={filterId}: code={deleteResult}");
-                }
-            }
+            if (_disposed || _applied.Count == 0) return;
+            InTransaction(() => { foreach (var policy in _applied.Values) Delete(policy); });
+            _applied.Clear();
         }
+    }
 
-        _appliedRules.Clear();
-        Console.WriteLine("[WFP] Todas as regras removidas.");
+    private void InTransaction(Action action)
+    {
+        _session.Begin();
+        try { action(); _session.Commit(); }
+        catch
+        {
+            try { _session.Abort(); }
+            catch { _session.Dispose(); _disposed = true; _applied.Clear(); }
+            throw;
+        }
+    }
+
+    private void Delete(AppliedPolicy policy)
+    {
+        foreach (var key in policy.RouteKeys) _session.DeleteRoute(key);
+        foreach (var id in policy.BlockIds) _session.DeleteBlock(id);
     }
 
     public IReadOnlyList<string> GetAppliedRules()
     {
-        return _appliedRules.Select(pair =>
-            $"{pair.Key} => {pair.Value.Rule.RouteMode} ({pair.Value.Rule.InterfaceId}) " +
-            $"| filtros={pair.Value.FilterIds.Length}"
-        ).ToList();
+        lock (_gate) return _applied.Select(p => $"{p.Key}: {p.Value.Result.Detail}").ToArray();
     }
 
     public void Dispose()
     {
-        if (_engineHandle == IntPtr.Zero)
+        lock (_gate)
         {
-            return;
-        }
-
-        try
-        {
-            RemoveAllRules();
-
-            var sublayerKey = NetLaneSublayerKey;
-            var deleteSublayerResult = FwpApiInterop.FwpmSubLayerDeleteByKey0(_engineHandle, ref sublayerKey);
-            if (deleteSublayerResult != 0)
-            {
-                Console.WriteLine($"[WFP] Falha ao remover sublayer dedicado: code={deleteSublayerResult}");
-            }
-        }
-        finally
-        {
-            FwpApiInterop.FwpmEngineClose0(_engineHandle);
-            _engineHandle = IntPtr.Zero;
+            if (_disposed) return;
+            _session.Dispose(); // Closing the dynamic session also cleans up after a failed delete.
+            _applied.Clear();
+            _disposed = true;
         }
     }
 
-    private static bool TryGetInterfaceIndex(string interfaceId, out uint interfaceIndex, out string? error)
+    internal static InterfaceRouteTarget ResolveInterface(string interfaceId)
     {
-        error = null;
-        interfaceIndex = 0;
-
+        if (!Guid.TryParse(interfaceId, out var guid)) throw new ArgumentException("GUID de interface inválido.");
         var adapter = NetworkInterface.GetAllNetworkInterfaces()
-            .FirstOrDefault(i => string.Equals(i.Id, interfaceId, StringComparison.OrdinalIgnoreCase));
-        if (adapter is null)
+            .SingleOrDefault(a => Guid.TryParse(a.Id, out var candidate) && candidate == guid);
+        if (adapter is null || adapter.OperationalStatus != OperationalStatus.Up)
+            throw new InvalidOperationException("Interface selecionada ausente ou desconectada.");
+        var mode = adapter.NetworkInterfaceType switch
         {
-            error = "interface nao encontrada";
-            return false;
-        }
-
-        try
-        {
-            var ipv4Properties = adapter.GetIPProperties().GetIPv4Properties();
-            if (ipv4Properties is null)
-            {
-                error = "interface sem propriedades IPv4";
-                return false;
-            }
-
-            interfaceIndex = (uint)ipv4Properties.Index;
-            return interfaceIndex > 0;
-        }
-        catch (Exception ex)
-        {
-            error = ex.Message;
-            return false;
-        }
+            NetworkInterfaceType.Ethernet => NetworkRouteMode.Ethernet,
+            NetworkInterfaceType.Wireless80211 => NetworkRouteMode.WiFi,
+            _ => throw new InvalidOperationException("Selecione uma interface Ethernet ou Wi-Fi.")
+        };
+        NativePolicySession.Check(ConnectionPolicyInterop.ConvertInterfaceGuidToLuid(in guid, out var luid), "ConvertInterfaceGuidToLuid");
+        if (luid == 0) throw new InvalidOperationException("Windows retornou LUID de interface inválido.");
+        return new(adapter.Name, luid, mode,
+            adapter.Supports(NetworkInterfaceComponent.IPv4), adapter.Supports(NetworkInterfaceComponent.IPv6));
     }
 
-    private ulong[] ApplyKernelRule(NetworkRule rule, byte[] appIdBytes, string appName, string appIdHex)
-    {
-        if (rule.RouteMode == NetworkRouteMode.Automatic)
-        {
-            Console.WriteLine($"[WFP] Regra automatica para {appName} permanece sem filtros kernel.");
-            return Array.Empty<ulong>();
-        }
+    private sealed record PolicySignature(string Path, NetworkRouteMode Mode, ulong Luid, bool Ipv4, bool Ipv6);
+    private sealed record AppliedPolicy(PolicySignature Signature, IReadOnlyList<Guid> RouteKeys, IReadOnlyList<ulong> BlockIds, RoutingApplyResult Result);
+}
 
-        if (rule.RouteMode == NetworkRouteMode.Blocked)
-        {
-            if (TryAddFilter(
-                    appIdBytes,
-                    exePath: appName,
-                    action: FwpApiInterop.FwpActionType.FWP_ACTION_BLOCK,
-                    localInterfaceIndex: null,
-                    matchType: null,
-                    out var blockFilterId,
-                    out var addError)
-                )
-            {
-                Console.WriteLine($"[WFP] Regra ativa por filtro kernel (blocked): {appName} | appId={appIdHex}");
-                return new[] { blockFilterId };
-            }
-
-            Console.WriteLine($"[WFP] Falha ao registrar filtro BLOCK para {appName}: {addError}");
-            return Array.Empty<ulong>();
-        }
-
-        if (!TryGetInterfaceIndex(rule.InterfaceId, out var interfaceIndex, out var interfaceError))
-        {
-            Console.WriteLine($"[WFP] Interface alvo nao resolvida para {appName}: {interfaceError}");
-            return Array.Empty<ulong>();
-        }
-
-        var installed = 0;
-        var filterIds = new ulong[2];
-
-        if (TryAddFilter(
-                appIdBytes,
-                exePath: appName,
-                action: FwpApiInterop.FwpActionType.FWP_ACTION_PERMIT,
-                localInterfaceIndex: interfaceIndex,
-                matchType: FwpApiInterop.FwpMatchType.FWP_MATCH_EQUAL,
-                out var permitFilterId,
-                out var permitError)
-            )
-        {
-            filterIds[installed++] = permitFilterId;
-        }
-        else
-        {
-            Console.WriteLine($"[WFP] Falha ao registrar filtro PERMIT (interface igual) para {appName}: {permitError}");
-        }
-
-        if (TryAddFilter(
-                appIdBytes,
-                exePath: appName,
-                action: FwpApiInterop.FwpActionType.FWP_ACTION_BLOCK,
-                localInterfaceIndex: interfaceIndex,
-                matchType: FwpApiInterop.FwpMatchType.FWP_MATCH_NOT_EQUAL,
-                out var blockOtherFilterId,
-                out var blockError)
-            )
-        {
-            filterIds[installed++] = blockOtherFilterId;
-        }
-        else
-        {
-            Console.WriteLine($"[WFP] Falha ao registrar filtro BLOCK (outras interfaces) para {appName}: {blockError}");
-        }
-
-        if (installed == 0)
-        {
-            return Array.Empty<ulong>();
-        }
-
-        Console.WriteLine(
-            $"[WFP] Regra ativa por filtros kernel: {appName} -> interface={interfaceIndex}, filtros={installed}/2."
-        );
-        return filterIds[..installed];
-    }
-
-    private bool TryAddFilter(
-        byte[] appIdBytes,
-        string exePath,
-        FwpApiInterop.FwpActionType action,
-        uint? localInterfaceIndex,
-        FwpApiInterop.FwpMatchType? matchType,
-        out ulong filterId,
-        out string? error
-    )
-    {
-        filterId = 0;
-        error = null;
-
-        if (_engineHandle == IntPtr.Zero)
-        {
-            error = "engine handle invalido";
-            return false;
-        }
-
-        var appIdBlobData = IntPtr.Zero;
-        var appIdBlob = IntPtr.Zero;
-        var filterName = IntPtr.Zero;
-        var filterDescription = IntPtr.Zero;
-        GCHandle conditionHandle = default;
-
-        try
-        {
-            appIdBlobData = Marshal.AllocHGlobal(appIdBytes.Length);
-            Marshal.Copy(appIdBytes, 0, appIdBlobData, appIdBytes.Length);
-
-            appIdBlob = Marshal.AllocHGlobal(Marshal.SizeOf<FwpApiInterop.FWP_BYTE_BLOB>());
-            var blob = new FwpApiInterop.FWP_BYTE_BLOB { Size = (uint)appIdBytes.Length, Data = appIdBlobData };
-            Marshal.StructureToPtr(blob, appIdBlob, false);
-
-            var exeName = Path.GetFileNameWithoutExtension(exePath);
-            filterName = Marshal.StringToCoTaskMemUni($"NetLane {action} {exeName}");
-            filterDescription = Marshal.StringToCoTaskMemUni(
-                $"NetLane kernel filter for {exeName} on interface {(localInterfaceIndex?.ToString() ?? "ANY")}"
-            );
-
-            var conditions = new[]
-            {
-                new FwpApiInterop.FWPM_FILTER_CONDITION0
-                {
-                    fieldKey = FwpApiInterop.FWPM_CONDITION_ALE_APP_ID,
-                    matchType = FwpApiInterop.FwpMatchType.FWP_MATCH_EQUAL,
-                    conditionValue = new FwpApiInterop.FWP_CONDITION_VALUE0
-                    {
-                        type = FwpApiInterop.FwpDataType.FWP_BYTE_BLOB_TYPE,
-                        byteBlob = appIdBlob
-                    }
-                },
-                localInterfaceIndex is null
-                    ? default
-                    : new FwpApiInterop.FWPM_FILTER_CONDITION0
-                    {
-                        fieldKey = FwpApiInterop.FWPM_CONDITION_INTERFACE_INDEX,
-                        matchType = matchType ?? FwpApiInterop.FwpMatchType.FWP_MATCH_EQUAL,
-                        conditionValue = new FwpApiInterop.FWP_CONDITION_VALUE0
-                        {
-                            type = FwpApiInterop.FwpDataType.FWP_UINT32,
-                            uint32 = localInterfaceIndex.Value
-                        }
-                    }
-            };
-
-            var conditionCount = localInterfaceIndex is null ? 1u : 2u;
-            var rawConditions = new FwpApiInterop.FWPM_FILTER_CONDITION0[conditionCount];
-            Array.Copy(conditions, rawConditions, conditionCount);
-
-            conditionHandle = GCHandle.Alloc(rawConditions, GCHandleType.Pinned);
-
-            var filter = new FwpApiInterop.FWPM_FILTER0
-            {
-                displayData = new FwpApiInterop.FWPM_DISPLAY_DATA0
-                {
-                    name = filterName,
-                    description = filterDescription
-                },
-                layerKey = FwpApiInterop.FWPM_LAYER_ALE_AUTH_CONNECT_V4,
-                subLayerKey = NetLaneSublayerKey,
-                numFilterConditions = conditionCount,
-                filterCondition = conditionHandle.AddrOfPinnedObject(),
-                weight = new FwpApiInterop.FWP_VALUE0 { type = FwpApiInterop.FwpDataType.FWP_EMPTY },
-                action = new FwpApiInterop.FWPM_ACTION0 { type = action },
-                effectiveWeight = new FwpApiInterop.FWP_VALUE0 { type = FwpApiInterop.FwpDataType.FWP_EMPTY },
-                filterContext = new FwpApiInterop.FWPM_FILTER_UNION { rawContext = 0 },
-            };
-
-            var result = FwpApiInterop.FwpmFilterAdd0(_engineHandle, in filter, IntPtr.Zero, out filterId);
-            if (result != 0)
-            {
-                error = $"code={result}";
-                return false;
-            }
-
-            return true;
-        }
-        finally
-        {
-            if (filterName != IntPtr.Zero)
-            {
-                Marshal.FreeCoTaskMem(filterName);
-            }
-
-            if (filterDescription != IntPtr.Zero)
-            {
-                Marshal.FreeCoTaskMem(filterDescription);
-            }
-
-            if (conditionHandle.IsAllocated)
-            {
-                conditionHandle.Free();
-            }
-
-            if (appIdBlob != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(appIdBlob);
-            }
-
-            if (appIdBlobData != IntPtr.Zero)
-            {
-                Marshal.FreeHGlobal(appIdBlobData);
-            }
-        }
-    }
-
-    private bool TryCreateNetLaneSublayer()
-    {
-        uint addSubLayerResult;
-        var subLayerName = Marshal.StringToCoTaskMemUni("NetLane");
-        var subLayerDescription = Marshal.StringToCoTaskMemUni("NetLane kernel sublayer for per-app routing");
-        try
-        {
-            var subLayer = new FwpApiInterop.FWPM_SUBLAYER0
-            {
-                subLayerKey = NetLaneSublayerKey,
-                displayData = new FwpApiInterop.FWPM_DISPLAY_DATA0
-                {
-                    name = subLayerName,
-                    description = subLayerDescription
-                },
-                flags = 0,
-                providerKey = IntPtr.Zero,
-                providerData = default,
-                weight = 0x800
-            };
-
-            addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
-            if (addSubLayerResult != 0)
-            {
-                Console.WriteLine($"[WFP] Falha ao adicionar sublayer dedicada. code={addSubLayerResult}");
-                var sublayerKey = NetLaneSublayerKey;
-                var deleted = FwpApiInterop.FwpmSubLayerDeleteByKey0(_engineHandle, ref sublayerKey);
-                Console.WriteLine($"[WFP] Tentativa de reset do sublayer: delete code={deleted}");
-                if (deleted == 0)
-                {
-                    addSubLayerResult = FwpApiInterop.FwpmSubLayerAdd0(_engineHandle, in subLayer, IntPtr.Zero);
-                    if (addSubLayerResult != 0)
-                    {
-                        Console.WriteLine($"[WFP] Falha novamente ao adicionar sublayer dedicada. code={addSubLayerResult}");
-                    }
-                }
-            }
-        }
-        finally
-        {
-            if (subLayerName != IntPtr.Zero)
-            {
-                Marshal.FreeCoTaskMem(subLayerName);
-            }
-
-            if (subLayerDescription != IntPtr.Zero)
-            {
-                Marshal.FreeCoTaskMem(subLayerDescription);
-            }
-        }
-
-        return addSubLayerResult == 0;
-    }
-
-    private static byte[]? ResolveApplicationId(
-        string executablePath,
-        out string? appIdHex,
-        out string? error
-    )
-    {
-        appIdHex = null;
-        error = null;
-
-        if (!File.Exists(executablePath))
-        {
-            error = "arquivo inexistente";
-            return null;
-        }
-
-        IntPtr appIdPointer = IntPtr.Zero;
-        try
-        {
-            var result = FwpApiInterop.FwpmGetAppIdFromFileName0(executablePath, out appIdPointer);
-            if (result != 0)
-            {
-                error = $"code={result}";
-                return null;
-            }
-
-            if (appIdPointer == IntPtr.Zero)
-            {
-                error = "retorno nulo da API";
-                return null;
-            }
-
-            var blob = Marshal.PtrToStructure<FwpApiInterop.FWP_BYTE_BLOB>(appIdPointer);
-            if (blob.Size == 0 || blob.Data == IntPtr.Zero)
-            {
-                error = "blob vazio";
-                return null;
-            }
-
-            var bytes = new byte[blob.Size];
-            Marshal.Copy(blob.Data, bytes, 0, (int)blob.Size);
-            appIdHex = BitConverter.ToString(bytes).Replace("-", string.Empty);
-            return bytes;
-        }
-        finally
-        {
-            if (appIdPointer != IntPtr.Zero)
-            {
-                FwpApiInterop.FwpmFreeMemory0(ref appIdPointer);
-            }
-        }
-    }
-
-    private static bool IsAdministrator()
-    {
-        if (!OperatingSystem.IsWindows())
-        {
-            return false;
-        }
-
-        var principal = new System.Security.Principal.WindowsPrincipal(
-            System.Security.Principal.WindowsIdentity.GetCurrent());
-        return principal.IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
-    }
-
-    private sealed record WfpRuleState(
-        NetworkRule Rule,
-        ulong[] FilterIds,
-        string? AppIdHex = null
-    )
-    {
-        public WfpRuleState(NetworkRule rule)
-            : this(rule, Array.Empty<ulong>(), null)
-        {
-        }
-    }
+internal sealed record InterfaceRouteTarget(string Name, ulong Luid, NetworkRouteMode Mode,
+    bool SupportsIpv4 = true, bool SupportsIpv6 = true)
+{
+    internal bool Supports(uint ipVersion) => ipVersion == 0 ? SupportsIpv4 : SupportsIpv6;
+    internal string Families => SupportsIpv4 && SupportsIpv6 ? "IPv4/IPv6" : SupportsIpv4 ? "somente IPv4" : "somente IPv6";
 }

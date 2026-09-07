@@ -1,54 +1,298 @@
 <Window x:Class="NetLane.UI.MainWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="NetLane - Regras por Aplicação"
-        Height="420"
-        Width="760"
-        WindowStartupLocation="CenterScreen">
-    <DockPanel Margin="12">
-        <StackPanel DockPanel.Dock="Top" Margin="0,0,0,10">
-            <TextBlock Text="NetLane — Interface de Regras" FontSize="20" FontWeight="Bold" />
-            <TextBlock Text="Visualização inicial de políticas de roteamento por aplicação." />
-            <TextBlock Text="Fase 3 (progresso inicial): consulta e visualização."
-                       FontStyle="Italic" Margin="0,4,0,0" />
-            <TextBlock x:Name="StatusTextBlock"
-                       Margin="0,8,0,0"
-                       Text="Carregando políticas..." />
-
-            <StackPanel Orientation="Horizontal"
-                        Margin="0,8,0,0"
-                        HorizontalAlignment="Left">
-                <Button x:Name="RefreshButton" Width="110" Height="28" Margin="0,0,8,0"
-                        Content="Atualizar"
-                        Click="RefreshButton_Click" />
-                <Button x:Name="SaveButton" Width="90" Height="28" Margin="0,0,8,0"
-                        Content="Salvar"
-                        Click="SaveButton_Click" />
-                <TextBlock x:Name="PolicyPathTextBlock"
-                           VerticalAlignment="Center"
-                           TextWrapping="Wrap" />
-            </StackPanel>
-        </StackPanel>
-        <DataGrid x:Name="RulesGrid"
-                  AutoGenerateColumns="False"
-                  CanUserAddRows="True"
-                  CanUserDeleteRows="True"
-                  IsReadOnly="False">
-            <DataGrid.Columns>
-                <DataGridTextColumn Header="Aplicativo" Width="*"
-                                    Binding="{Binding ApplicationId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <DataGridTextColumn Header="Caminho"
-                                    Width="2*"
-                                    Binding="{Binding ExecutablePath, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <DataGridTextColumn Header="Modo"
-                                    Width="140"
-                                    Binding="{Binding RouteMode, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <DataGridTextColumn Header="InterfaceId"
-                                    Width="*"
-                                    Binding="{Binding InterfaceId, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-                <DataGridCheckBoxColumn Header="Ativo" Width="70"
-                                        Binding="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" />
-            </DataGrid.Columns>
-        </DataGrid>
-    </DockPanel>
+        xmlns:controls="clr-namespace:NetLane.UI.Controls"
+        xmlns:monitoring="clr-namespace:NetLane.UI.Monitoring"
+        Title="NetLane — Cada app, sua rota"
+        Height="840" Width="1220" MinHeight="680" MinWidth="1000"
+        FontFamily="Segoe UI" FontSize="13" Foreground="{DynamicResource TextBrush}"
+        Background="{DynamicResource CanvasBrush}" WindowStartupLocation="CenterScreen"
+        UseLayoutRounding="True" SnapsToDevicePixels="True" Closing="Window_Closing">
+    <Window.Resources>
+        <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries><ResourceDictionary Source="Styles/DesignSystem.xaml" /></ResourceDictionary.MergedDictionaries>
+            <Style x:Key="ServiceSurface" TargetType="Border">
+                <Setter Property="Background" Value="{DynamicResource WarningSurfaceBrush}" />
+                <Setter Property="BorderBrush" Value="{DynamicResource WarningLineBrush}" />
+                <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="9" />
+                <Style.Triggers><DataTrigger Binding="{Binding IsRuntimeConfirmed}" Value="True">
+                    <Setter Property="Background" Value="{DynamicResource SuccessSurfaceBrush}" />
+                    <Setter Property="BorderBrush" Value="{DynamicResource SuccessSurfaceBrush}" />
+                </DataTrigger></Style.Triggers>
+            </Style>
+            <Style x:Key="ServiceInk" TargetType="TextBlock">
+                <Setter Property="Foreground" Value="{DynamicResource WarningBrush}" />
+                <Style.Triggers><DataTrigger Binding="{Binding IsRuntimeConfirmed}" Value="True"><Setter Property="Foreground" Value="{DynamicResource SuccessBrush}" /></DataTrigger></Style.Triggers>
+            </Style>
+        </ResourceDictionary>
+    </Window.Resources>
+    <Window.Icon>
+        <DrawingImage><DrawingImage.Drawing><DrawingGroup>
+            <GeometryDrawing Brush="#087E8B" Geometry="M 5,0 L 27,0 Q 32,0 32,5 L 32,27 Q 32,32 27,32 L 5,32 Q 0,32 0,27 L 0,5 Q 0,0 5,0" />
+            <GeometryDrawing><GeometryDrawing.Pen><Pen Brush="White" Thickness="3" StartLineCap="Round" EndLineCap="Round" LineJoin="Round" /></GeometryDrawing.Pen><GeometryDrawing.Geometry><PathGeometry Figures="M 9,24 L 9,9 L 23,23 L 23,8" /></GeometryDrawing.Geometry></GeometryDrawing>
+        </DrawingGroup></DrawingImage.Drawing></DrawingImage>
+    </Window.Icon>
+    <Grid Background="{DynamicResource CanvasBrush}">
+        <Grid.ColumnDefinitions><ColumnDefinition Width="192" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+        <Border Background="{DynamicResource SidebarBrush}" BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,0,1,0">
+            <DockPanel Margin="14,26,14,18">
+                <StackPanel DockPanel.Dock="Top" Margin="10,0,0,28">
+                    <StackPanel Orientation="Horizontal">
+                        <Border Width="34" Height="34" Background="{DynamicResource AccentBrush}" CornerRadius="9" Margin="0,0,10,0">
+                            <Path Data="M 9,25 L 9,10 L 23,24 L 23,9" Stroke="White" StrokeThickness="3" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" />
+                        </Border>
+                        <TextBlock Text="NetLane" FontSize="23" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    </StackPanel>
+                    <TextBlock Text="Cada app, sua rota." Style="{StaticResource Caption}" Margin="0,12,0,0" />
+                </StackPanel>
+                <StackPanel DockPanel.Dock="Bottom" Margin="10,0,8,0">
+                    <Border Background="{DynamicResource SurfaceBrush}" CornerRadius="8" Padding="12" Margin="0,0,0,18">
+                        <StackPanel>
+                            <TextBlock Text="ROTEAMENTO" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource MutedBrush}" />
+                            <TextBlock Text="{Binding RuntimeTitle}" Style="{StaticResource ServiceInk}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" Margin="0,6,0,0" />
+                        </StackPanel>
+                    </Border>
+                    <TextBlock Text="VERSÃO EM DESENVOLVIMENTO" FontSize="9" Foreground="{DynamicResource MutedBrush}" />
+                    <TextBlock Text="Controle local · Windows" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                </StackPanel>
+                <ListBox x:Name="NavigationList" SelectedIndex="{Binding SelectedIndex, ElementName=WorkspaceTabs, Mode=TwoWay}"
+                         Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource NavigationItem}"
+                         ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Navegação principal">
+                    <ListBoxItem AutomationProperties.Name="Visão geral"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE80F;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Visão geral" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
+                    <ListBoxItem AutomationProperties.Name="Regras de apps"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8A5;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Regras de apps" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
+                    <ListBoxItem AutomationProperties.Name="Diagnóstico"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE9D9;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Diagnóstico" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
+                </ListBox>
+            </DockPanel>
+        </Border>
+        <DockPanel Grid.Column="1" Margin="28,24,28,18">
+            <Grid DockPanel.Dock="Top" Margin="0,0,0,16">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel>
+                    <TextBlock Text="{Binding SelectedItem.Header, ElementName=WorkspaceTabs}" FontSize="28" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding SelectedItem.Tag, ElementName=WorkspaceTabs}" Style="{StaticResource Caption}" FontSize="13" Margin="0,5,20,0" />
+                </StackPanel>
+                <Button Grid.Column="1" Content="↻  Atualizar" Click="RefreshAdaptersButton_Click" VerticalAlignment="Center" AutomationProperties.Name="Atualizar conexões e estado do serviço" />
+            </Grid>
+            <Border DockPanel.Dock="Top" Style="{StaticResource ServiceSurface}" Padding="16,12" Margin="0,0,0,16">
+                <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="28" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBlock Text="&#xE946;" FontFamily="Segoe MDL2 Assets" Style="{StaticResource ServiceInk}" FontSize="18" VerticalAlignment="Center" />
+                    <StackPanel Grid.Column="1" Margin="8,0,16,0">
+                        <TextBlock Text="{Binding RuntimeTitle}" Style="{StaticResource ServiceInk}" FontWeight="SemiBold" />
+                        <TextBlock x:Name="RoutingRuntimeText" Text="{Binding RuntimeHint}" Style="{StaticResource ServiceInk}" FontSize="12" TextWrapping="Wrap" Margin="0,3,0,0" />
+                    </StackPanel>
+                    <Button x:Name="DiagnosticsButton" Grid.Column="2" Content="Ver diagnóstico" Click="DiagnosticsButton_Click" VerticalAlignment="Center" Background="Transparent" BorderBrush="{DynamicResource WarningLineBrush}" />
+                </Grid>
+            </Border>
+            <controls:WorkspaceHost x:Name="WorkspaceTabs" SelectedIndex="0" Background="Transparent" BorderThickness="0" AutomationProperties.Name="Conteúdo da página">
+                <TabControl.Template><ControlTemplate TargetType="TabControl"><ContentPresenter ContentSource="SelectedContent" /></ControlTemplate></TabControl.Template>
+                <TabItem Header="Visão geral" Tag="Acompanhe suas conexões, em tempo real.">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
+                        <StackPanel x:Name="UsagePanel">
+                            <Expander x:Name="InterfaceSelectionExpander" IsExpanded="False" Margin="0,0,0,8">
+                                <Expander.Header><DockPanel><TextBlock DockPanel.Dock="Right" Text="Gerenciar interfaces" Foreground="{DynamicResource AccentBrush}" FontSize="12" VerticalAlignment="Center" /><StackPanel Orientation="Horizontal"><TextBlock Text="Suas conexões" Style="{StaticResource SectionTitle}" /><TextBlock Text="{Binding SelectionSummary}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,0,12,0" /></StackPanel></DockPanel></Expander.Header>
+                                <Border Style="{StaticResource Card}" Padding="16">
+                                    <StackPanel>
+                                        <TextBlock Text="Escolha quais conexões aparecem no painel e nas opções dos aplicativos." Style="{StaticResource Caption}" Margin="0,0,0,12" />
+                                        <ScrollViewer MaxHeight="138" VerticalScrollBarVisibility="Auto">
+                                            <ItemsControl x:Name="InterfaceSelectionList" ItemsSource="{Binding AllInterfaces}">
+                                                <ItemsControl.ItemsPanel><ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate></ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate><DataTemplate>
+                                                    <CheckBox IsChecked="{Binding IsSelected, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" Margin="0,4,16,12" Width="230" AutomationProperties.Name="{Binding Name}" ToolTip="{Binding AdapterId}">
+                                                        <StackPanel Width="198"><TextBlock Text="{Binding Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding ConnectionStatus}" Style="{StaticResource Caption}" /></StackPanel>
+                                                    </CheckBox>
+                                                </DataTemplate></ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </ScrollViewer>
+                                        <DockPanel><Button DockPanel.Dock="Right" Content="Salvar seleção" Click="SaveSelectionButton_Click" Margin="12,0,0,0" /><TextBlock Text="{Binding SelectionStatus}" Style="{StaticResource Caption}" VerticalAlignment="Center" /></DockPanel>
+                                        <TextBlock Text="Isso não desativa placas no Windows nem altera as regras salvas." Style="{StaticResource Caption}" Margin="0,10,0,0" />
+                                    </StackPanel>
+                                </Border>
+                            </Expander>
+                            <ListBox x:Name="SelectedInterfacesList" ItemsSource="{Binding SelectedInterfaces}" SelectedItem="{Binding CurrentInterface, Mode=TwoWay}"
+                                     ItemContainerStyle="{StaticResource InterfaceCard}" Background="Transparent" BorderThickness="0" Margin="0,0,-12,8"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                     AutomationProperties.Name="Conexão exibida no gráfico">
+                                <ListBox.ItemsPanel><ItemsPanelTemplate><UniformGrid Columns="2" /></ItemsPanelTemplate></ListBox.ItemsPanel>
+                                <ListBox.ItemTemplate><DataTemplate>
+                                    <StackPanel>
+                                        <Grid Margin="0,0,0,12">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <Border Width="32" Height="32" CornerRadius="8" Background="{DynamicResource SubtleBrush}" HorizontalAlignment="Left">
+                                                <TextBlock Text="{Binding IconGlyph}" Style="{StaticResource Glyph}" Foreground="{DynamicResource AccentBrush}" FontSize="17" />
+                                            </Border>
+                                            <StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding IpAddress}" Style="{StaticResource Caption}" /></StackPanel>
+                                            <TextBlock Grid.Column="2" Text="{Binding ConnectionStatus}" Style="{StaticResource Caption}" FontSize="11" Margin="8,0,0,0" />
+                                        </Grid>
+                                        <UniformGrid Columns="2">
+                                            <StackPanel><TextBlock Text="↓  Download" Style="{StaticResource Caption}" /><TextBlock Text="{Binding DownloadRate}" FontSize="20" FontWeight="SemiBold" Margin="0,3,0,0" /></StackPanel>
+                                            <StackPanel><TextBlock Text="↑  Upload" Style="{StaticResource Caption}" /><TextBlock Text="{Binding UploadRate}" FontSize="20" FontWeight="SemiBold" Margin="0,3,0,0" /></StackPanel>
+                                        </UniformGrid>
+                                    </StackPanel>
+                                </DataTemplate></ListBox.ItemTemplate>
+                            </ListBox>
+                            <Border>
+                                <Border.Style><Style TargetType="Border" BasedOn="{StaticResource Card}"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding HasSelection}" Value="False"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></Border.Style>
+                                <StackPanel Margin="16,24"><TextBlock Text="Quais conexões você quer acompanhar?" Style="{StaticResource SectionTitle}" /><TextBlock Text="Abra Gerenciar interfaces e selecione pelo menos uma conexão." Style="{StaticResource Caption}" Margin="0,8,0,0" /></StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Visibility="{Binding HasSelection, Converter={StaticResource BooleanVisibility}}">
+                                <StackPanel DataContext="{Binding CurrentInterface}">
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Content="Reiniciar medição" Click="ResetMeasurementButton_Click" Margin="16,0,0,0" />
+                                        <StackPanel><TextBlock Text="{Binding Name, StringFormat=Tráfego · {0}}" Style="{StaticResource SectionTitle}" /><TextBlock Text="{Binding MeasurementStatus}" Style="{StaticResource Caption}" Margin="0,4,0,0" /></StackPanel>
+                                    </DockPanel>
+                                    <Grid Margin="0,16,0,2">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="↓  DOWNLOAD" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource DownloadBrush}" /><TextBlock Text="{Binding DownloadRate}" FontSize="30" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="↑  UPLOAD" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource UploadBrush}" /><TextBlock Text="{Binding UploadRate}" FontSize="30" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+                                        <Border Grid.Column="2" Background="{DynamicResource SubtleBrush}" CornerRadius="5" Padding="10,5" VerticalAlignment="Top"><TextBlock Text="Últimos 60 s" Style="{StaticResource Caption}" /></Border>
+                                    </Grid>
+                                    <monitoring:TrafficChart x:Name="UsageChart" Samples="{Binding History}" Height="144" Margin="0,6,0,8"
+                                                             AutomationProperties.Name="Histórico dos últimos 60 segundos da conexão selecionada"
+                                                             AutomationProperties.HelpText="Download em azul e upload em laranja. Os valores atuais também aparecem como texto acima." />
+                                    <Border BorderBrush="{DynamicResource LineBrush}" BorderThickness="0,1,0,0" Padding="0,14,0,0">
+                                        <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                            <StackPanel><TextBlock Text="Recebido na sessão" Style="{StaticResource Caption}" /><TextBlock Text="{Binding DownloadVolume}" FontSize="19" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+                                            <StackPanel Grid.Column="1"><TextBlock Text="Enviado na sessão" Style="{StaticResource Caption}" /><TextBlock Text="{Binding UploadVolume}" FontSize="19" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+                                            <StackPanel Grid.Column="2"><TextBlock Text="Total na sessão" Style="{StaticResource Caption}" /><TextBlock Text="{Binding TotalVolume}" FontSize="19" FontWeight="SemiBold" Margin="0,4,0,0" /></StackPanel>
+                                        </Grid>
+                                    </Border>
+                                    <TextBlock Text="{Binding MeasurementPeriod}" Style="{StaticResource Caption}" FontSize="11" Margin="0,8,0,0" />
+                                </StackPanel>
+                            </Border>
+                            <TextBlock Text="{Binding MonitorStatus}" Style="{StaticResource Caption}" FontSize="11" Margin="0,14,0,0" />
+                            <TextBlock Text="Consumo de todos os apps nesta conexão, incluindo rede local. Não confirma a rota de um app. Intervalos sem leitura não entram nos totais." Style="{StaticResource Caption}" FontSize="11" Margin="0,4,0,0" />
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+                <TabItem Header="Regras de apps" Tag="Escolha a conexão de cada aplicativo.">
+                    <DockPanel>
+                        <StackPanel DockPanel.Dock="Top">
+                            <DockPanel Margin="0,0,0,16">
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal">
+                                    <Button x:Name="RemoveButton" Content="Remover" Click="RemoveButton_Click" Margin="0,0,8,0">
+                                        <Button.Style><Style TargetType="Button" BasedOn="{StaticResource {x:Type Button}}"><Setter Property="IsEnabled" Value="{Binding CanEdit}" /><Style.Triggers><DataTrigger Binding="{Binding SelectedItem, ElementName=RulesGrid}" Value="{x:Null}"><Setter Property="IsEnabled" Value="False" /></DataTrigger></Style.Triggers></Style></Button.Style>
+                                    </Button>
+                                    <Button Content="+  Adicionar aplicativo" Style="{StaticResource PrimaryButton}" Click="AddButton_Click" IsEnabled="{Binding CanEdit}" />
+                                </StackPanel>
+                                <StackPanel VerticalAlignment="Center"><TextBlock Text="Seus aplicativos" Style="{StaticResource SectionTitle}" /><TextBlock x:Name="RulesCountText" Style="{StaticResource Caption}" Margin="0,3,0,0" /></StackPanel>
+                            </DockPanel>
+                            <Grid Margin="0,0,0,16">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="16" /><ColumnDefinition Width="180" /></Grid.ColumnDefinitions>
+                                <Grid>
+                                    <TextBox x:Name="SearchBox" TextChanged="SearchBox_TextChanged" Padding="36,9,12,9" ToolTip="Nome do aplicativo ou caminho do executável" AutomationProperties.Name="Pesquisar regras" />
+                                    <TextBlock Text="&#xE721;" Style="{StaticResource Glyph}" FontSize="14" HorizontalAlignment="Left" Margin="12,0,0,0" Foreground="{DynamicResource MutedBrush}" IsHitTestVisible="False" />
+                                    <TextBlock Text="Pesquisar aplicativo..." Margin="36,0,12,0" VerticalAlignment="Center" Foreground="{DynamicResource MutedBrush}" IsHitTestVisible="False">
+                                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=SearchBox}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                    </TextBlock>
+                                </Grid>
+                                <ComboBox x:Name="EnabledFilter" Grid.Column="2" SelectedIndex="0" SelectionChanged="EnabledFilter_SelectionChanged" AutomationProperties.Name="Filtrar regras">
+                                    <ComboBoxItem Content="Todas as regras" /><ComboBoxItem Content="Habilitadas" /><ComboBoxItem Content="Desabilitadas" />
+                                </ComboBox>
+                            </Grid>
+                        </StackPanel>
+                        <StackPanel DockPanel.Dock="Bottom" Margin="0,16,0,0">
+                            <Border Background="{DynamicResource AccentSoftBrush}" CornerRadius="7" Padding="14,10" Margin="0,0,0,14">
+                                <TextBlock Text="As regras valem para novas conexões. Confirme a aplicação no serviço e depois feche e reabra o aplicativo." Style="{StaticResource Caption}" />
+                            </Border>
+                            <DockPanel>
+                                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+                                    <Button Content="Recarregar" Click="RefreshButton_Click" Margin="0,0,8,0" />
+                                    <Button x:Name="SaveButton" Content="Salvar alterações" Style="{StaticResource PrimaryButton}" Click="SaveButton_Click" IsEnabled="{Binding CanSave}" />
+                                </StackPanel>
+                                <TextBlock Text="{Binding Status}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                            </DockPanel>
+                        </StackPanel>
+                        <Border Style="{StaticResource Card}" Padding="0" ClipToBounds="True">
+                            <Grid>
+                                <DataGrid x:Name="RulesGrid" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False" CanUserSortColumns="False"
+                                          IsReadOnly="True" IsEnabled="{Binding CanEdit}" SelectionMode="Single" HeadersVisibility="Column" MinRowHeight="90"
+                                          AutomationProperties.Name="Regras de roteamento por aplicativo">
+                                    <DataGrid.Columns>
+                                        <DataGridTemplateColumn Header="Aplicativo" Width="*" MinWidth="240">
+                                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                                <Grid Margin="12,12"><Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                                    <Border Width="32" Height="32" Background="{DynamicResource SubtleBrush}" CornerRadius="8" VerticalAlignment="Center" HorizontalAlignment="Left"><TextBlock Text="{Binding AppInitial}" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource AccentBrush}" /></Border>
+                                                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding ExecutablePath}" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding ExecutablePath}" Margin="0,3,0,0" />
+                                                        <CheckBox Content="Incluir auxiliar do Steam" FontSize="11" Margin="0,6,0,0" Visibility="{Binding SupportsRelatedExecutables, Converter={StaticResource BooleanVisibility}}"
+                                                                  IsChecked="{Binding IncludeRelatedExecutables, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" ToolTip="Inclui steamwebhelper.exe da pasta do Steam, não jogos ou outros processos." />
+                                                    </StackPanel>
+                                                </Grid>
+                                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Conexão escolhida" Width="230">
+                                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                                <ComboBox ItemsSource="{Binding AvailableRoutes}" DisplayMemberPath="Label" SelectedItem="{Binding SelectedRoute, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                                          IsSynchronizedWithCurrentItem="False" Margin="10,0" VerticalAlignment="Center" ToolTip="{Binding SelectedRoute.Label}" AutomationProperties.Name="{Binding ApplicationId, StringFormat=Conexão de {0}}" />
+                                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Ativa" Width="64">
+                                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                                <CheckBox Style="{StaticResource Switch}" IsChecked="{Binding Enabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                                          AutomationProperties.Name="{Binding ApplicationId, StringFormat=Habilitar regra de {0}}" ToolTip="Habilita a regra salva; não confirma sua aplicação pelo serviço." />
+                                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                        <DataGridTemplateColumn Header="Estado no serviço" Width="170">
+                                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                                <StackPanel VerticalAlignment="Center" Margin="12" ToolTip="{Binding RuntimeStatus}">
+                                                    <TextBlock Text="{Binding RuntimeLabel}" FontSize="12" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                                    <TextBlock Text="{Binding RuntimeCaption}" Style="{StaticResource Caption}" FontSize="11" Margin="0,4,0,0" />
+                                                </StackPanel>
+                                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                        </DataGridTemplateColumn>
+                                    </DataGrid.Columns>
+                                </DataGrid>
+                                <StackPanel x:Name="EmptyRulesPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" IsHitTestVisible="False">
+                                    <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Items.Count, ElementName=RulesGrid}" Value="0"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                                    <TextBlock Text="Nenhum aplicativo nesta lista" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+                                    <TextBlock Text="Adicione um aplicativo ou ajuste a pesquisa e o filtro." Style="{StaticResource Caption}" Margin="0,8,0,0" TextAlignment="Center" />
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+                    </DockPanel>
+                </TabItem>
+                <TabItem Header="Diagnóstico" Tag="Entenda o estado do serviço e das suas regras.">
+                    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
+                        <StackPanel>
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Estado do roteamento" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="{Binding RuntimeSummary}" TextWrapping="Wrap" Margin="0,12,0,0" />
+                                    <UniformGrid Columns="2" Margin="0,20,0,0">
+                                        <StackPanel><TextBlock Text="ÚLTIMO RETORNO DO SERVIÇO" Style="{StaticResource Caption}" FontSize="10" /><TextBlock Text="{Binding RuntimeLastSeen}" Margin="0,6,16,0" FontWeight="SemiBold" TextWrapping="Wrap" /></StackPanel>
+                                        <StackPanel><TextBlock Text="POLÍTICAS ACEITAS PELO WINDOWS" Style="{StaticResource Caption}" FontSize="10" /><TextBlock Text="{Binding AcceptedPolicyCount}" Margin="0,6,0,0" FontWeight="SemiBold" /></StackPanel>
+                                    </UniformGrid>
+                                    <Border Background="{DynamicResource SubtleBrush}" CornerRadius="7" Padding="14" Margin="0,18,0,0">
+                                        <StackPanel><TextBlock Text="O que fazer agora" FontWeight="SemiBold" /><TextBlock Text="{Binding RuntimeNextStep}" Style="{StaticResource Caption}" Margin="0,5,0,0" /></StackPanel>
+                                    </Border>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <TextBlock Text="Configuração local" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="Arquivo de regras usado por esta janela" Style="{StaticResource Caption}" Margin="0,12,0,8" />
+                                    <TextBox Text="{Binding FilePath, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.Name="Caminho do arquivo de regras" />
+                                    <DockPanel Margin="0,14,0,0">
+                                        <Button DockPanel.Dock="Right" x:Name="CopyDiagnosticsButton" Content="Copiar diagnóstico" Click="CopyDiagnosticsButton_Click" />
+                                        <TextBlock x:Name="DiagnosticsFeedback" Text="O diagnóstico inclui o caminho local, mas não copia o conteúdo das pastas sincronizadas." Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    </DockPanel>
+                                </StackPanel>
+                            </Border>
+                            <Border Style="{StaticResource Card}">
+                                <StackPanel>
+                                    <TextBlock Text="Da regra ao tráfego" Style="{StaticResource SectionTitle}" />
+                                    <TextBlock Text="1  Escolha a conexão e salve a regra." Margin="0,14,0,0" />
+                                    <TextBlock Text="2  Aguarde o serviço confirmar a política no Windows." Margin="0,10,0,0" />
+                                    <TextBlock Text="3  Reabra o app e verifique a saída das novas conexões." Margin="0,10,0,0" />
+                                    <TextBlock Text="O gráfico mede a interface inteira. Uma política aceita não é, sozinha, prova de tráfego pela conexão escolhida." Style="{StaticResource Caption}" Margin="0,16,0,0" />
+                                </StackPanel>
+                            </Border>
+                        </StackPanel>
+                    </ScrollViewer>
+                </TabItem>
+            </controls:WorkspaceHost>
+        </DockPanel>
+    </Grid>
 </Window>

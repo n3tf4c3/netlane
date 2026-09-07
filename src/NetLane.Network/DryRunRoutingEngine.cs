@@ -7,10 +7,11 @@ public sealed class DryRunRoutingEngine : IRoutingEngine
 {
     private readonly Dictionary<string, NetworkRule> _appliedRules = new(StringComparer.OrdinalIgnoreCase);
 
-    public void ApplyRule(ApplicationIdentity application, NetworkRule rule)
+    public RoutingApplyResult ApplyRule(ApplicationIdentity application, NetworkRule rule)
     {
         _appliedRules[application.Name] = rule;
         Console.WriteLine($"[DRY-RUN] Aplicacao registrada: {application.Name} -> modo {rule.RouteMode}");
+        return new(false, "Simulação: nenhuma política de rede foi aplicada ao Windows.");
     }
 
     public void RemoveRule(string applicationId)

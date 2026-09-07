@@ -7,4 +7,5 @@ public sealed class NetworkAdapter
     public string InterfaceType { get; init; } = string.Empty;
     public string? IpAddress { get; init; }
     public bool IsConnected { get; init; }
+    public bool HasGateway { get; init; }
 }

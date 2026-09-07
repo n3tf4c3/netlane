@@ -12,6 +12,16 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.Contains("--check-routing", StringComparer.OrdinalIgnoreCase))
+        {
+            var check = WindowsRoutingPrerequisites.Check();
+            Console.WriteLine($"API de políticas WFP: {check.ApiAvailable}");
+            Console.WriteLine($"Administrador: {check.IsAdministrator}");
+            Console.WriteLine($"routepolicies IPv4: {check.Ipv4RoutePolicies?.ToString() ?? "não verificável"}");
+            Console.WriteLine($"routepolicies IPv6: {check.Ipv6RoutePolicies?.ToString() ?? "não verificável"}");
+            Console.WriteLine(check.Summary);
+            return check.Ready ? 0 : 2;
+        }
         var builder = Host.CreateApplicationBuilder(args);
 
         builder.Services.AddSingleton<INetworkInterfaceDetector, WindowsNetworkInterfaceDetector>();
@@ -26,8 +36,8 @@ internal static class Program
             }
             catch (Exception ex)
             {
-                logger.LogWarning(ex, "Falha ao inicializar WFP. Utilizando modo dry-run para manter comportamento fail-open.");
-                return new DryRunRoutingEngine();
+                logger.LogError(ex, "Motor WFP indisponivel. Nenhuma regra sera apresentada como aplicada.");
+                return new UnavailableRoutingEngine(ex.Message);
             }
         });
 

@@ -1,16 +1,22 @@
 [
   {
-    "applicationId": "explorer.exe",
-    "executablePath": "C:\\WINDOWS\\Explorer.EXE",
-    "routeMode": "WiFi",
-    "interfaceId": "AA6F3B88-072A-45B6-B0CB-8AFE9567E62F",
-    "enabled": true
-  },
-  {
     "applicationId": "steam.exe",
     "executablePath": "C:\\Program Files (x86)\\Steam\\steam.exe",
+    "interfaceId": "{D3AE43D2-8203-41D6-9D7F-0B6FA59518FD}",
+    "interfaceTypeHint": null,
     "routeMode": "Ethernet",
-    "interfaceId": "D3AE43D2-8203-41D6-9D7F-0B6FA59518FD",
-    "enabled": true
+    "fallbackInterfaceId": null,
+    "enabled": false,
+    "includeRelatedExecutables": true
+  },
+  {
+    "applicationId": "OneDrive.exe",
+    "executablePath": "C:\\Program Files\\Microsoft OneDrive\\OneDrive.exe",
+    "interfaceId": "{AA6F3B88-072A-45B6-B0CB-8AFE9567E62F}",
+    "interfaceTypeHint": null,
+    "routeMode": "WiFi",
+    "fallbackInterfaceId": null,
+    "enabled": true,
+    "includeRelatedExecutables": false
   }
 ]

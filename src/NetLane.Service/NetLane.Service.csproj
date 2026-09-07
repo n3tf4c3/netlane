@@ -8,6 +8,7 @@
   <ItemGroup>
     <ProjectReference Include="..\\NetLane.Core\\NetLane.Core.csproj" />
     <ProjectReference Include="..\\NetLane.Network\\NetLane.Network.csproj" />
+    <InternalsVisibleTo Include="NetLane.Tests" />
   </ItemGroup>
 
   <ItemGroup>
