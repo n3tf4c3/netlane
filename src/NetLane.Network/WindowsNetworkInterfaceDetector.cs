@@ -34,6 +34,7 @@ public sealed class WindowsNetworkInterfaceDetector : INetworkInterfaceDetector
                 Name = @interface.Name,
                 InterfaceType = @interface.NetworkInterfaceType.ToString(),
                 IpAddress = ipv4Address,
+                IpAddresses = properties.UnicastAddresses.Select(a => a.Address.ToString()).ToArray(),
                 IsConnected = isConnected,
                 HasGateway = properties.GatewayAddresses.Any(g =>
                     !g.Address.Equals(System.Net.IPAddress.Any) && !g.Address.Equals(System.Net.IPAddress.IPv6Any))

@@ -18,7 +18,16 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\NetLane.UI\NetLane.UI.csproj" />
     <ProjectReference Include="..\..\src\NetLane.Service\NetLane.Service.csproj" />
+    <ProjectReference Include="..\NetLane.ControlProbe\NetLane.ControlProbe.csproj" ReferenceOutputAssembly="false" />
     <Using Include="Xunit" />
     <Using Include="System.IO" />
   </ItemGroup>
+  <Target Name="CopyControlProbe" AfterTargets="Build">
+    <MSBuild Projects="..\NetLane.ControlProbe\NetLane.ControlProbe.csproj" Targets="GetTargetPath" Properties="Configuration=$(Configuration)">
+      <Output TaskParameter="TargetOutputs" ItemName="ControlProbeOutput" />
+    </MSBuild>
+    <PropertyGroup><ControlProbeDirectory>@(ControlProbeOutput->'%(RootDir)%(Directory)')</ControlProbeDirectory></PropertyGroup>
+    <ItemGroup><ControlProbeFiles Include="$(ControlProbeDirectory)*" /></ItemGroup>
+    <Copy SourceFiles="@(ControlProbeFiles)" DestinationFolder="$(TargetDir)control-probe" SkipUnchangedFiles="true" />
+  </Target>
 </Project>

@@ -7,6 +7,7 @@ namespace NetLane.Core.Persistence;
 public sealed class RoutingStatusFile(string policyPath)
 {
     public string FilePath { get; } = Path.GetFullPath(policyPath) + ".runtime.json";
+    public string InstanceLockFilePath => FilePath + ".runtime.lock";
     public RoutingServiceSnapshot? Read()
     {
         if (!File.Exists(FilePath)) return null;

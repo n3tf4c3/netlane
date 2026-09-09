@@ -7,6 +7,7 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
 using NetLane.Core.Models;
+using NetLane.Core.Contracts;
 using NetLane.Core.Persistence;
 using NetLane.UI;
 using NetLane.UI.Monitoring;
@@ -19,6 +20,348 @@ public sealed class WpfCollection;
 [Collection("WPF")]
 public sealed class MainWindowTests
 {
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(false, true)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task ClosingRechecksNewEditsAfterDelayedStop(bool initiallyDirty, bool acceptNewDiscard)
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            var pendingStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var session = new FakeServiceSession { StopWait = pendingStop.Task };
+            var confirmations = 0;
+            var answer = acceptNewDiscard;
+            var window = CreateClosingWindow(workspace, session, () => { confirmations++; return answer; });
+            var editor = (PolicyEditor)window.DataContext;
+            var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+            var closed = false;
+            window.Closed += (_, _) => closed = true;
+            Task close = Task.CompletedTask;
+            try
+            {
+                if (initiallyDirty) editor.Rows[0].IncludeRelatedExecutables = false;
+                // This is the continuation after accepting the initial close/stop confirmation.
+                close = window.StopServiceAndCloseAsync();
+                Assert.True(window.ServiceControls.IsBusy);
+                Assert.True(((DataGrid)window.FindName("RulesGrid")).IsEnabled);
+                window.Close(); // A second close while stopping must not queue another stop or dialog.
+                Assert.False(closed);
+                Assert.Equal(0, confirmations);
+                Assert.Equal(["Start", "Stop"], session.Calls);
+                editor.Rows[0].Enabled = false;
+                pendingStop.SetResult();
+                PumpUntilCompleted(close);
+
+                Assert.Equal(1, confirmations);
+                Assert.Equal(acceptNewDiscard, closed);
+                Assert.False(session.OwnsRunningProcess);
+                Assert.False(window.ServiceControls.IsBusy);
+                Assert.True(editor.HasChanges);
+                Assert.False(editor.Rows[0].Enabled);
+                Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+                if (!acceptNewDiscard)
+                {
+                    Assert.Equal(1, ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex);
+                    Assert.True(editor.CanSave);
+                    window.Close(); // Refusing once must not leave a sticky bypass for the next close.
+                    Assert.Equal(2, confirmations);
+                    Assert.False(closed);
+                    answer = true;
+                    window.Close();
+                    Assert.Equal(3, confirmations);
+                    Assert.True(closed);
+                    Assert.Equal(["Start", "Stop"], session.Calls);
+                }
+            }
+            finally
+            {
+                pendingStop.TrySetResult();
+                PumpUntilCompleted(close);
+                session.StopWait = Task.CompletedTask;
+                session.StopAsync().GetAwaiter().GetResult();
+                editor.Load(); window.Close();
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ClosingWithoutNewEditsDoesNotRepeatTheDiscardConfirmation(bool initiallyDirty)
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            var pendingStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var session = new FakeServiceSession { StopWait = pendingStop.Task };
+            var confirmations = 0;
+            var window = CreateClosingWindow(workspace, session, () => { confirmations++; return false; });
+            var editor = (PolicyEditor)window.DataContext;
+            var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+            var closed = false;
+            window.Closed += (_, _) => closed = true;
+            if (initiallyDirty) editor.Rows[0].Enabled = false;
+            var close = window.StopServiceAndCloseAsync();
+            try
+            {
+                editor.UpdateAdapters([TestAdapters.Wifi(false)]);
+                editor.RefreshRuntime(); // Observation-only updates must not count as new edits.
+                pendingStop.SetResult();
+                PumpUntilCompleted(close);
+                Assert.True(closed);
+                Assert.Equal(0, confirmations);
+                Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+                Assert.Equal(["Start", "Stop"], session.Calls);
+            }
+            finally
+            {
+                pendingStop.TrySetResult(); PumpUntilCompleted(close);
+                session.StopAsync().GetAwaiter().GetResult();
+                editor.Load(); window.Close();
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ClosingAfterSavingDuringStopDoesNotAskToDiscardOrSaveAgain()
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            var pendingStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var session = new FakeServiceSession { StopWait = pendingStop.Task };
+            var confirmations = 0;
+            var window = CreateClosingWindow(workspace, session, () => { confirmations++; return false; });
+            var editor = (PolicyEditor)window.DataContext;
+            var closed = false;
+            window.Closed += (_, _) => closed = true;
+            var close = window.StopServiceAndCloseAsync();
+            try
+            {
+                editor.Rows[0].Enabled = false;
+                editor.Save();
+                var saved = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+                pendingStop.SetResult();
+                PumpUntilCompleted(close);
+                Assert.True(closed);
+                Assert.Equal(0, confirmations);
+                Assert.False(editor.HasChanges);
+                Assert.False(workspace.PolicyFile.Load().Policies[0].Enabled);
+                Assert.Equal(saved, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+            }
+            finally
+            {
+                pendingStop.TrySetResult(); PumpUntilCompleted(close);
+                session.StopAsync().GetAwaiter().GetResult();
+                editor.Load(); window.Close();
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+    }
+
+    [Fact]
+    public async Task ClosingFailureKeepsEditsAndAllowsRetry()
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            var pendingStop = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var session = new FakeServiceSession { StopWait = pendingStop.Task, StopError = "Falha sintética na parada." };
+            var confirmations = 0;
+            var window = CreateClosingWindow(workspace, session, () => { confirmations++; return false; });
+            var editor = (PolicyEditor)window.DataContext;
+            var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+            var closed = false;
+            window.Closed += (_, _) => closed = true;
+            var close = window.StopServiceAndCloseAsync();
+            try
+            {
+                editor.Rows[0].Enabled = false;
+                pendingStop.SetResult();
+                PumpUntilCompleted(close);
+                Assert.False(closed);
+                Assert.Equal(0, confirmations);
+                Assert.True(session.OwnsRunningProcess);
+                Assert.False(window.ServiceControls.IsBusy);
+                Assert.Equal(session.StopError, window.ServiceControls.Status);
+                Assert.Equal(3, ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex);
+                Assert.True(((DataGrid)window.FindName("RulesGrid")).IsEnabled);
+                Assert.True(editor.CanSave);
+                Assert.False(editor.Rows[0].Enabled);
+                Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+
+                editor.Rows[0].IncludeRelatedExecutables = false;
+                editor.Save();
+                session.StopError = null;
+                session.StopWait = Task.CompletedTask;
+                PumpUntilCompleted(window.StopServiceAndCloseAsync());
+                Assert.True(closed);
+                Assert.Equal(0, confirmations);
+                Assert.False(workspace.PolicyFile.Load().Policies[0].Enabled);
+                Assert.False(workspace.PolicyFile.Load().Policies[0].IncludeRelatedExecutables);
+                Assert.Equal(["Start", "Stop", "Stop"], session.Calls);
+            }
+            finally
+            {
+                pendingStop.TrySetResult(); PumpUntilCompleted(close);
+                session.StopError = null; session.StopWait = Task.CompletedTask;
+                session.StopAsync().GetAwaiter().GetResult();
+                editor.Load(); window.Close();
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+    }
+
+    private static MainWindow CreateClosingWindow(TestWorkspace workspace, FakeServiceSession session, Func<bool> confirmDiscard)
+    {
+        workspace.PolicyFile.Save([new() { ApplicationId = "close-test.exe", ExecutablePath = @"C:\Synthetic\close-test.exe",
+            RouteMode = NetworkRouteMode.WiFi, InterfaceId = TestAdapters.WifiId }], null);
+        session.StartAsync(false).GetAwaiter().GetResult();
+        return new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Wifi()),
+            serviceSession: session, confirmDiscardChanges: confirmDiscard);
+    }
+
+    [Theory]
+    [InlineData(1000, 650)]
+    [InlineData(1220, 810)]
+    [InlineData(1440, 920)]
+    public async Task ProcessConnectionsPageSeparatesConfiguredAndObservedRoutes(int width, int height)
+    {
+        await RunSta(() =>
+        {
+            using var workspace = new TestWorkspace();
+            workspace.PolicyFile.Save([new() { ApplicationId = "OneDrive.exe", ExecutablePath = @"C:\Apps\OneDrive.exe",
+                RouteMode = NetworkRouteMode.WiFi, InterfaceId = ProcessConnectionTests.WifiId }], null);
+            var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+            var messages = new StringBuilder();
+            using var listener = new TextWriterTraceListener(new StringWriter(messages));
+            var source = PresentationTraceSources.DataBindingSource;
+            var previous = source.Switch.Level;
+            source.Switch.Level = SourceLevels.Warning;
+            source.Listeners.Add(listener);
+            var session = new FakeServiceSession();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(ProcessConnectionTests.Wifi(), ProcessConnectionTests.Cable()), serviceSession: session);
+            var editor = (PolicyEditor)window.DataContext;
+            try
+            {
+                var snapshot = ProcessConnectionTests.Snapshot(ProcessConnectionTests.Connection(),
+                    ProcessConnectionTests.Connection(pid: 20, local: "192.168.15.5"),
+                    ProcessConnectionTests.Connection(pid: 30), ProcessConnectionTests.Connection(pid: 30, local: "192.168.15.5", port: 5001),
+                    ProcessConnectionTests.Connection(pid: 40, local: "10.0.8.7")) with
+                    { Processes = [ProcessConnectionTests.Process(), ProcessConnectionTests.Process(20, @"C:\Apps\browser.exe"),
+                        ProcessConnectionTests.Process(30, @"C:\Apps\Multi\transfer.exe"), new(40, "PID 40", null, null, "Caminho não consultável.")] };
+                window.ProcessConnections.Update(snapshot, ProcessConnectionTests.Now);
+                var root = (FrameworkElement)window.Content;
+                root.Width = width; root.Height = height;
+                root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height));
+                root.UpdateLayout();
+                ((ListBox)window.FindName("NavigationList")).SelectedIndex = 2;
+                root.UpdateLayout();
+                Assert.Equal(2, ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex);
+                var panel = (FrameworkElement)window.FindName("ProcessConnectionsPanel");
+                var grid = (DataGrid)panel.FindName("ProcessConnectionsGrid");
+                Assert.Equal(4, grid.Items.Count);
+                Assert.True(grid.IsReadOnly);
+                Assert.Equal(3, grid.Columns.Count);
+                var peer = UIElementAutomationPeer.CreatePeerForElement((TabControl)window.FindName("WorkspaceTabs"));
+                Assert.Contains(AutomationDescendants(peer), item => item.GetAutomationId() == "ProcessConnectionsGrid");
+                foreach (var name in new[] { "ProcessSearchBox", "ProcessFilter", "ProcessConnectionsGrid" })
+                {
+                    var control = (FrameworkElement)panel.FindName(name);
+                    var bounds = control.TransformToAncestor(root).TransformBounds(new Rect(control.RenderSize));
+                    Assert.True(bounds.Width > 20 && bounds.Height >= 30, name);
+                    Assert.True(bounds.Left >= 0 && bounds.Right <= width + 1 && bounds.Bottom <= height + 1, name);
+                }
+                Assert.True(grid.Columns.Sum(c => c.ActualWidth) <= grid.ActualWidth, "Columns must fit without horizontal scrolling.");
+                SaveRenderIfRequested(root, $"process-connections-{width}");
+                ((TextBox)panel.FindName("ProcessSearchBox")).Text = "OneDrive";
+                root.UpdateLayout();
+                Assert.Single(grid.Items.Cast<object>());
+                var selected = grid.SelectedItem = grid.Items[0];
+                window.ProcessConnections.Update(snapshot, ProcessConnectionTests.Now);
+                Assert.Same(selected, grid.SelectedItem);
+                editor.Rows[0].Enabled = false;
+                root.UpdateLayout();
+                Assert.Contains("não salva", ((NetLane.UI.Monitoring.ProcessConnectionRow)grid.Items[0]).PolicyStatus);
+                Assert.Equal("Wi-Fi", ((NetLane.UI.Monitoring.ProcessConnectionRow)grid.Items[0]).InterfaceLabel);
+                Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+                Assert.Empty(session.Calls);
+                window.ProcessConnections.ReportReadFailure("Falha de leitura simulada");
+                root.UpdateLayout();
+                Assert.Empty(grid.Items.Cast<object>());
+                Assert.Equal(Visibility.Visible, ((StackPanel)panel.FindName("EmptyConnectionsPanel")).Visibility);
+                SaveRenderIfRequested(root, $"process-connections-error-{width}");
+                listener.Flush();
+                Assert.Equal(string.Empty, messages.ToString());
+            }
+            finally { editor.Load(); window.Close(); source.Listeners.Remove(listener); source.Switch.Level = previous; }
+        });
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task ProcessReadIsOffUiThreadDoesNotOverlapAndDoesNotPublishAfterClose(bool closeDuringRead)
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            using var reader = new BlockingProcessSource();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(ProcessConnectionTests.Wifi()),
+                serviceSession: new FakeServiceSession(), connectionsSource: reader);
+            try
+            {
+                var read = window.RefreshProcessConnectionsAsync();
+                Assert.True(reader.Entered.Wait(TimeSpan.FromSeconds(5)));
+                Assert.NotEqual(Environment.CurrentManagedThreadId, reader.ThreadId);
+                Assert.True(window.RefreshProcessConnectionsAsync().IsCompleted);
+                Assert.Equal(1, reader.Calls);
+                if (closeDuringRead) window.Close();
+                reader.Release.Set();
+                PumpUntilCompleted(read);
+                Assert.Empty(window.ProcessConnections.Rows);
+                Assert.Equal(!closeDuringRead, window.ProcessConnections.ReadFailed);
+            }
+            finally { reader.Release.Set(); window.Close(); SynchronizationContext.SetSynchronizationContext(null); }
+        });
+    }
+
+    private sealed class BlockingProcessSource : IProcessConnectionSource, IDisposable
+    {
+        public readonly ManualResetEventSlim Entered = new();
+        public readonly ManualResetEventSlim Release = new();
+        public int Calls, ThreadId;
+        public ProcessConnectionSnapshot ReadSnapshot()
+        {
+            Interlocked.Increment(ref Calls); ThreadId = Environment.CurrentManagedThreadId; Entered.Set();
+            if (!Release.Wait(TimeSpan.FromSeconds(5))) throw new TimeoutException("Synthetic reader timed out.");
+            throw new IOException("Falha sintética, sem acesso à rede real.");
+        }
+        public void Dispose() { Entered.Dispose(); Release.Dispose(); }
+    }
+
+    private static void PumpUntilCompleted(Task task)
+    {
+        var dispatcher = Dispatcher.CurrentDispatcher;
+        var frame = new DispatcherFrame();
+        var timeout = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };
+        timeout.Tick += (_, _) => frame.Continue = false;
+        _ = task.ContinueWith(_ => dispatcher.BeginInvoke(() => frame.Continue = false));
+        timeout.Start(); Dispatcher.PushFrame(frame); timeout.Stop();
+        Assert.True(task.IsCompleted, "Async UI read timed out.");
+        task.GetAwaiter().GetResult();
+    }
+
     [Theory]
     [InlineData(1000, 650)]
     [InlineData(1220, 810)]
@@ -44,7 +387,8 @@ public sealed class MainWindowTests
             var previousLevel = source.Switch.Level;
             source.Switch.Level = SourceLevels.Warning;
             source.Listeners.Add(listener);
-            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Ethernet(), TestAdapters.Wifi()));
+            var session = new FakeServiceSession();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Ethernet(), TestAdapters.Wifi()), serviceSession: session);
             try
             {
                 var dashboard = window.Dashboard;
@@ -98,20 +442,62 @@ public sealed class MainWindowTests
 
                 ((Button)window.FindName("DiagnosticsButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 root.UpdateLayout();
-                Assert.Equal(2, tabs.SelectedIndex);
-                Assert.Equal(2, navigation.SelectedIndex);
+                Assert.Equal(3, tabs.SelectedIndex);
+                Assert.Equal(3, navigation.SelectedIndex);
                 Assert.True(((Button)window.FindName("CopyDiagnosticsButton")).ActualWidth > 100);
+                Assert.False(((CheckBox)window.FindName("TemporaryRoutePoliciesCheckBox")).IsChecked);
+                Assert.True(((Button)window.FindName("StartServiceButton")).IsEnabled);
+                Assert.False(((Button)window.FindName("StopServiceButton")).IsEnabled);
+                Assert.False(((Button)window.FindName("RestartServiceButton")).IsEnabled);
+                Assert.Equal(session.ServiceExecutablePath, ((TextBox)window.FindName("ServiceExecutablePathBox")).Text);
+                foreach (var name in new[] { "StartServiceButton", "StopServiceButton", "RestartServiceButton", "TemporaryRoutePoliciesCheckBox" })
+                {
+                    var control = (FrameworkElement)window.FindName(name);
+                    var bounds = control.TransformToAncestor(root).TransformBounds(new Rect(control.RenderSize));
+                    Assert.True(bounds.Left >= 0 && bounds.Right <= width + 1 && bounds.Bottom <= height + 1, name);
+                }
                 SaveRenderIfRequested(root, $"diagnostics-{width}");
+                window.ServiceControls.StartAsync().GetAwaiter().GetResult(); // Fake session, no dialog or privilege.
+                root.UpdateLayout();
+                Assert.False(((Button)window.FindName("StartServiceButton")).IsEnabled);
+                Assert.True(((Button)window.FindName("StopServiceButton")).IsEnabled);
+                Assert.True(((Button)window.FindName("RestartServiceButton")).IsEnabled);
+                ((Button)window.FindName("StopServiceButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.False(session.OwnsRunningProcess);
                 listener.Flush();
                 Assert.Equal(string.Empty, messages.ToString());
                 Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
             }
             finally
             {
+                session.StopAsync().GetAwaiter().GetResult();
                 window.Close();
                 source.Listeners.Remove(listener);
                 source.Switch.Level = previousLevel;
             }
+        });
+    }
+
+    [Fact]
+    public async Task UnsavedRulesPreventElevationAndNavigateBackToTheEditor()
+    {
+        await RunSta(() =>
+        {
+            using var workspace = new TestWorkspace();
+            workspace.PolicyFile.Save([], null);
+            var session = new FakeServiceSession();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Wifi()), serviceSession: session);
+            var editor = (PolicyEditor)window.DataContext;
+            try
+            {
+                editor.AddExecutable(workspace.Write("app.exe", "never execute"));
+                ((ListBox)window.FindName("NavigationList")).SelectedIndex = 3;
+                ((Button)window.FindName("StartServiceButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.Empty(session.Calls);
+                Assert.Equal(1, ((TabControl)window.FindName("WorkspaceTabs")).SelectedIndex);
+                Assert.True(editor.HasChanges);
+            }
+            finally { editor.Load(); window.Close(); }
         });
     }
 

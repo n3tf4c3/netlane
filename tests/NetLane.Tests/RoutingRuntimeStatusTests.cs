@@ -7,6 +7,37 @@ namespace NetLane.Tests;
 public sealed class RoutingRuntimeStatusTests
 {
     [Fact]
+    public void OwnedSessionWithoutReceiptDoesNotReuseAnotherSessionsReadyFile()
+    {
+        using var fixture = new Fixture();
+        fixture.Publish();
+        var editor = new PolicyEditor(fixture.Workspace.PolicyFile, _ => true,
+            sessionSnapshot: () => null, hasOwnedSession: () => true);
+        editor.Load();
+        editor.RefreshRuntime(fixture.Now);
+        Assert.Equal(RuntimeDisplayState.Unresponsive, editor.RuntimeState);
+        Assert.Contains("sessões anteriores foram desconsiderados", editor.RuntimeSummary);
+        Assert.Equal("Ainda não recebido", editor.RuntimeLastSeen);
+        Assert.Equal("Não confirmado", editor.AcceptedPolicyCount);
+        Assert.False(editor.IsRuntimeConfirmed);
+    }
+
+    [Fact]
+    public void OwnedSessionCanUseItsAuthenticatedReceiptEvenWhenTheDiskReceiptIsMalformed()
+    {
+        using var fixture = new Fixture();
+        fixture.Publish();
+        var snapshot = new RoutingStatusFile(fixture.Workspace.PolicyFile.FilePath).Read();
+        fixture.Workspace.Write("rules.json.runtime.json", "{malformed");
+        var editor = new PolicyEditor(fixture.Workspace.PolicyFile, _ => true,
+            sessionSnapshot: () => snapshot, hasOwnedSession: () => true);
+        editor.Load();
+        editor.RefreshRuntime(fixture.Now);
+        Assert.Equal(RuntimeDisplayState.Ready, editor.RuntimeState);
+        Assert.Equal("1", editor.AcceptedPolicyCount);
+    }
+
+    [Fact]
     public void FreshMatchingReceiptIsShownButNotAsTrafficVerification()
     {
         using var fixture = new Fixture();

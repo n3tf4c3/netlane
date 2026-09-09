@@ -5,6 +5,8 @@ using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
 using NetLane.Core.Contracts;
 using NetLane.Network;
+using NetLane.Network.Control;
+using NetLane.Core.Models;
 
 namespace NetLane.Service;
 
@@ -12,6 +14,7 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.FirstOrDefault() == "--ui-session") return await ManagedUiSession.RunAsync(args);
         if (args.Contains("--check-routing", StringComparer.OrdinalIgnoreCase))
         {
             var check = WindowsRoutingPrerequisites.Check();
@@ -22,7 +25,17 @@ internal static class Program
             Console.WriteLine(check.Summary);
             return check.Ready ? 0 : 2;
         }
-        var builder = Host.CreateApplicationBuilder(args);
+        using var lease = SessionPipe.AcquireRoutingLease();
+        SessionPipe.RejectOtherServiceProcesses();
+        using var host = CreateHost(args);
+        await host.RunAsync();
+        return 0;
+    }
+
+    internal static IHost CreateHost(string[] args, string? policyPath = null, Action<RoutingServiceSnapshot>? publisher = null)
+    {
+        var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
+        { Args = args, ContentRootPath = policyPath is null ? null : AppContext.BaseDirectory });
 
         builder.Services.AddSingleton<INetworkInterfaceDetector, WindowsNetworkInterfaceDetector>();
         builder.Services.AddSingleton<IApplicationCatalog, ProcessApplicationCatalog>();
@@ -43,6 +56,15 @@ internal static class Program
 
         builder.Services.Configure<NetLaneMonitorOptions>(builder.Configuration.GetSection("NetLane:Monitor"));
         builder.Services.Configure<NetLaneRoutingOptions>(builder.Configuration.GetSection("NetLane:Routing"));
+        if (publisher is not null)
+        {
+            builder.Services.AddSingleton(publisher);
+            builder.Services.Configure<NetLaneRoutingOptions>(options =>
+            {
+                options.PolicyFilePath = policyPath!;
+                options.Policies.Clear();
+            });
+        }
 
         builder.Services.AddHostedService<NetworkMonitorWorker>();
         builder.Services.AddHostedService<NetworkRoutingWorker>();
@@ -51,9 +73,6 @@ internal static class Program
             options.ServiceName = "NetLane Monitor";
         });
 
-        using var host = builder.Build();
-        await host.RunAsync();
-
-        return 0;
+        return builder.Build();
     }
 }
