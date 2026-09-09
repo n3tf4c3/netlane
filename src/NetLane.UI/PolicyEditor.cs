@@ -9,7 +9,8 @@ namespace NetLane.UI;
 
 public enum RuntimeDisplayState { Unknown, Stopped, Unresponsive, WaitingForRules, LocalChanges, Error, Ready, Attention }
 
-public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServiceAlive = null) : INotifyPropertyChanged
+public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServiceAlive = null,
+    Func<RoutingServiceSnapshot?>? sessionSnapshot = null, Func<bool>? hasOwnedSession = null) : INotifyPropertyChanged
 {
     private string? _revision;
     private bool _refreshingAdapters;
@@ -20,6 +21,8 @@ public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServ
 
     public ObservableCollection<PolicyRow> Rows { get; } = [];
     public bool HasChanges { get; private set; }
+    // Only edits advance this version; polling adapters/runtime must not invalidate discard consent.
+    internal long EditVersion { get; private set; }
     public bool CanEdit { get; private set; }
     public bool CanSave => CanEdit && HasChanges;
     public string FilePath => file.FilePath;
@@ -44,7 +47,7 @@ public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServ
     {
         RuntimeDisplayState.Stopped => "Suas regras continuam salvas. Sem o serviço, o Windows escolhe a conexão dos apps.",
         RuntimeDisplayState.Unresponsive => "A medição continua disponível, mas não é possível confirmar o roteamento dos apps.",
-        RuntimeDisplayState.Ready => "Políticas aceitas pelo Windows. O tráfego de cada app ainda precisa ser verificado.",
+        RuntimeDisplayState.Ready => "Políticas aceitas pelo Windows. Veja as saídas observadas em Conexões de apps.",
         RuntimeDisplayState.LocalChanges => "Salve as alterações e aguarde a confirmação do serviço antes de testar a nova rota.",
         RuntimeDisplayState.WaitingForRules => "O serviço ainda não confirmou esta versão das regras. Aguarde o próximo retorno.",
         RuntimeDisplayState.Attention => "O serviço respondeu, mas nem todas as políticas foram aceitas. Confira o diagnóstico.",
@@ -52,11 +55,11 @@ public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServ
     };
     public string RuntimeNextStep => RuntimeState switch
     {
-        RuntimeDisplayState.Stopped or RuntimeDisplayState.Unknown => "Inicie o serviço de roteamento com permissão de administrador e aguarde a confirmação nesta tela. Nesta versão de desenvolvimento, o início do serviço é externo ao painel.",
-        RuntimeDisplayState.Unresponsive => "Confira se o serviço continua em execução e se está usando o arquivo de regras abaixo. Use Atualizar para consultar novamente; esta janela não reinicia o serviço.",
+        RuntimeDisplayState.Stopped or RuntimeDisplayState.Unknown => "Confira o resultado da última parada no controle da sessão. Sem alerta de limpeza, use Iniciar serviço e autorize o Windows quando solicitado. Aguarde a confirmação da política antes de reabrir o aplicativo de teste.",
+        RuntimeDisplayState.Unresponsive => "Confira se o serviço continua em execução e se está usando o arquivo de regras abaixo. Use Atualizar para consultar novamente. Esta janela só pode parar ou reiniciar a sessão que ela iniciou.",
         RuntimeDisplayState.LocalChanges => "Volte a Regras de apps e salve ou recarregue as alterações. Depois aguarde um retorno válido do serviço.",
         RuntimeDisplayState.WaitingForRules => "Aguarde a próxima leitura do serviço. Se o estado persistir, confira se o serviço usa o mesmo arquivo de configuração desta janela.",
-        RuntimeDisplayState.Ready => "Feche e reabra o aplicativo de teste para criar novas conexões. Verifique o endereço local das conexões do processo: o gráfico da interface não identifica qual app transferiu os dados.",
+        RuntimeDisplayState.Ready => "Feche e reabra o aplicativo de teste para criar novas conexões e confira Conexões de apps. A interface observada é identificada pelo endereço local do processo; o gráfico continua medindo todos os apps da placa.",
         _ => "Confira o detalhe do erro acima e os registros do serviço antes de repetir o teste. Não é necessário apagar as regras nem desconectar suas placas de rede."
     };
     public event PropertyChangedEventHandler? PropertyChanged;
@@ -169,6 +172,7 @@ public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServ
 
     private void MarkChanged()
     {
+        EditVersion++;
         HasChanges = true;
         Status = "Alterações pendentes. Salve para o serviço ler as novas escolhas.";
         RefreshRuntime();
@@ -182,9 +186,16 @@ public sealed class PolicyEditor(RoutingPolicyFile file, Func<int, bool>? isServ
         RuntimeState = RuntimeDisplayState.Unknown;
         try
         {
-            snapshot = _runtimeFile.Read();
+            var ownedSession = hasOwnedSession?.Invoke() == true;
+            snapshot = sessionSnapshot?.Invoke();
+            if (!ownedSession && snapshot is null) snapshot = _runtimeFile.Read();
             var currentTime = now ?? DateTimeOffset.UtcNow;
-            if (snapshot is null || snapshot.State == "Stopped")
+            if (ownedSession && snapshot is null)
+            {
+                pending = "A sessão iniciada por esta janela ainda não confirmou as políticas. Retornos de sessões anteriores foram desconsiderados; confira o controle do serviço.";
+                RuntimeState = RuntimeDisplayState.Unresponsive;
+            }
+            else if (snapshot is null || snapshot.State == "Stopped")
             {
                 pending = "Serviço sem confirmação ativa. Inicie NetLane.Service como Administrador.";
                 RuntimeState = snapshot is null ? RuntimeDisplayState.Unknown : RuntimeDisplayState.Stopped;

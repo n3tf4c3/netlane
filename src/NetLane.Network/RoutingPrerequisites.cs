@@ -40,7 +40,7 @@ public static class WindowsRoutingPrerequisites
         finally { NativeLibrary.Free(library); }
     }
 
-    private static bool? ReadRoutePolicies(string family)
+    internal static bool? ReadRoutePolicies(string family)
     {
         try
         {

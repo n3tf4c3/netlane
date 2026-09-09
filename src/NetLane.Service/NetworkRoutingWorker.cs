@@ -19,16 +19,18 @@ internal sealed class NetworkRoutingWorker : BackgroundService
     private readonly RoutingStatusFile _statusFile;
     private readonly HashSet<string> _activeAppliedRules = new(StringComparer.OrdinalIgnoreCase);
     private string? _policyRevision;
+    private readonly Action<RoutingServiceSnapshot>? _sessionPublisher;
 
     public NetworkRoutingWorker(INetworkInterfaceDetector interfaceDetector, IApplicationCatalog applicationCatalog,
         IRoutingEngine routingEngine, IOptions<NetLaneRoutingOptions> options, IHostEnvironment hostEnvironment,
-        ILogger<NetworkRoutingWorker> logger)
+        ILogger<NetworkRoutingWorker> logger, Action<RoutingServiceSnapshot>? sessionPublisher = null)
     {
         _interfaceDetector = interfaceDetector;
         _applicationCatalog = applicationCatalog;
         _routingEngine = routingEngine;
         _logger = logger;
         _options = options.Value;
+        _sessionPublisher = sessionPublisher;
         _resolvedPolicyFilePath = string.IsNullOrWhiteSpace(_options.PolicyFilePath) ? string.Empty
             : Path.GetFullPath(_options.PolicyFilePath, hostEnvironment.ContentRootPath);
         _statusFile = new RoutingStatusFile(string.IsNullOrEmpty(_resolvedPolicyFilePath)
@@ -38,9 +40,11 @@ internal sealed class NetworkRoutingWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         // One writer per policy file; do not let two service instances report contradictory state.
-        using var instanceLock = new FileStream(_statusFile.FilePath + ".runtime.lock", FileMode.OpenOrCreate,
-            FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
-        EnsureBootstrapPolicies();
+        // In UI-session mode the unelevated UI owns the file lease, and status travels over the
+        // authenticated pipe. The privileged process must not write into a user-controlled folder.
+        using var instanceLock = _sessionPublisher is null ? new FileStream(_statusFile.InstanceLockFilePath, FileMode.OpenOrCreate,
+            FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose) : null;
+        if (_sessionPublisher is null) EnsureBootstrapPolicies();
         var interval = TimeSpan.FromSeconds(Math.Clamp(_options.PollIntervalSeconds, 5, 10));
         _logger.LogInformation("Monitorando politicas a cada {Seconds}s. Motor: {Engine}.", interval.TotalSeconds, _routingEngine.GetType().Name);
         try
@@ -122,8 +126,10 @@ internal sealed class NetworkRoutingWorker : BackgroundService
     {
         try
         {
-            _statusFile.Write(new(DateTimeOffset.UtcNow, Environment.ProcessId, _resolvedPolicyFilePath,
-                _policyRevision, _routingEngine.GetType().Name, state, rules, error));
+            var snapshot = new RoutingServiceSnapshot(DateTimeOffset.UtcNow, Environment.ProcessId, _resolvedPolicyFilePath,
+                _policyRevision, _routingEngine.GetType().Name, state, rules, error);
+            if (_sessionPublisher is not null) _sessionPublisher(snapshot);
+            else _statusFile.Write(snapshot);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {

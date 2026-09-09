@@ -4,6 +4,7 @@ using Microsoft.Extensions.Logging.Abstractions;
 using Microsoft.Extensions.Options;
 using NetLane.Core.Contracts;
 using NetLane.Core.Models;
+using NetLane.Core.Persistence;
 using NetLane.Service;
 using NetLane.UI;
 using ApplicationIdentity = NetLane.Core.Models.ApplicationIdentity;
@@ -145,11 +146,61 @@ public sealed class NetworkRoutingWorkerTests
         Assert.Equal("Stopped", new NetLane.Core.Persistence.RoutingStatusFile(workspace.PolicyFile.FilePath).Read()!.State);
     }
 
+    [Fact]
+    public async Task ManagedWorkerPublishesOverTheSessionWithoutElevatedFileWrites()
+    {
+        using var workspace = new TestWorkspace();
+        SeedPolicy(workspace);
+        var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+        var statusFile = new RoutingStatusFile(workspace.PolicyFile.FilePath);
+        using var uiLease = File.Open(statusFile.InstanceLockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var receipts = new List<RoutingServiceSnapshot>();
+        var engine = new RecordingEngine();
+        using var worker = CreateWorker(workspace, engine, new(TestAdapters.Wifi()), publisher: receipts.Add);
+        await worker.StartAsync(TestContext.Current.CancellationToken);
+        await worker.StopAsync(TestContext.Current.CancellationToken);
+        Assert.Equal(["Ready", "Stopped"], receipts.Select(receipt => receipt.State));
+        Assert.Single(engine.Applied);
+        Assert.Equal(1, engine.ClearCalls);
+        Assert.False(File.Exists(statusFile.FilePath));
+        Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+        Assert.True(uiLease.CanRead);
+    }
+
+    [Fact]
+    public async Task ManagedWorkerNeverBootstrapsAMissingPolicyFile()
+    {
+        using var workspace = new TestWorkspace();
+        var receipts = new List<RoutingServiceSnapshot>();
+        using var worker = CreateWorker(workspace, new RecordingEngine(), new(TestAdapters.Wifi()),
+            options: new() { PolicyFilePath = workspace.PolicyFile.FilePath, Policies = [new() { ApplicationId = "bootstrap.exe" }] },
+            publisher: receipts.Add);
+        await worker.StartAsync(TestContext.Current.CancellationToken);
+        await worker.StopAsync(TestContext.Current.CancellationToken);
+        Assert.False(File.Exists(workspace.PolicyFile.FilePath));
+        Assert.Empty(Directory.GetFiles(workspace.Root));
+        Assert.NotEmpty(receipts);
+    }
+
+    [Fact]
+    public async Task ExternalWorkerHonorsTheSamePolicyLeaseAsTheUi()
+    {
+        using var workspace = new TestWorkspace();
+        SeedPolicy(workspace);
+        using var uiLease = File.Open(new RoutingStatusFile(workspace.PolicyFile.FilePath).InstanceLockFilePath,
+            FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        var engine = new RecordingEngine();
+        using var worker = CreateWorker(workspace, engine, new(TestAdapters.Wifi()));
+        await Assert.ThrowsAsync<IOException>(() => worker.StartAsync(TestContext.Current.CancellationToken));
+        Assert.Empty(engine.Applied);
+    }
+
     private static NetworkRoutingWorker CreateWorker(TestWorkspace workspace, RecordingEngine engine,
-        FakeAdapters adapters, IApplicationCatalog? catalog = null, NetLaneRoutingOptions? options = null) => new(
+        FakeAdapters adapters, IApplicationCatalog? catalog = null, NetLaneRoutingOptions? options = null,
+        Action<RoutingServiceSnapshot>? publisher = null) => new(
             adapters, catalog ?? new FakeCatalog(), engine,
             Options.Create(options ?? new() { PolicyFilePath = workspace.PolicyFile.FilePath }),
-            new TestHostEnvironment(workspace.Root), NullLogger<NetworkRoutingWorker>.Instance);
+            new TestHostEnvironment(workspace.Root), NullLogger<NetworkRoutingWorker>.Instance, publisher);
 
     private sealed class FakeCatalog(params ApplicationIdentity[] applications) : IApplicationCatalog
     {

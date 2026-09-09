@@ -60,6 +60,7 @@
                          ScrollViewer.HorizontalScrollBarVisibility="Disabled" AutomationProperties.Name="Navegação principal">
                     <ListBoxItem AutomationProperties.Name="Visão geral"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE80F;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Visão geral" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
                     <ListBoxItem AutomationProperties.Name="Regras de apps"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE8A5;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Regras de apps" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
+                    <ListBoxItem AutomationProperties.Name="Conexões de apps" ToolTip="Conexões de apps"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE968;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Conexões" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
                     <ListBoxItem AutomationProperties.Name="Diagnóstico"><StackPanel Orientation="Horizontal"><TextBlock Text="&#xE9D9;" Style="{StaticResource Glyph}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Margin="0,0,12,0" /><TextBlock Text="Diagnóstico" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" /></StackPanel></ListBoxItem>
                 </ListBox>
             </DockPanel>
@@ -253,9 +254,28 @@
                         </Border>
                     </DockPanel>
                 </TabItem>
+                <TabItem Header="Conexões de apps" Tag="Veja a saída observada dos processos, independente da regra configurada.">
+                    <controls:ProcessConnectionsView x:Name="ProcessConnectionsPanel" />
+                </TabItem>
                 <TabItem Header="Diagnóstico" Tag="Entenda o estado do serviço e das suas regras.">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
                         <StackPanel>
+                            <Border x:Name="ServiceControlPanel" Style="{StaticResource Card}" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding ModeLabel}" Style="{StaticResource Caption}" VerticalAlignment="Center" /><TextBlock Text="Controle do serviço" Style="{StaticResource SectionTitle}" /></DockPanel>
+                                    <TextBlock Text="A autorização de administrador é solicitada somente ao iniciar. Fechar esta janela encerra a sessão e restaura as opções temporárias." Style="{StaticResource Caption}" Margin="0,10,0,0" />
+                                    <CheckBox x:Name="TemporaryRoutePoliciesCheckBox" Content="Autorizar routepolicies temporariamente, se necessário" IsChecked="{Binding AllowTemporaryRoutePolicies, Mode=TwoWay}" Margin="0,14,0,0" AutomationProperties.Name="Autorizar ativação temporária de routepolicies" />
+                                    <TextBlock Text="Essa opção é global do Windows, mas a alteração não é persistida. Nenhum gateway, DNS, métrica ou arquivo sincronizado é alterado." Style="{StaticResource Caption}" FontSize="11" Margin="26,5,0,0" />
+                                    <StackPanel Orientation="Horizontal" Margin="0,16,0,12">
+                                        <Button x:Name="StartServiceButton" Content="Iniciar serviço" Style="{StaticResource PrimaryButton}" Click="StartServiceButton_Click" IsEnabled="{Binding CanStart}" />
+                                        <Button x:Name="StopServiceButton" Content="Parar" Click="StopServiceButton_Click" IsEnabled="{Binding CanStop}" Margin="8,0,0,0" />
+                                        <Button x:Name="RestartServiceButton" Content="Reiniciar" Click="RestartServiceButton_Click" IsEnabled="{Binding CanRestart}" Margin="8,0,0,0" />
+                                    </StackPanel>
+                                    <TextBlock x:Name="ServiceControlStatus" Text="{Binding Status}" Style="{StaticResource Caption}" />
+                                    <TextBlock Text="Executável do serviço desta sessão" Style="{StaticResource Caption}" FontSize="11" Margin="0,12,0,5" />
+                                    <TextBox x:Name="ServiceExecutablePathBox" Text="{Binding ExecutablePath, Mode=OneWay}" IsReadOnly="True" TextWrapping="Wrap" AutomationProperties.Name="Executável do serviço desta sessão" />
+                                </StackPanel>
+                            </Border>
                             <Border Style="{StaticResource Card}" Margin="0,0,0,16">
                                 <StackPanel>
                                     <TextBlock Text="Estado do roteamento" Style="{StaticResource SectionTitle}" />

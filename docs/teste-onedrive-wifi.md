@@ -18,7 +18,9 @@ Confira o alvo, a interface, as conexões atuais e as opções do Windows sem al
 
 ## Manter ativo durante a sincronização
 
-O serviço precisa permanecer ativo durante toda a validação das pastas. A UI aberta e uma regra salva não mantêm o motor funcionando por conta própria.
+O serviço precisa permanecer ativo durante toda a validação das pastas. Abrir a UI e salvar uma regra não iniciam o motor por conta própria. A versão atual permite [iniciar a sessão em Diagnóstico](controle-servico.md); mantenha essa janela aberta e pare pela mesma janela ao concluir.
+
+O procedimento a seguir é uma alternativa pelo terminal, com coleta de evidências. **Não o execute junto da sessão iniciada pelo painel.**
 
 Em um PowerShell **como Administrador**:
 
@@ -88,3 +90,31 @@ A regra OneDrive → Wi-Fi continua salva após o teste, mas não há roteamento
 O ensaio seguinte encerrou automaticamente às **09:02:26**. A captura apresentada pelo usuário começou a medir às 09:04:49 e mostrava o alerta de serviço sem resposta. A consulta confirmou novas conexões de `OneDrive.exe`, PID `30860`, pela Ethernet às 09:04:24, 09:04:28 e 09:05:20, depois de encerrada a política; `routepolicies` já estava desativado nas duas famílias.
 
 O procedimento com prazo não manteve o motor ativo durante a sincronização solicitada pelo usuário. Para essa validação, o modo adotado passa a ser `-UntilStopped`, com encerramento explícito por `-Stop`. Conexões que já estavam na Ethernet precisam ser renovadas com a política ativa.
+
+## Ensaio pelo painel corrigido — 2026-09-07, concluído
+
+O [controle pela interface](controle-servico.md) iniciou a sessão real após o UAC manual do usuário, com serviço PID `3748` e política do OneDrive aceita. O cliente foi reaberto às 16:37:51 (America/Cuiaba), PID `37672`, somente depois da confirmação.
+
+Até 16:44:03, oito amostras registraram **18 conexões TCP externas distintas**, todas com `LocalAddress: 192.168.0.102` (Wi-Fi), porta remota `443` e criação posterior à confirmação da política. Nenhuma conexão externa desse PID foi observada pelo cabo. O serviço continuava ativo e com heartbeat recente; a regra do Steam continuava desabilitada e o JSON real não foi alterado.
+
+Registro parcial até 16:44:03: `artifacts/onedrive-ui/20260907-163733/progress.json`. Naquele momento a sessão permanecia aberta, aguardando o teste de transferência das pastas pelo usuário; sincronização completa e limpeza real pelo botão Parar ainda estavam pendentes. A conclusão está registrada abaixo. As observações validam somente a saída TCP/IPv4 registrada, não UDP/QUIC ou IPv6; os contadores da interface representam todos os aplicativos.
+
+### Transferência iniciada pelo usuário às 21h
+
+Após o usuário informar que iniciou a sincronização, o painel do OneDrive no Explorador mostrou **Baixando arquivos (21%)** e depois **Baixando arquivos (22%)**. Isso acrescenta evidência de download efetivo em progresso, mas não de conclusão. Apenas o resumo de status foi aberto; não foram escolhidas outras pastas nem alterados arquivos ou opções de sincronização.
+
+Entre 21:08:36 e 21:11:42 (America/Cuiaba), duas rodadas somaram **14 amostras** e **11 conexões TCP externas distintas** do mesmo PID `37672`, todas pela Wi-Fi (`192.168.0.102`). O serviço PID `3748` estava ativo, com estado `Ready`, política do OneDrive aplicada e heartbeat recente nas amostras. A configuração real permaneceu com o mesmo hash. Não houve observação contínua no intervalo entre a coleta das 16h e esta retomada; o relatório registra essa lacuna.
+
+A sessão foi mantida ligada durante o download. Até essa coleta, confirmação final de sincronização e teste real de **Parar/restaurar** permaneciam pendentes. O relatório parcial então agregava 22 amostras e 28 conexões TCP distintas; seus contadores de bytes eram da interface inteira, não do processo.
+
+### Conclusão e parada normal
+
+O usuário confirmou **Todos baixados** e enviou uma captura do próprio OneDrive mostrando **Incluído no backup e sincronizado**, com itens baixados no histórico. Essa evidência encerra a validação funcional de sincronização deste ensaio, após o progresso observado anteriormente. O horário exato da conclusão e o conteúdo/checksum individual de cada arquivo não foram auditados.
+
+Antes de parar, às 21:23:45 (America/Cuiaba), o serviço PID `3748` ainda estava ativo, com heartbeat recente, política `Ready` para o OneDrive e `routepolicies` ativo nas duas famílias. A amostra final acrescentou três conexões distintas; o total do ensaio passou a **23 amostras e 31 conexões TCP externas distintas**, todas com origem na Wi-Fi (`192.168.0.102`) e criação posterior à confirmação da política. A coleta foi por amostras e não certifica os intervalos sem observação, UDP/QUIC ou IPv6.
+
+O botão **Diagnóstico → Parar** da janela controladora foi acionado uma vez. Às **21:24:38**, o recibo passou a `Stopped`, sem regras ativas e sem erro. A interface confirmou **Sessão encerrada. Opções temporárias restauradas.** A consulta posterior verificou a saída do PID `3748`, `routepolicies` desativado em IPv4/IPv6 e rotas padrão, gateways e métricas idênticos ao estado anterior à parada. O hash do JSON permaneceu `2E906DDE5D2EAE4CB468650395D19D3E9E68157E562D3AF723AFFAF3984C5B2F`.
+
+O OneDrive permaneceu aberto com o mesmo PID `37672`; nenhum processo foi encerrado à força e o Steam não foi alterado. Duas conexões já existentes continuavam na Wi-Fi após a limpeza; isso não indica política ainda ativa, pois conexões existentes não são migradas pela remoção. Não foi provocada uma nova transferência após a parada.
+
+Relatório final local: `artifacts/onedrive-ui/20260907-163733/result.json`, com estados antes/depois da parada e limites da conclusão. `progress.json` também foi marcado como `Finished`. Resultado: sincronização confirmada pelo cliente/usuário, saída TCP/IPv4 observada na Wi-Fi e parada/restauração normal validadas. Reinício real, queda da Wi-Fi e suspensão/retomada permanecem para os próximos ensaios.

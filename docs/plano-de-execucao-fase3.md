@@ -1,6 +1,6 @@
 # Fase 3 — Interface de regras
 
-Estado em 2026-09-06: editor funcional entregue; fase ainda em andamento. O ciclo mais recente adiciona heartbeat por revisão/horário, coluna de estado por regra e seleção de auxiliares conhecidos do Steam. O [motor nativo por AppId/LUID](roteamento-nativo.md) substitui o antigo PERMIT/BLOCK; teste elevado de saída ainda pendente.
+Estado atualizado em 2026-09-09: editor e [interface renovada](interface-desktop.md) entregues; [controle de sessão pelo painel](controle-servico.md) implementado localmente, com início elevado e parada/restauração reais validados. O [ensaio do OneDrive](teste-onedrive-wifi.md#conclusão-e-parada-normal) teve download em progresso, conclusão confirmada pelo cliente/usuário e conexões TCP/IPv4 observadas na Wi-Fi. A [interface observada por processo](conexoes-por-processo.md) já foi implementada, separada das regras e da confirmação do serviço. A [perda e o retorno da Wi-Fi](testes-recuperacao.md#perda-e-retorno-da-wi-fi--concluído-com-limpeza-final) foram ensaiados, com retirada/reaplicação da política, nova conexão TCP/IPv4 na Wi-Fi e limpeza final confirmada; a variação anterior da métrica automática ficou registrada. A revisão visual básica de Conexões foi concluída antes/depois da suspensão. O [ensaio de suspensão/retomada](testes-recuperacao.md#conclusão-da-suspensãoretomada-e-limpeza-final) confirmou recuperação na mesma sessão, novas conexões TCP/IPv4 do OneDrive na Wi-Fi e parada normal com restauração final, totalizando 28 verificações aprovadas. IPv6 e UDP/QUIC do OneDrive continuam pendentes. Steam permanece fora dos próximos testes. Os resultados e contagens abaixo registram as entregas históricas, não o total atual da suíte.
 
 ## Painel de consumo e seleção de interfaces
 
@@ -64,19 +64,21 @@ dotnet test tests\NetLane.Tests --filter FullyQualifiedName~MainWindowTests
 
 ## Próximas entregas
 
-Prioridade técnica do projeto: resolver o limite de viabilidade descrito abaixo antes de declarar roteamento funcional. O restante da Fase 3 segue organizado nas entregas de UI:
+Ordem acordada para este ciclo, sem Microsoft Store:
 
-1. Evoluir o heartbeat informativo já implementado para IPC autenticado quando houver comandos privilegiados na UI; acrescentar evidência de tráfego efetivo.
-2. Listagem de aplicativos com atividade de rede e ícones, além do seletor manual.
-3. Bandeja do Windows e pausar/retomar regras através do serviço.
-4. Definição do caminho compartilhado de políticas e instalação do serviço para uso fora do checkout.
+1. Controle seguro de iniciar/parar/reiniciar pela UI — código e testes sintéticos implementados; ciclo real completo com UAC manual, troca de PID no reinício e parada/restauração final validados.
+2. Sincronização do OneDrive — concluída neste ensaio, conforme status do cliente e confirmação do usuário; novas conexões TCP/IPv4 observadas na Wi-Fi, com coleta por amostras.
+3. [Conexão/interface observada por processo](conexoes-por-processo.md) — implementada com coleta TCP/IPv4 somente leitura, separada da configuração e da política aceita; suíte ampliada para 190 testes.
+4. [Ensaios de recuperação](testes-recuperacao.md): início/reinício/parada real concluído, com oito verificações finais aprovadas e 43 testes sintéticos de preparação. Perda/retorno da Wi-Fi concluído em 2026-09-09, com nova conexão TCP/IPv4 do OneDrive na Wi-Fi, limpeza final e 18 verificações aprovadas; diferença anterior da métrica automática registrada separadamente. **Suspensão/retomada concluída**, com recuperação na mesma sessão, Conexões conferida antes/depois, parada/restauração final e 28 verificações aprovadas (16 de recuperação + 12 de conferência/encerramento). Não há etapa pendente desse ciclo; a matriz interativa completa da tela e os demais protocolos não foram declarados validados.
 
-## Limite de viabilidade a resolver
+Bandeja, instalador, caminho compartilhado protegido e distribuição ficam para depois desses critérios.
+
+## Histórico do limite de viabilidade
 
 O registro anterior de filtros `2/2` prova instalação de filtros, não redirecionamento de novas conexões. Esse motor foi substituído por `FwpmConnectionPolicyAdd0`, API nativa presente neste Windows. Ela permite selecionar a interface sem callout/driver próprio. As políticas dependem da opção global `routepolicies`, que esta implementação não habilita automaticamente.
 
 `CheckPublicIpPerMappedApplication` na PoC executa `curl --interface` com o IP local de cada placa. Os resultados são uma referência das conexões disponíveis, não medições de tráfego originado em `explorer.exe` ou `steam.exe`.
 
-A aceitação de roteamento da Fase 0 permanece pendente: executar a nova prova `--verify-routing` como administrador, medir também o Steam e IPv6, e verificar ausência de alteração da tabela global de rotas. A UI diferencia escolha salva, política aceita e tráfego ainda não verificado. A suíte atual tem 95 testes; os 58 acima se referem à entrega anterior do editor/painel.
+A pendência original de executar a prova elevada `--verify-routing` foi resolvida para IPv4 TCP/UDP, conforme [evidências do motor nativo](roteamento-nativo.md). Isso não comprova IPv6 nem sincronização completa do OneDrive. Steam deixou de ser o alvo ativo por decisão do usuário. A UI diferencia escolha salva, política aceita e tráfego ainda não verificado; os 58 testes acima e a contagem posterior de 95 pertencem às entregas anteriores.
 
 Referências de implementação: a API [File.Replace](https://learn.microsoft.com/en-us/dotnet/api/system.io.file.replace) permite substituir o arquivo criando backup; o [roteamento nativo](roteamento-nativo.md) documenta a API e os pré-requisitos adotados no motor atual.

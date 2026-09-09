@@ -1,0 +1,74 @@
+<UserControl x:Class="NetLane.UI.Controls.ProcessConnectionsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <Grid>
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+        <Border Padding="14,12" CornerRadius="8" Margin="0,0,0,14">
+            <Border.Style><Style TargetType="Border"><Setter Property="Background" Value="{DynamicResource AccentSoftBrush}" /><Style.Triggers><DataTrigger Binding="{Binding ReadFailed}" Value="True"><Setter Property="Background" Value="{DynamicResource WarningSurfaceBrush}" /></DataTrigger></Style.Triggers></Style></Border.Style>
+            <StackPanel>
+                <TextBlock Text="{Binding Status}" FontWeight="SemiBold" TextWrapping="Wrap" AutomationProperties.Name="Estado da leitura de conexões" />
+                <TextBlock Text="{Binding RuleHint}" Style="{DynamicResource Caption}" Margin="0,5,0,0" />
+            </StackPanel>
+        </Border>
+        <Grid Grid.Row="1" Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="12" /><ColumnDefinition Width="180" /></Grid.ColumnDefinitions>
+            <TextBox x:Name="ProcessSearchBox" Text="{Binding SearchText, UpdateSourceTrigger=PropertyChanged}" Padding="12,9" MinHeight="38"
+                     AutomationProperties.Name="Pesquisar conexões por aplicativo, PID ou interface" ToolTip="Pesquisar nome, caminho, PID ou interface" />
+            <TextBlock Text="Pesquisar aplicativo, PID ou interface…" Margin="12,0" Foreground="{DynamicResource MutedBrush}" IsHitTestVisible="False" VerticalAlignment="Center">
+                <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Text, ElementName=ProcessSearchBox}" Value=""><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+            </TextBlock>
+            <ComboBox Grid.Column="2" x:Name="ProcessFilter" SelectedIndex="{Binding FilterIndex}" AutomationProperties.Name="Filtrar processos observados">
+                <ComboBoxItem Content="Todos os processos" /><ComboBoxItem Content="Com regra direta" />
+            </ComboBox>
+        </Grid>
+        <Border Grid.Row="2" Style="{DynamicResource Card}" Padding="0" ClipToBounds="True">
+            <Grid>
+                <DataGrid x:Name="ProcessConnectionsGrid" ItemsSource="{Binding Rows}" SelectedItem="{Binding SelectedRow, Mode=TwoWay}"
+                          AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" CanUserReorderColumns="False" CanUserSortColumns="False"
+                          IsReadOnly="True" SelectionMode="Single" HeadersVisibility="Column" MinRowHeight="86"
+                          AutomationProperties.Name="Conexões TCP IPv4 observadas por processo">
+                    <DataGrid.Columns>
+                        <DataGridTemplateColumn Header="Aplicativo / processo" Width="*" MinWidth="205">
+                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                <StackPanel Margin="12" VerticalAlignment="Center" ToolTip="{Binding IdentityDetail}">
+                                    <TextBlock Text="{Binding ApplicationName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding ProcessLabel}" Style="{DynamicResource Caption}" FontSize="11" Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding IdentityDetail}" Style="{DynamicResource Caption}" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Regra configurada" Width="210">
+                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                <StackPanel Margin="12" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding ConfiguredRoute}" TextWrapping="Wrap" />
+                                    <TextBlock Text="{Binding PolicyStatus}" Style="{DynamicResource Caption}" FontSize="11" Margin="0,5,0,0" />
+                                </StackPanel>
+                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                        <DataGridTemplateColumn Header="Saída observada · IP local" Width="270">
+                            <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                <StackPanel Margin="12" VerticalAlignment="Center" ToolTip="{Binding ObservationDetail}">
+                                    <TextBlock Text="{Binding InterfaceLabel}" FontWeight="SemiBold" TextWrapping="Wrap">
+                                        <TextBlock.Style><Style TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource AccentBrush}" /><Style.Triggers><DataTrigger Binding="{Binding HasUnknownInterface}" Value="True"><Setter Property="Foreground" Value="{DynamicResource WarningBrush}" /></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                    </TextBlock>
+                                    <TextBlock Text="{Binding AddressLabel}" Style="{DynamicResource Caption}" FontSize="11" Margin="0,4,0,0" />
+                                    <TextBlock Text="{Binding ConnectionLabel}" Style="{DynamicResource Caption}" FontSize="11" Margin="0,3,0,0" />
+                                </StackPanel>
+                            </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                        </DataGridTemplateColumn>
+                    </DataGrid.Columns>
+                </DataGrid>
+                <StackPanel x:Name="EmptyConnectionsPanel" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24" IsHitTestVisible="False" MaxWidth="440">
+                    <StackPanel.Style><Style TargetType="StackPanel"><Setter Property="Visibility" Value="Collapsed" /><Style.Triggers><DataTrigger Binding="{Binding Rows.Count}" Value="0"><Setter Property="Visibility" Value="Visible" /></DataTrigger></Style.Triggers></Style></StackPanel.Style>
+                    <TextBlock Text="{Binding EmptyTitle}" FontSize="17" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+                    <TextBlock Text="{Binding EmptyHint}" Style="{DynamicResource Caption}" Margin="0,8,0,0" TextAlignment="Center" />
+                </StackPanel>
+            </Grid>
+        </Border>
+        <StackPanel Grid.Row="3" Margin="0,12,0,0">
+            <TextBlock Text="{Binding Summary}" Style="{DynamicResource Caption}" FontWeight="SemiBold" />
+            <TextBlock Text="TCP/IPv4 estabelecido, incluindo rede local · coleta a cada 2 s. Não mede bytes por app nem observa UDP/QUIC ou IPv6." Style="{DynamicResource Caption}" FontSize="11" Margin="0,7,0,0" />
+            <TextBlock Text="Conexões antigas podem permanecer na mesma saída após parar o serviço. Regras diretas são associadas pelo caminho completo do executável." Style="{DynamicResource Caption}" FontSize="11" Margin="0,4,0,0" />
+        </StackPanel>
+    </Grid>
+</UserControl>
