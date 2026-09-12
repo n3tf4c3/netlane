@@ -336,6 +336,114 @@ public sealed class MainWindowTests
         });
     }
 
+    [Fact]
+    public async Task LoadedWindowRefreshesConnectionsRecoversFromFailureAndStopsPollingAfterClose()
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            workspace.PolicyFile.Save([new() { ApplicationId = "OneDrive.exe", ExecutablePath = @"C:\Apps\OneDrive.exe",
+                RouteMode = NetworkRouteMode.WiFi, InterfaceId = ProcessConnectionTests.WifiId }], null);
+            var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+            var session = new FakeServiceSession();
+            var reader = new ChangingProcessSource();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(ProcessConnectionTests.Wifi(), ProcessConnectionTests.Cable()),
+                serviceSession: session, connectionsSource: reader);
+            var editor = (PolicyEditor)window.DataContext;
+            var dashboard = window.ProcessConnections;
+            var firstRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var secondRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var failedRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var recoveredRead = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            void ObserveRead(object? sender, System.ComponentModel.PropertyChangedEventArgs args)
+            {
+                if (dashboard.ReadFailed) { failedRead.TrySetResult(); return; }
+                if (dashboard.Rows.Count != 1) return;
+                var row = dashboard.Rows[0];
+                if (row.InterfaceLabel == "Ethernet") recoveredRead.TrySetResult();
+                else if (row.Observation.ConnectionCount == 2) secondRead.TrySetResult();
+                else firstRead.TrySetResult();
+            }
+            dashboard.PropertyChanged += ObserveRead;
+            try
+            {
+                var root = (FrameworkElement)window.Content;
+                root.Measure(new Size(1000, 650)); root.Arrange(new Rect(0, 0, 1000, 650));
+                ((ListBox)window.FindName("NavigationList")).SelectedIndex = 2;
+                root.UpdateLayout();
+                var panel = (FrameworkElement)window.FindName("ProcessConnectionsPanel");
+                var search = (TextBox)panel.FindName("ProcessSearchBox");
+                var filter = (ComboBox)panel.FindName("ProcessFilter");
+                var grid = (DataGrid)panel.FindName("ProcessConnectionsGrid");
+                search.Text = "onedrive";
+                filter.SelectedIndex = 1;
+
+                // Exercise the production Loaded subscription and its real 2-second DispatcherTimer.
+                // The window stays in memory; only the connection source and service are synthetic.
+                window.RaiseEvent(new RoutedEventArgs(FrameworkElement.LoadedEvent));
+                PumpUntilCompleted(firstRead.Task);
+                root.UpdateLayout();
+                var selected = grid.SelectedItem = Assert.Single(grid.Items.Cast<ProcessConnectionRow>());
+                var firstStatus = dashboard.Status;
+                editor.Rows[0].Enabled = false;
+
+                PumpUntilCompleted(secondRead.Task);
+                root.UpdateLayout();
+                Assert.NotEqual(firstStatus, dashboard.Status);
+                Assert.Same(selected, grid.SelectedItem);
+                Assert.Equal(2, ((ProcessConnectionRow)selected).Observation.ConnectionCount);
+                Assert.Equal("onedrive", search.Text);
+                Assert.Equal(1, filter.SelectedIndex);
+                Assert.Contains("não salva", ((ProcessConnectionRow)selected).PolicyStatus);
+
+                PumpUntilCompleted(failedRead.Task);
+                root.UpdateLayout();
+                Assert.Empty(grid.Items.Cast<object>());
+                Assert.Null(dashboard.SelectedRow);
+                Assert.Equal(Visibility.Visible, ((StackPanel)panel.FindName("EmptyConnectionsPanel")).Visibility);
+
+                PumpUntilCompleted(recoveredRead.Task);
+                root.UpdateLayout();
+                var recovered = Assert.Single(grid.Items.Cast<ProcessConnectionRow>());
+                Assert.Equal("Ethernet", recovered.InterfaceLabel);
+                Assert.Equal("onedrive", search.Text);
+                Assert.Equal(1, filter.SelectedIndex);
+                Assert.True(editor.HasChanges);
+                Assert.False(editor.Rows[0].Enabled);
+                Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+                Assert.Empty(session.Calls);
+
+                editor.Load();
+                window.Close();
+                var callsAtClose = reader.Calls;
+                PumpUntilCompleted(Task.Delay(TimeSpan.FromMilliseconds(2300)));
+                Assert.Equal(callsAtClose, reader.Calls);
+            }
+            finally
+            {
+                dashboard.PropertyChanged -= ObserveRead;
+                editor.Load(); window.Close();
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+    }
+
+    private sealed class ChangingProcessSource : IProcessConnectionSource
+    {
+        private int _calls;
+        public int Calls => Volatile.Read(ref _calls);
+        public ProcessConnectionSnapshot ReadSnapshot()
+        {
+            var call = Interlocked.Increment(ref _calls);
+            if (call == 3) throw new IOException("Falha sintética entre duas leituras válidas.");
+            var connections = call == 2
+                ? new[] { ProcessConnectionTests.Connection(), ProcessConnectionTests.Connection(port: 5001), ProcessConnectionTests.Connection(pid: 20) }
+                : new[] { ProcessConnectionTests.Connection(local: call >= 4 ? "192.168.15.5" : "192.168.0.102"), ProcessConnectionTests.Connection(pid: 20) };
+            return ProcessConnectionTests.Snapshot(connections) with { CapturedAtUtc = DateTimeOffset.UtcNow };
+        }
+    }
+
     private sealed class BlockingProcessSource : IProcessConnectionSource, IDisposable
     {
         public readonly ManualResetEventSlim Entered = new();

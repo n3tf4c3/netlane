@@ -1,0 +1,17 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <Target Name="RequireReviewedBuild" BeforeTargets="ResolveReferences">
+    <Error Condition="!Exists('$(NetLaneReviewBuild)/NetLane.UI.dll')" Text="Informe NetLaneReviewBuild com o diretório da UI já compilada para revisão." />
+  </Target>
+  <ItemGroup>
+    <Reference Include="NetLane.Core"><HintPath>$(NetLaneReviewBuild)/NetLane.Core.dll</HintPath></Reference>
+    <Reference Include="NetLane.Network"><HintPath>$(NetLaneReviewBuild)/NetLane.Network.dll</HintPath></Reference>
+    <Reference Include="NetLane.UI"><HintPath>$(NetLaneReviewBuild)/NetLane.UI.dll</HintPath></Reference>
+  </ItemGroup>
+</Project>

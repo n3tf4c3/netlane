@@ -23,11 +23,14 @@ public partial class MainWindow : Window
     private readonly IInterfaceTrafficSource? _trafficSource;
     private readonly IProcessConnectionSource? _processSource;
     private readonly Func<bool>? _confirmDiscardChanges;
+    private readonly Func<ServiceConfirmation, bool>? _confirmService;
     private readonly DispatcherTimer _monitorTimer;
     private bool _refreshing;
     private bool _refreshingProcesses;
     private bool _closed;
     private bool _closeAfterServiceStop;
+    internal bool IsConfirmationOpen { get; private set; }
+    internal event EventHandler? ConfirmationStateChanged;
     public InterfaceDashboard Dashboard { get; }
     public ServiceControlViewModel ServiceControls { get; }
     public ProcessConnectionsDashboard ProcessConnections { get; } = new();
@@ -40,6 +43,11 @@ public partial class MainWindow : Window
     internal MainWindow(RoutingPolicyFile file, INetworkInterfaceDetector detector,
         IInterfaceTrafficSource? trafficSource = null, InterfaceSelectionFile? selectionFile = null, IServiceSession? serviceSession = null,
         IProcessConnectionSource? connectionsSource = null, Func<bool>? confirmDiscardChanges = null)
+        : this(file, detector, trafficSource, selectionFile, serviceSession, connectionsSource, confirmDiscardChanges, null) { }
+
+    internal MainWindow(RoutingPolicyFile file, INetworkInterfaceDetector detector,
+        IInterfaceTrafficSource? trafficSource, InterfaceSelectionFile? selectionFile, IServiceSession? serviceSession,
+        IProcessConnectionSource? connectionsSource, Func<bool>? confirmDiscardChanges, Func<ServiceConfirmation, bool>? confirmService)
     {
         InitializeComponent();
         ApplyHighContrastPalette();
@@ -47,6 +55,7 @@ public partial class MainWindow : Window
         _trafficSource = trafficSource;
         _processSource = connectionsSource;
         _confirmDiscardChanges = confirmDiscardChanges;
+        _confirmService = confirmService;
         ProcessConnectionsPanel.DataContext = ProcessConnections;
         ServiceControls = new(serviceSession ?? new WindowsServiceSession(file.FilePath, ServiceExecutableLocator.Find(AppContext.BaseDirectory)), Dispatcher);
         ServiceControlPanel.DataContext = ServiceControls;
@@ -129,31 +138,46 @@ public partial class MainWindow : Window
     private void ResetMeasurementButton_Click(object sender, RoutedEventArgs e) => Dashboard.CurrentInterface?.ResetMeasurement();
     private void SaveSelectionButton_Click(object sender, RoutedEventArgs e) => Dashboard.SaveSelection();
 
-    private void DiagnosticsButton_Click(object sender, RoutedEventArgs e) => WorkspaceTabs.SelectedIndex = 3;
-
-    private async void StartServiceButton_Click(object sender, RoutedEventArgs e)
+    internal void ShowDiagnostics() => WorkspaceTabs.SelectedIndex = 3;
+    internal void SetTrayAvailability(bool available)
     {
-        if (!ConfirmServiceStart()) return;
+        TrayHintText.Text = available ? "Minimizar → bandeja · X → sair"
+            : "Bandeja indisponível. O painel permanece na barra de tarefas.";
+        TrayHintText.Visibility = Visibility.Visible;
+    }
+
+    private void DiagnosticsButton_Click(object sender, RoutedEventArgs e) => ShowDiagnostics();
+
+    private async void StartServiceButton_Click(object sender, RoutedEventArgs e) => await StartServiceAsync();
+
+    internal async Task StartServiceAsync()
+    {
+        if (!ServiceControls.CanStart || !ConfirmServiceStart()) return;
         await ServiceControls.StartAsync();
         _editor.RefreshRuntime();
     }
 
-    private async void StopServiceButton_Click(object sender, RoutedEventArgs e)
+    private async void StopServiceButton_Click(object sender, RoutedEventArgs e) => await StopServiceAsync();
+
+    internal async Task StopServiceAsync()
     {
+        if (IsConfirmationOpen || !ServiceControls.CanStop) return;
         await ServiceControls.StopAsync();
         _editor.RefreshRuntime();
     }
 
-    private async void RestartServiceButton_Click(object sender, RoutedEventArgs e)
+    private async void RestartServiceButton_Click(object sender, RoutedEventArgs e) => await RestartServiceAsync();
+
+    internal async Task RestartServiceAsync()
     {
-        if (!ConfirmServiceStart()) return;
+        if (!ServiceControls.CanRestart || !ConfirmServiceStart()) return;
         await ServiceControls.RestartAsync();
         _editor.RefreshRuntime();
     }
 
     private bool ConfirmServiceStart()
     {
-        if (ServiceControls.IsBusy) return false;
+        if (ServiceControls.IsBusy || IsConfirmationOpen) return false;
         if (_editor.HasChanges || !_editor.CanEdit)
         {
             _editor.ReportError(new InvalidOperationException("Salve ou recarregue as regras antes de iniciar o serviço."));
@@ -163,9 +187,9 @@ public partial class MainWindow : Window
         var flags = ServiceControls.AllowTemporaryRoutePolicies
             ? "Você autorizou ativar routepolicies temporariamente em IPv4/IPv6, se necessário. As opções alteradas serão restauradas ao parar."
             : "As opções routepolicies do Windows não serão ativadas. Se estiverem desativadas, o início será recusado.";
-        return MessageBox.Show(this, "O Windows solicitará autorização de administrador. Somente as regras salvas serão aplicadas.\n\n"
+        return RunConfirmation(() => _confirmService?.Invoke(ServiceConfirmation.Start) ?? MessageBox.Show(this, "O Windows solicitará autorização de administrador. Somente as regras salvas serão aplicadas.\n\n"
             + flags + "\n\nFechar esta janela encerra a sessão. Nenhum aplicativo será fechado ou reaberto pelo NetLane. Continuar?",
-            "Iniciar sessão de roteamento", MessageBoxButton.YesNo, MessageBoxImage.Information, MessageBoxResult.No) == MessageBoxResult.Yes;
+            "Iniciar sessão de roteamento", MessageBoxButton.YesNo, MessageBoxImage.Information, MessageBoxResult.No) == MessageBoxResult.Yes);
     }
 
     private void CopyDiagnosticsButton_Click(object sender, RoutedEventArgs e)
@@ -263,7 +287,20 @@ public partial class MainWindow : Window
         RulesCountText.Text = $"{_rulesView.Cast<PolicyRow>().Count()} de {_editor.Rows.Count} regras";
     }
 
-    private bool ConfirmDiscard() => !_editor.HasChanges || (_confirmDiscardChanges?.Invoke() ?? MessageBox.Show(this,
+    private bool RunConfirmation(Func<bool> confirm)
+    {
+        if (IsConfirmationOpen) return false;
+        IsConfirmationOpen = true;
+        ConfirmationStateChanged?.Invoke(this, EventArgs.Empty);
+        try { return confirm(); }
+        finally
+        {
+            IsConfirmationOpen = false;
+            ConfirmationStateChanged?.Invoke(this, EventArgs.Empty);
+        }
+    }
+
+    private bool ConfirmDiscard() => !_editor.HasChanges || RunConfirmation(() => _confirmDiscardChanges?.Invoke() ?? MessageBox.Show(this,
         "Existem alterações não salvas. Deseja descartá-las?", "NetLane",
         MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes);
 
@@ -271,14 +308,15 @@ public partial class MainWindow : Window
     {
         if (!_closeAfterServiceStop)
         {
-            if (ServiceControls.IsBusy) { e.Cancel = true; return; }
+            if (ServiceControls.IsBusy || IsConfirmationOpen) { e.Cancel = true; return; }
             e.Cancel = !ConfirmDiscard();
             if (e.Cancel) return;
             if (ServiceControls.Session.OwnsRunningProcess)
             {
                 e.Cancel = true;
-                if (MessageBox.Show(this, "Fechar o painel também encerra a sessão de roteamento iniciada por esta janela. Deseja parar o serviço e fechar?",
-                    "Encerrar NetLane", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes)
+                if (RunConfirmation(() => _confirmService?.Invoke(ServiceConfirmation.StopAndExit) ?? MessageBox.Show(this,
+                    "Fechar o painel também encerra a sessão de roteamento iniciada por esta janela. Deseja parar o serviço e fechar?",
+                    "Encerrar NetLane", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes))
                     _ = StopServiceAndCloseAsync();
                 return;
             }
@@ -309,3 +347,5 @@ public partial class MainWindow : Window
         finally { _closeAfterServiceStop = false; }
     }
 }
+
+internal enum ServiceConfirmation { Start, StopAndExit }

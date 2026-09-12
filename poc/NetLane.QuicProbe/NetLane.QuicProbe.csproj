@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <!-- QUIC is preview in .NET 8. Keep that opt-in out of the production projects. -->
+    <EnablePreviewFeatures>true</EnablePreviewFeatures>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="NetLane.QuicProbe.Tests" />
+  </ItemGroup>
+</Project>
