@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <StartupObject>NetLane.TrayRoutingReview.Program</StartupObject>
+  </PropertyGroup>
+  <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+    <Using Include="System.IO" />
+    <ProjectReference Include="../../src/NetLane.UI/NetLane.UI.csproj" />
+    <ProjectReference Include="../../poc/NetLane.QuicRoutingCheck/NetLane.QuicRoutingCheck.csproj" />
+    <InternalsVisibleTo Include="NetLane.TrayRoutingReview.Tests" />
+  </ItemGroup>
+</Project>

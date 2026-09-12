@@ -54,6 +54,7 @@
                     </Border>
                     <TextBlock Text="VERSÃO EM DESENVOLVIMENTO" FontSize="9" Foreground="{DynamicResource MutedBrush}" />
                     <TextBlock Text="Controle local · Windows" Style="{StaticResource Caption}" Margin="0,6,0,0" />
+                    <TextBlock x:Name="TrayHintText" Visibility="Collapsed" Style="{StaticResource Caption}" FontSize="10" TextWrapping="Wrap" Margin="0,8,0,0" />
                 </StackPanel>
                 <ListBox x:Name="NavigationList" SelectedIndex="{Binding SelectedIndex, ElementName=WorkspaceTabs, Mode=TwoWay}"
                          Background="Transparent" BorderThickness="0" ItemContainerStyle="{StaticResource NavigationItem}"
