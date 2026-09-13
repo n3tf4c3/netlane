@@ -35,7 +35,9 @@ public partial class MainWindow : Window
     public ServiceControlViewModel ServiceControls { get; }
     public ProcessConnectionsDashboard ProcessConnections { get; } = new();
 
-    public MainWindow() : this(new RoutingPolicyFile(ResolvePolicyFile()), new WindowsNetworkInterfaceDetector(),
+    public MainWindow() : this(new RoutingPolicyFile(ApplicationPaths.ResolvePolicyFile(
+            AppContext.BaseDirectory, Directory.GetCurrentDirectory(),
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData))), new WindowsNetworkInterfaceDetector(),
         new WindowsInterfaceTrafficSource(), new InterfaceSelectionFile(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetLane", "interface-selection.json")),
         connectionsSource: new WindowsProcessConnectionSource()) { }
@@ -217,20 +219,6 @@ public partial class MainWindow : Window
         Resources["OnAccentBrush"] = SystemColors.HighlightTextBrush;
         Resources["DownloadBrush"] = SystemColors.WindowTextBrush;
         Resources["UploadBrush"] = SystemColors.HotTrackBrush;
-    }
-
-    private static string ResolvePolicyFile()
-    {
-        foreach (var startingPoint in new[] { AppContext.BaseDirectory, Directory.GetCurrentDirectory() })
-        {
-            for (var current = new DirectoryInfo(startingPoint); current is not null; current = current.Parent)
-            {
-                if (File.Exists(Path.Combine(current.FullName, "NetLane.sln")))
-                    return Path.Combine(current.FullName, "src", "NetLane.Service", "netlane-rules.json");
-            }
-        }
-
-        return Path.Combine(AppContext.BaseDirectory, "netlane-rules.json");
     }
 
     private void AddButton_Click(object sender, RoutedEventArgs e)

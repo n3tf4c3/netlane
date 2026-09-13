@@ -6,6 +6,13 @@ internal static class ServiceExecutableLocator
 {
     public static string? Find(string uiDirectory)
     {
+        if (ApplicationPaths.IsInstalledLayout(uiDirectory))
+        {
+            var packagedService = Path.Combine(uiDirectory, "service", "NetLane.Service.exe");
+            // Never elevate another build if the installed payload is incomplete.
+            return File.Exists(packagedService) ? packagedService : null;
+        }
+
         var ui = new DirectoryInfo(uiDirectory);
         var candidates = new List<string> { Path.Combine(uiDirectory, "NetLane.Service.exe") };
         // .NET 8 --artifacts-path layout: bin/NetLane.UI/release alongside bin/NetLane.Service/release.
