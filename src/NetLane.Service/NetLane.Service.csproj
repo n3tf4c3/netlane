@@ -17,8 +17,11 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Update="appsettings.json">
-      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
-    </None>
+    <!-- Worker SDK includes JSON files by default. Only ship application defaults,
+         never local routing policies, status receipts, or editor backups. -->
+    <Content Remove="**\*.json;**\*.config" />
+    <None Remove="appsettings.json" />
+    <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Update="netlane-rules*;**\*.runtime.*" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
   </ItemGroup>
 </Project>

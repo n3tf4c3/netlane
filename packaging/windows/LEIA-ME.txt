@@ -1,0 +1,29 @@
+NetLane - previa local para Windows x64
+
+Esta e uma versao experimental, sem assinatura digital e sem validacao de
+instalacao/desinstalacao em todas as versoes do Windows. Nao e uma release publica.
+
+Arquivos do programa: Program Files\NetLane
+Regras: %LOCALAPPDATA%\NetLane\netlane-rules.json
+Preferencias: %LOCALAPPDATA%\NetLane\interface-selection.json
+
+O instalador nao importa regras do checkout, nao altera regras existentes do
+perfil e nao remove dados do usuario na desinstalacao. Novos perfis comecam sem
+regras. Para migrar suas regras de desenvolvimento, combine uma copia/backup
+separadamente, com o painel e o servico parados.
+
+Abra pelo menu Iniciar sem executar como administrador. O painel pede UAC apenas
+para iniciar a sessao de roteamento. Nao ha servico Windows permanente, inicio
+automatico, atalho na inicializacao ou alteracao de rede feita pelo instalador.
+
+Minimizar oculta na bandeja. Para instalar/atualizar/remover, use Sair e aguarde
+o fechamento normal e a parada do servico. O instalador nao mata processos.
+
+Roteamento depende dos pre-requisitos verificados pelo painel. Politica aceita
+nao e prova de trafego. VPN, bloqueio contra vazamentos e IPv6 nao estao validados.
+
+Empacotamento: NSIS 3.12 (https://nsis.sourceforge.io/).
+Runtime e bibliotecas: .NET 8 (https://github.com/dotnet/).
+Avisos de terceiros fornecidos pelos pacotes estao na pasta notices.
+Assinatura, auditoria completa de redistribuicao e distribuicao publica sao
+etapas separadas desta previa local.
