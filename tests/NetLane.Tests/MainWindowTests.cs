@@ -11,6 +11,8 @@ using NetLane.Core.Contracts;
 using NetLane.Core.Persistence;
 using NetLane.UI;
 using NetLane.UI.Monitoring;
+using NetLane.Network.DefaultConnection;
+using NetLane.UI.Controls;
 
 namespace NetLane.Tests;
 
@@ -20,6 +22,161 @@ public sealed class WpfCollection;
 [Collection("WPF")]
 public sealed class MainWindowTests
 {
+    [Theory]
+    [InlineData(1000, 650)]
+    [InlineData(1440, 920)]
+    public async Task QualityControlsRenderAndStartOnlyOnExplicitClick(int width, int height)
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            var probe = new FakeQualityProbe();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Ethernet(), TestAdapters.Wifi()),
+                serviceSession: new FakeServiceSession(), qualityProbe: probe);
+            try
+            {
+                var root = (FrameworkElement)window.Content;
+                root.Width = width; root.Height = height;
+                root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height)); root.UpdateLayout();
+                Assert.Empty(probe.Adapters);
+                var target = (TextBox)window.FindName("QualityTargetBox");
+                target.Text = "8.8.8.8";
+                Assert.Equal("8.8.8.8", window.QualityMonitor.TargetText);
+                Assert.Empty(probe.Adapters);
+                ((Button)window.FindName("ToggleQualityButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.True(window.QualityMonitor.IsRunning);
+                Assert.Equal(2, probe.Adapters.Count);
+                Assert.False(target.IsEnabled);
+                for (var n = 0; n < 4; n++) PumpUntilCompleted(window.QualityMonitor.RefreshAsync());
+                Assert.All(window.Dashboard.SelectedInterfaces, row => Assert.Contains("Boa", row.Quality.Label));
+                root.UpdateLayout();
+                var indicators = Descendants<ConnectionQualityIndicator>(root).ToArray();
+                Assert.Equal(2, indicators.Length);
+                foreach (var indicator in indicators)
+                {
+                    var quality = Assert.IsType<NetLane.UI.Quality.ConnectionQualityRow>(indicator.DataContext);
+                    Assert.Contains(indicator.IconGlyph, new[] { "\uE839", "\uE701" });
+                    Assert.Contains(Descendants<TextBlock>(indicator), t => t.Text == quality.LatencyLabel);
+                    var tooltip = Assert.IsType<ToolTip>(indicator.ToolTip);
+                    Assert.Contains("Ping médio:", ((TextBlock)tooltip.Content).Text);
+                    var bounds = indicator.TransformToAncestor(root).TransformBounds(new Rect(indicator.RenderSize));
+                    Assert.True(bounds.Bottom <= height && bounds.Right <= width);
+                    if (indicator.IconGlyph == "\uE701")
+                    {
+                        // Render the popup content in memory, with its owner's palette; no native popup.
+                        tooltip.Resources.MergedDictionaries.Add(window.Resources);
+                        tooltip.Measure(new Size(360, double.PositiveInfinity));
+                        tooltip.Arrange(new Rect(tooltip.DesiredSize));
+                        tooltip.UpdateLayout();
+                        SaveRenderIfRequested(tooltip, $"quality-tooltip-{width}");
+                    }
+                }
+                foreach (var name in new[] { "QualityModeBox", "QualityTargetBox", "ToggleQualityButton", "SelectedInterfacesList" })
+                {
+                    var element = (FrameworkElement)window.FindName(name);
+                    var bounds = element.TransformToAncestor(root).TransformBounds(new Rect(element.RenderSize));
+                    Assert.True(bounds.Left >= 0 && bounds.Right <= width && bounds.Top >= 0 && bounds.Bottom <= height, name);
+                }
+                SaveRenderIfRequested(root, $"quality-{width}");
+                ((Button)window.FindName("ToggleQualityButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Assert.False(window.QualityMonitor.IsRunning);
+                Assert.True(target.IsEnabled);
+                Assert.All(window.Dashboard.SelectedInterfaces, r => Assert.Equal("Desativado", r.Quality.Label));
+                Assert.False(File.Exists(workspace.PolicyFile.FilePath));
+            }
+            finally { window.Close(); SynchronizationContext.SetSynchronizationContext(null); }
+        });
+    }
+
+    [Theory]
+    [InlineData(1000, 650)]
+    [InlineData(1440, 920)]
+    public async Task DefaultConnectionControlsRenderAndSelectionDoesNotApply(int width, int height)
+    {
+        await RunSta(() =>
+        {
+            using var workspace = new TestWorkspace();
+            var control = new FakeWindowConnectionControl();
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Ethernet(), TestAdapters.Wifi()),
+                serviceSession: new FakeServiceSession(), defaultConnectionControl: control);
+            try
+            {
+                window.DefaultConnection.RefreshAsync(true).GetAwaiter().GetResult();
+                var root = (FrameworkElement)window.Content;
+                root.Width = width; root.Height = height;
+                root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height)); root.UpdateLayout();
+                var choice = (ComboBox)window.FindName("DefaultConnectionChoiceBox");
+                Assert.Equal(2, choice.Items.Count);
+                Assert.Equal("Atual: Ethernet", window.DefaultConnection.CurrentLabel);
+                Assert.True(((Button)window.FindName("ApplyDefaultConnectionButton")).IsEnabled);
+                Assert.False(((Button)window.FindName("RestoreDefaultConnectionButton")).IsEnabled);
+                choice.SelectedIndex = 1;
+                Assert.Equal(((NetLane.UI.DefaultConnection.DefaultConnectionChoice)choice.Items[1]).Id, window.DefaultConnection.Selected!.Id);
+                root.UpdateLayout();
+                Assert.Equal(0, control.ApplyCalls);
+                foreach (var name in new[] { "DefaultConnectionChoiceBox", "ApplyDefaultConnectionButton", "RestoreDefaultConnectionButton" })
+                {
+                    var element = (FrameworkElement)window.FindName(name);
+                    var bounds = element.TransformToAncestor(root).TransformBounds(new Rect(element.RenderSize));
+                    Assert.True(bounds.Left >= 0 && bounds.Right <= width && bounds.Top >= 0 && bounds.Bottom <= height, name);
+                }
+                SaveRenderIfRequested(root, $"default-connection-{width}");
+            }
+            finally { window.Close(); }
+        });
+    }
+
+    [Fact]
+    public async Task ClosingCannotInterruptAnInFlightDefaultPriorityChange()
+    {
+        await RunSta(() =>
+        {
+            SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+            using var workspace = new TestWorkspace();
+            var completion = new TaskCompletionSource<ConnectionResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+            var control = new FakeWindowConnectionControl { ApplyWait = completion.Task };
+            var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(TestAdapters.Wifi()),
+                serviceSession: new FakeServiceSession(), defaultConnectionControl: control);
+            window.DefaultConnection.RefreshAsync(true).GetAwaiter().GetResult();
+            var closed = false;
+            window.Closed += (_, _) => closed = true;
+            var operation = window.DefaultConnection.ApplyAsync();
+            try
+            {
+                Assert.True(window.DefaultConnection.IsBusy);
+                Assert.False(window.ServiceControls.CanStart);
+                window.Close();
+                Assert.False(closed);
+                completion.SetResult(new(DefaultConnectionTests.Initial(), false, "Operação sintética cancelada.", true));
+                PumpUntilCompleted(operation);
+                Assert.False(window.DefaultConnection.IsBusy);
+                Assert.True(window.ServiceControls.CanStart);
+                window.Close();
+                Assert.True(closed);
+            }
+            finally
+            {
+                completion.TrySetResult(new(DefaultConnectionTests.Initial(), false, "Cancelado.", true));
+                PumpUntilCompleted(operation); window.Close();
+                SynchronizationContext.SetSynchronizationContext(null);
+            }
+        });
+    }
+
+    private sealed class FakeWindowConnectionControl : IDefaultConnectionControl
+    {
+        public bool IsAvailable => true;
+        public int ApplyCalls { get; private set; }
+        public Task<ConnectionResult>? ApplyWait { get; init; }
+        public Task<ConnectionSnapshot> ReadAsync(CancellationToken token = default) => Task.FromResult(DefaultConnectionTests.Initial());
+        public Task<ConnectionResult> ApplyAsync(ConnectionRequest request, CancellationToken token = default)
+        {
+            ApplyCalls++;
+            return ApplyWait ?? Task.FromResult(new ConnectionResult(DefaultConnectionTests.Initial(), false, "Nenhuma alteração real."));
+        }
+    }
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(false, true)]

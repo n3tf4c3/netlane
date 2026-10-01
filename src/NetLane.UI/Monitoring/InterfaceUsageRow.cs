@@ -1,6 +1,7 @@
 using System.ComponentModel;
 using NetLane.Core.Models;
 using NetLane.Core.Monitoring;
+using NetLane.UI.Quality;
 
 namespace NetLane.UI.Monitoring;
 
@@ -10,6 +11,7 @@ public sealed class InterfaceUsageRow(NetworkAdapter adapter) : INotifyPropertyC
     private readonly InterfaceUsageTracker _tracker = new();
     private string _measurementStatus = "Aguardando amostras…";
     public NetworkAdapter Adapter { get; private set; } = adapter;
+    public ConnectionQualityRow Quality { get; } = new();
     public string AdapterId => Adapter.AdapterId;
     public string Name => Adapter.Name;
     public string IpAddress => Adapter.IpAddress ?? "Sem endereço IPv4";
@@ -41,9 +43,13 @@ public sealed class InterfaceUsageRow(NetworkAdapter adapter) : INotifyPropertyC
 
     public void Update(NetworkAdapter? current, InterfaceTrafficCounters? counters, TimeSpan now)
     {
+        if (current?.IpAddress != Adapter.IpAddress || current?.AdapterId != Adapter.AdapterId
+            || current?.IsConnected != Adapter.IsConnected || (current is not null) != IsPresent)
+            Quality.InvalidateInterface();
         if (current is not null) Adapter = current;
         IsPresent = current is not null;
         var connected = IsPresent && Adapter.IsConnected;
+        Quality.Expire(DateTimeOffset.UtcNow);
         _tracker.Update(counters, now, connected);
         _measurementStatus = !connected ? "Medição pausada: interface " + ConnectionStatus.ToLowerInvariant() + "."
             : counters is not { BytesReceived: >= 0, BytesSent: >= 0 } ? "Contadores indisponíveis. Tentando novamente…"

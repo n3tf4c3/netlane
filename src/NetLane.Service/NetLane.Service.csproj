@@ -23,5 +23,6 @@
     <None Remove="appsettings.json" />
     <Content Include="appsettings.json" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <None Update="netlane-rules*;**\*.runtime.*" CopyToOutputDirectory="Never" CopyToPublishDirectory="Never" />
+    <None Update="default-connection.protocol" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

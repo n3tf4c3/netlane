@@ -14,9 +14,11 @@ namespace NetLane.Tests;
 public sealed class TrayTests
 {
     [Theory]
-    [InlineData(false)]
-    [InlineData(true)]
-    public Task MinimizingAndRestoringPreservesTheWindowEditsFiltersAndOwnedSession(bool maximized) => RunSta(() =>
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(true, true)]
+    public Task MinimizingOrClosingAndRestoringPreservesTheWindowEditsFiltersAndOwnedSession(bool maximized, bool close) => RunSta(() =>
     {
         using var fixture = new Fixture();
         fixture.Session.StartAsync(false).GetAwaiter().GetResult();
@@ -25,10 +27,13 @@ public sealed class TrayTests
         ((ListBox)fixture.Window.FindName("NavigationList")).SelectedIndex = 1;
         ((TextBox)fixture.Window.FindName("SearchBox")).Text = "tray-test";
         fixture.Editor.Rows[0].Enabled = false;
-        fixture.Hide();
+        fixture.ConfirmDiscard = () => throw new InvalidOperationException("Hiding must not discard edits.");
+        fixture.ConfirmService = _ => throw new InvalidOperationException("Hiding must not stop the session.");
+        fixture.Hide(close);
 
         Assert.True(fixture.Controller.IsHidden);
         Assert.False(fixture.Window.IsVisible);
+        Assert.False(fixture.Closed);
         Assert.True(fixture.Session.OwnsRunningProcess);
         Assert.True(fixture.Icon.State!.HasChanges);
         Assert.True(fixture.Icon.State.CanStop);
@@ -79,6 +84,24 @@ public sealed class TrayTests
     });
 
     [Fact]
+    public Task ExplicitExitCancelsQueuedHideAndKeepsTheOwnerVisibleWhenDiscardIsDeclined() => RunSta(() =>
+    {
+        using var fixture = new Fixture();
+        fixture.Window.Show();
+        fixture.Editor.Rows[0].Enabled = false;
+        fixture.ConfirmDiscard = () => false;
+        fixture.Window.Close();
+        fixture.Window.RequestExit();
+        Pump(Task.Delay(50));
+        Assert.False(fixture.Closed);
+        Assert.False(fixture.Controller.IsHidden);
+        Assert.True(fixture.Window.IsVisible);
+        Assert.True(fixture.Editor.HasChanges);
+        Assert.Empty(fixture.Session.Calls);
+        fixture.AssertFileUnchanged();
+    });
+
+    [Fact]
     public Task UnsavedRulesBlockStartAndRestartButNotStoppingTheOwnedSession() => RunSta(() =>
     {
         using var fixture = new Fixture();
@@ -119,6 +142,8 @@ public sealed class TrayTests
             fixture.Window.WindowState = WindowState.Minimized;
             Assert.False(fixture.Controller.IsHidden);
             Assert.NotEqual(WindowState.Minimized, fixture.Window.WindowState);
+            fixture.Window.Close();
+            Assert.False(fixture.Controller.IsHidden);
             Pump(fixture.Controller.ExecuteAsync(TrayCommand.Stop));
             Pump(fixture.Controller.ExecuteAsync(TrayCommand.Restart));
             Pump(fixture.Controller.ExecuteAsync(TrayCommand.Exit));
@@ -255,6 +280,9 @@ public sealed class TrayTests
         fixture.Window.WindowState = WindowState.Minimized;
         Assert.True(fixture.Window.IsVisible); // Ordinary taskbar minimization still works with no tray.
         Assert.Equal(1, fixture.Icon.DisposeCount);
+        fixture.Window.Close();
+        Assert.True(fixture.Closed); // X remains a usable exit when no tray icon is available.
+        Assert.Equal(1, fixture.Icon.DisposeCount);
         fixture.AssertFileUnchanged();
     });
 
@@ -275,7 +303,7 @@ public sealed class TrayTests
     public Task ClosingDisposesTheIconOnceAndDetachesAllUpdatesAndCommands() => RunSta(() =>
     {
         using var fixture = new Fixture();
-        fixture.Window.Close();
+        fixture.Window.RequestExit();
         Assert.True(fixture.Closed);
         Assert.Equal(1, fixture.Icon.DisposeCount);
         Assert.Equal(0, fixture.Icon.SubscriberCount);
@@ -362,10 +390,11 @@ public sealed class TrayTests
             if (attach) _controller = new(Window, Icon, activate: () => { });
         }
 
-        public void Hide()
+        public void Hide(bool close = false)
         {
             if (!Window.IsVisible) Window.Show();
-            Window.WindowState = WindowState.Minimized;
+            if (close) { Window.Close(); WaitUntil(() => Controller.IsHidden); }
+            else Window.WindowState = WindowState.Minimized;
             Assert.True(Controller.IsHidden);
         }
 
@@ -379,7 +408,7 @@ public sealed class TrayTests
             ConfirmDiscard = () => true;
             ConfirmService = _ => true;
             Editor.Load();
-            if (!Closed) Window.Close();
+            if (!Closed) Window.RequestExit();
             _controller?.Dispose();
             _workspace.Dispose();
         }

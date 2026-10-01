@@ -42,7 +42,7 @@ foreach ($file in Get-ChildItem -LiteralPath $extracted -Recurse -File) {
         continue # NSIS-generated uninstaller and exact UI/System plug-in list, not application payload.
     }
     if (-not $expected.ContainsKey($relative)) { throw "Arquivo fora do manifesto: $relative" }
-    if ($file.Name -match '(?i)(^netlane-rules\.|^interface-selection\.|\.pdb$|\.runtime\.(json|lock)$|\.log$|\.bak$|\.trx$|Probe|Review|RoutingCheck)') {
+    if ($file.Name -match '(?i)(^netlane-rules\.|^interface-selection\.|^quality-settings\.|\.pdb$|\.runtime\.(json|lock)$|\.log$|\.bak$|\.trx$|Probe|Review|RoutingCheck)') {
         throw "Dados locais ou ferramentas de ensaio no instalador: $relative"
     }
 }
@@ -53,6 +53,11 @@ foreach ($relative in @('NetLane.UI.exe', 'service/NetLane.Service.exe')) {
     if ($relative -eq 'NetLane.UI.exe' -and [Text.Encoding]::UTF8.GetString($bytes) -notmatch 'requestedExecutionLevel\s+level="asInvoker"') {
         throw 'O painel não possui manifesto asInvoker.'
     }
+}
+$uiIcon = $null
+if ([version]$report.Version -ge [version]'0.3.2') {
+    $uiIcon = & (Join-Path $PSScriptRoot 'test-app-icon.ps1') -ExecutablePath (Join-Path $extracted 'NetLane.UI.exe') | ConvertFrom-Json
+    if (-not $uiIcon.LogoMatches -or $uiIcon.ExecutableStarted) { throw 'Ícone do aplicativo ausente ou diferente do logo.' }
 }
 $installerBytes = [IO.File]::ReadAllBytes($setup)
 if ([Text.Encoding]::UTF8.GetString($installerBytes) -notmatch 'requestedExecutionLevel\s+level="requireAdministrator"') {
@@ -72,10 +77,17 @@ if (-not $source.Contains('RequestExecutionLevel admin') -or -not $source.Contai
 }
 $defaults = Get-Content -LiteralPath (Join-Path $extracted 'service\appsettings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if (@($defaults.NetLane.Routing.Policies).Count) { throw 'O instalador inclui regras no appsettings.' }
+if ([version]$report.Version -ge [version]'0.3.1' -and (Get-Content -LiteralPath (Join-Path $extracted 'service\default-connection.protocol') -Raw -Encoding UTF8).Trim() -ne 'NetLane.DefaultConnection.v1') {
+    throw 'Componente da conexão padrão não acompanha o pacote.'
+}
+if (@(Get-ChildItem -LiteralPath $extracted -Recurse -File | Where-Object { $_.Name -like 'default-connection.json*' }).Count -ne 0) {
+    throw 'Configuração pessoal da conexão padrão encontrada no pacote.'
+}
 $result = [ordered]@{
     Passed = $true; InstallerSha256 = $report.Sha256; VerifiedPayloadFiles = $expected.Count
     X64Executables = 2; UiAsInvoker = $true; InstallerRequiresAdministrator = $true
     NoLocalRules = $true; EmptyDefaultPolicies = $true
+    UiApplicationIcon = $uiIcon
     InstallerExecuted = $false; RuntimeGuardVerified = $false; InstallationVerified = $false
     SignatureStatus = (Get-AuthenticodeSignature -LiteralPath $setup).Status.ToString()
 }

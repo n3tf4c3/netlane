@@ -28,9 +28,11 @@ internal sealed class WindowTrayController : IDisposable
         _icon.Update(BuildState());
         _icon.CommandRequested += CommandRequested;
         _window.StateChanged += WindowStateChanged;
+        _window.HideToTrayRequested += HideToTrayRequested;
         _window.Closed += WindowClosed;
         _window.ConfirmationStateChanged += ConfirmationChanged;
         _window.ServiceControls.PropertyChanged += ServiceChanged;
+        _window.DefaultConnection.PropertyChanged += DefaultConnectionChanged;
         _editor.PropertyChanged += EditorChanged;
         _window.SetTrayAvailability(true);
     }
@@ -38,9 +40,9 @@ internal sealed class WindowTrayController : IDisposable
     internal TrayState BuildState()
     {
         var controls = _window.ServiceControls;
-        var blocked = _executing || controls.IsBusy || _window.IsConfirmationOpen;
+        var blocked = _executing || controls.IsBusy || _window.DefaultConnection.IsBusy || _window.IsConfirmationOpen;
         var saved = _editor.CanEdit && !_editor.HasChanges;
-        return new(controls.IsBusy ? "Operação em andamento" : _editor.RuntimeTitle,
+        return new(controls.IsBusy || _window.DefaultConnection.IsBusy ? "Operação em andamento" : _editor.RuntimeTitle,
             _editor.RuntimeSummary + Environment.NewLine + controls.Status,
             _editor.Rows.Count, _editor.Rows.Count(row => row.Enabled), _editor.HasChanges,
             !blocked && saved && controls.CanStart, !blocked && controls.CanStop,
@@ -56,7 +58,7 @@ internal sealed class WindowTrayController : IDisposable
             return;
         }
         // Keep the owner available for the confirmations at the end of an asynchronous operation.
-        if (_executing || _window.ServiceControls.IsBusy || _window.IsConfirmationOpen)
+        if (_executing || _window.ServiceControls.IsBusy || _window.DefaultConnection.IsBusy || _window.IsConfirmationOpen)
         {
             Restore();
             return;
@@ -71,6 +73,13 @@ internal sealed class WindowTrayController : IDisposable
         if (!_window.IsVisible) _window.Show();
         if (_window.WindowState == WindowState.Minimized) _window.WindowState = _restoreState;
         _activate();
+    }
+
+    private void HideToTrayRequested(object? sender, EventArgs args)
+    {
+        if (_disposed || _executing || _window.ServiceControls.IsBusy || _window.DefaultConnection.IsBusy || _window.IsConfirmationOpen) return;
+        if (_window.WindowState != WindowState.Minimized) _window.WindowState = WindowState.Minimized;
+        else { _hidden = true; _window.Hide(); }
     }
 
     private async void CommandRequested(TrayCommand command) => await ExecuteAsync(command);
@@ -104,13 +113,14 @@ internal sealed class WindowTrayController : IDisposable
                     _window.ShowDiagnostics(); await _window.StopServiceAsync(); break;
                 case TrayCommand.Restart:
                     _window.ShowDiagnostics(); await _window.RestartServiceAsync(); break;
-                case TrayCommand.Exit: _window.Close(); break;
+                case TrayCommand.Exit: _window.RequestExit(); break;
             }
         }
         finally { _executing = false; Update(); }
     }
 
     private void EditorChanged(object? sender, PropertyChangedEventArgs args) => Update();
+    private void DefaultConnectionChanged(object? sender, PropertyChangedEventArgs args) => Update();
     private void ConfirmationChanged(object? sender, EventArgs args) => Update();
     private void ServiceChanged(object? sender, PropertyChangedEventArgs args)
     {
@@ -140,9 +150,11 @@ internal sealed class WindowTrayController : IDisposable
         _disposed = true;
         _icon.CommandRequested -= CommandRequested;
         _window.StateChanged -= WindowStateChanged;
+        _window.HideToTrayRequested -= HideToTrayRequested;
         _window.Closed -= WindowClosed;
         _window.ConfirmationStateChanged -= ConfirmationChanged;
         _window.ServiceControls.PropertyChanged -= ServiceChanged;
+        _window.DefaultConnection.PropertyChanged -= DefaultConnectionChanged;
         _editor.PropertyChanged -= EditorChanged;
         _icon.Dispose();
     }
