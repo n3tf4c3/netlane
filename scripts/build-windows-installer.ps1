@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$NsisCompilerPath,
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.3.3',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.3.4',
     [string]$OutputDirectory
 )
 

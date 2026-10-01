@@ -25,6 +25,127 @@ public sealed class MainWindowTests
     [Theory]
     [InlineData(1000, 650)]
     [InlineData(1440, 920)]
+    public Task StartupAndExecutableIconsFitRulesAndConnections(int width, int height) => RunSta(() =>
+    {
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+        using var workspace = new TestWorkspace();
+        var executable = Path.ChangeExtension(typeof(MainWindow).Assembly.Location, ".exe");
+        workspace.PolicyFile.Save([new() { ApplicationId = "NetLane.UI.exe", ExecutablePath = executable }], null);
+        var registration = new FakeStartupRegistration();
+        var session = new FakeServiceSession();
+        var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(ProcessConnectionTests.Wifi(), ProcessConnectionTests.Cable()),
+            serviceSession: session, startupRegistration: registration) { Width = width + 40, Height = height + 70, ShowActivated = false };
+        try
+        {
+            window.Show();
+            var root = (FrameworkElement)window.Content;
+            root.Width = width; root.Height = height;
+            root.Measure(new Size(width, height)); root.Arrange(new Rect(0, 0, width, height)); root.UpdateLayout();
+            var toggle = (CheckBox)window.FindName("StartWithWindowsCheckBox");
+            var toggleBounds = toggle.TransformToAncestor(root).TransformBounds(new Rect(toggle.RenderSize));
+            Assert.True(toggleBounds.Left >= 0 && toggleBounds.Bottom <= height && toggleBounds.Width > 100);
+            ((ListBox)window.FindName("NavigationList")).SelectedIndex = 1;
+            root.UpdateLayout();
+            var rulesIcon = Assert.Single(Descendants<ExecutableIcon>(root));
+            PumpUntilCompleted(rulesIcon.Provider.GetAsync(executable));
+            PumpUntilCompleted(Task.Delay(100));
+            Assert.NotNull(rulesIcon.IconSource);
+            Assert.Equal(executable, rulesIcon.ExecutablePath);
+            SaveRenderIfRequested(root, $"startup-icons-rules-{width}");
+            window.ProcessConnections.Update(ProcessConnectionTests.Snapshot(ProcessConnectionTests.Connection()) with
+                { Processes = [ProcessConnectionTests.Process(path: executable)] }, ProcessConnectionTests.Now);
+            ((ListBox)window.FindName("NavigationList")).SelectedIndex = 2;
+            root.UpdateLayout();
+            var connectionIcon = Assert.Single(Descendants<ExecutableIcon>(root));
+            PumpUntilCompleted(connectionIcon.Provider.GetAsync(executable));
+            PumpUntilCompleted(Task.Delay(100));
+            Assert.NotNull(connectionIcon.IconSource);
+            var grid = (DataGrid)((FrameworkElement)window.FindName("ProcessConnectionsPanel")).FindName("ProcessConnectionsGrid");
+            Assert.True(grid.Columns.Sum(c => c.ActualWidth) <= grid.ActualWidth);
+            var gridBounds = grid.TransformToAncestor(root).TransformBounds(new Rect(grid.RenderSize));
+            Assert.True(gridBounds.Right <= width + 1 && gridBounds.Bottom <= height + 1);
+            SaveRenderIfRequested(root, $"startup-icons-connections-{width}");
+            Assert.Empty(session.Calls);
+            Assert.Empty(registration.Writes);
+        }
+        finally { window.Close(); }
+    });
+
+    [Fact]
+    public Task StartupCheckboxRequiresExplicitChangeAndPreservesRules() => RunSta(() =>
+    {
+        using var workspace = new TestWorkspace();
+        workspace.PolicyFile.Save([], null);
+        var before = File.ReadAllBytes(workspace.PolicyFile.FilePath);
+        var registration = new FakeStartupRegistration();
+        var window = new MainWindow(workspace.PolicyFile, new FakeAdapters(), serviceSession: new FakeServiceSession(), startupRegistration: registration);
+        try
+        {
+            window.Show();
+            var check = (CheckBox)window.FindName("StartWithWindowsCheckBox");
+            Assert.True(check.IsEnabled);
+            Assert.False(check.IsChecked);
+            Assert.Empty(registration.Writes);
+            check.IsChecked = true;
+            Assert.True(registration.Enabled);
+            Assert.Equal([true], registration.Writes);
+            check.IsChecked = false;
+            Assert.False(registration.Enabled);
+            Assert.Equal([true, false], registration.Writes);
+            registration.RejectWrites = true;
+            check.IsChecked = true;
+            PumpUntilCompleted(Task.Delay(30));
+            Assert.False(registration.Enabled);
+            Assert.False(check.IsChecked);
+            Assert.Contains("Não foi possível alterar", window.StartupSettings.Status);
+            Assert.Equal(before, File.ReadAllBytes(workspace.PolicyFile.FilePath));
+        }
+        finally { window.Close(); }
+    });
+
+    [Fact]
+    public Task RecycledExecutableIconDiscardsOldAndUnloadedResults() => RunSta(() =>
+    {
+        SynchronizationContext.SetSynchronizationContext(new DispatcherSynchronizationContext());
+        var provider = new DelayedIconProvider();
+        var icon = new ExecutableIcon { Provider = provider, ExecutablePath = @"C:\Apps\a.exe" };
+        var window = new Window { Content = icon };
+        try
+        {
+            window.Show();
+            Assert.Single(provider.Requests);
+            icon.ExecutablePath = @"C:\Apps\b.exe";
+            Assert.Equal(2, provider.Requests.Count);
+            var latest = ExecutableIconTests.Image();
+            provider.Requests[1].SetResult(latest);
+            PumpUntilCompleted(Task.Delay(30));
+            Assert.Same(latest, icon.IconSource);
+            provider.Requests[0].SetResult(ExecutableIconTests.Image());
+            PumpUntilCompleted(Task.Delay(30));
+            Assert.Same(latest, icon.IconSource);
+            icon.ExecutablePath = @"C:\Apps\c.exe";
+            window.Close();
+            provider.Requests[2].SetResult(ExecutableIconTests.Image());
+            PumpUntilCompleted(Task.Delay(30));
+            Assert.Null(icon.IconSource);
+        }
+        finally { window.Close(); }
+    });
+
+    private sealed class DelayedIconProvider : NetLane.UI.Icons.IExecutableIconProvider
+    {
+        public List<TaskCompletionSource<ImageSource?>> Requests { get; } = [];
+        public Task<ImageSource?> GetAsync(string? path)
+        {
+            var completion = new TaskCompletionSource<ImageSource?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            Requests.Add(completion);
+            return completion.Task;
+        }
+    }
+
+    [Theory]
+    [InlineData(1000, 650)]
+    [InlineData(1440, 920)]
     public async Task QualityControlsRenderAndStartOnlyOnExplicitClick(int width, int height)
     {
         await RunSta(() =>

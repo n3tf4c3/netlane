@@ -16,6 +16,7 @@ using NetLane.Network.DefaultConnection;
 using NetLane.UI.DefaultConnection;
 using NetLane.Network.Quality;
 using NetLane.UI.Quality;
+using NetLane.UI.Startup;
 
 namespace NetLane.UI;
 
@@ -43,6 +44,7 @@ public partial class MainWindow : Window
     public ServiceControlViewModel ServiceControls { get; }
     public DefaultConnectionViewModel DefaultConnection { get; }
     public QualityMonitorViewModel QualityMonitor { get; }
+    public StartupSettingsViewModel StartupSettings { get; }
     public ProcessConnectionsDashboard ProcessConnections { get; } = new();
 
     public MainWindow() : this(new RoutingPolicyFile(ApplicationPaths.ResolvePolicyFile(
@@ -51,21 +53,24 @@ public partial class MainWindow : Window
         new WindowsInterfaceTrafficSource(), new InterfaceSelectionFile(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetLane", "interface-selection.json")),
         connectionsSource: new WindowsProcessConnectionSource(), defaultConnectionControl: new WindowsDefaultConnectionControl(ServiceExecutableLocator.Find(AppContext.BaseDirectory)),
-        qualityProbe: new WindowsQualityProbe()) { }
+        qualityProbe: new WindowsQualityProbe(), startupRegistration: new WindowsStartupRegistration()) { }
 
     internal MainWindow(RoutingPolicyFile file, INetworkInterfaceDetector detector,
         IInterfaceTrafficSource? trafficSource = null, InterfaceSelectionFile? selectionFile = null, IServiceSession? serviceSession = null,
         IProcessConnectionSource? connectionsSource = null, Func<bool>? confirmDiscardChanges = null, IDefaultConnectionControl? defaultConnectionControl = null,
-        IQualityProbe? qualityProbe = null)
-        : this(file, detector, trafficSource, selectionFile, serviceSession, connectionsSource, confirmDiscardChanges, null, defaultConnectionControl, qualityProbe) { }
+        IQualityProbe? qualityProbe = null, IStartupRegistration? startupRegistration = null)
+        : this(file, detector, trafficSource, selectionFile, serviceSession, connectionsSource, confirmDiscardChanges, null, defaultConnectionControl, qualityProbe, startupRegistration) { }
 
     internal MainWindow(RoutingPolicyFile file, INetworkInterfaceDetector detector,
         IInterfaceTrafficSource? trafficSource, InterfaceSelectionFile? selectionFile, IServiceSession? serviceSession,
         IProcessConnectionSource? connectionsSource, Func<bool>? confirmDiscardChanges, Func<ServiceConfirmation, bool>? confirmService,
-        IDefaultConnectionControl? defaultConnectionControl = null, IQualityProbe? qualityProbe = null)
+        IDefaultConnectionControl? defaultConnectionControl = null, IQualityProbe? qualityProbe = null, IStartupRegistration? startupRegistration = null)
     {
         InitializeComponent();
         ApplyHighContrastPalette();
+        StartupSettings = new(startupRegistration);
+        StartupPanel.DataContext = StartupSettings;
+        Activated += (_, _) => StartupSettings.Refresh();
         _detector = detector;
         _trafficSource = trafficSource;
         _processSource = connectionsSource;

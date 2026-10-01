@@ -75,6 +75,19 @@ internal sealed class WindowTrayController : IDisposable
         _activate();
     }
 
+    internal void ShowInitially(bool startInTray)
+    {
+        if (!startInTray) { _window.Show(); return; }
+        _window.ShowActivated = false;
+        _window.ShowInTaskbar = false;
+        _window.WindowState = WindowState.Minimized;
+        _window.Show();
+        _hidden = true;
+        _window.Hide();
+        _window.ShowInTaskbar = true;
+        _window.ShowActivated = true;
+    }
+
     private void HideToTrayRequested(object? sender, EventArgs args)
     {
         if (_disposed || _executing || _window.ServiceControls.IsBusy || _window.DefaultConnection.IsBusy || _window.IsConfirmationOpen) return;

@@ -185,6 +185,10 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\NetLane\NetLane.lnk"
   RMDir "$SMPROGRAMS\NetLane"
   DeleteRegKey HKLM "${PRODUCT_KEY}"
+  ; Remove only this exact per-user startup command; preserve entries from other locations.
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLane"
+  StrCmp $0 '$\"$INSTDIR\NetLane.UI.exe$\" --startup' 0 +2
+  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLane"
   Goto uninstall_done
 uninstall_failed:
   MessageBox MB_OK|MB_ICONSTOP "Não foi possível remover todos os arquivos do programa. A remoção não foi concluída. Dados do perfil foram preservados." /SD IDOK

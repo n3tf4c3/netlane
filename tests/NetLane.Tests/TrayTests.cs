@@ -13,6 +13,24 @@ namespace NetLane.Tests;
 [Collection("WPF")]
 public sealed class TrayTests
 {
+    [Fact]
+    public Task StartupInTrayLoadsTimersAndReopensWithoutStartingService() => RunSta(() =>
+    {
+        using var fixture = new Fixture();
+        fixture.Controller.ShowInitially(startInTray: true);
+        Assert.True(fixture.Controller.IsHidden);
+        Assert.False(fixture.Window.IsVisible);
+        Assert.Empty(fixture.Session.Calls);
+        Assert.True(fixture.Window.ShowInTaskbar);
+        Assert.True(fixture.Window.ShowActivated);
+        fixture.Icon.Request(TrayCommand.Open);
+        Assert.True(fixture.Window.IsVisible);
+        Assert.Equal(WindowState.Normal, fixture.Window.WindowState);
+        Assert.False(fixture.Controller.IsHidden);
+        Assert.Empty(fixture.Session.Calls);
+        fixture.AssertFileUnchanged();
+    });
+
     [Theory]
     [InlineData(false, false)]
     [InlineData(true, false)]
