@@ -15,8 +15,20 @@ regras. Para migrar suas regras de desenvolvimento, combine uma copia/backup
 separadamente, com o painel e o servico parados.
 
 Abra pelo menu Iniciar sem executar como administrador. O painel pede UAC para
-iniciar a sessao de roteamento ou aplicar/restaurar a conexao padrao. Nao ha servico Windows permanente, inicio
-automatico, atalho na inicializacao ou alteracao de rede feita pelo instalador.
+iniciar a sessao de roteamento ou aplicar/restaurar a conexao padrao. Nao ha
+servico Windows permanente ou alteracao de rede feita pelo instalador.
+
+Na lateral, Iniciar com o Windows e uma opcao por usuario, inicialmente
+desativada. Ao marcar, o painel abre na bandeja no proximo logon, sem pedir UAC.
+As regras e a medicao de qualidade continuam sendo iniciadas manualmente.
+Desmarcar remove a entrada desta instalacao. O Windows tambem pode controlar
+essa inicializacao em Configuracoes > Aplicativos > Inicializacao.
+Na remocao, somente a entrada exata deste programa no usuario da desinstalacao
+e removida; entradas de outros locais/usuarios nao sao alteradas.
+
+Regras de apps e Conexoes exibem o icone do executavel local. Quando o caminho
+nao e acessivel ou nao possui icone, aparece um marcador padrao. A leitura do
+icone nao executa o aplicativo.
 
 Na Visao geral, Conexao padrao permite escolher cabo ou Wi-Fi para o trafego IPv4
 dos apps em Automatico. Escolher na lista nao muda a rede: clique em Aplicar e

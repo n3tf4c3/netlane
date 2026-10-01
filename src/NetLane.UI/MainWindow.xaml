@@ -46,6 +46,13 @@
                     <TextBlock Text="Cada app, sua rota." Style="{StaticResource Caption}" Margin="0,12,0,0" />
                 </StackPanel>
                 <StackPanel DockPanel.Dock="Bottom" Margin="10,0,8,0">
+                    <StackPanel x:Name="StartupPanel" Margin="0,0,0,16" ToolTip="{Binding Hint}">
+                        <CheckBox x:Name="StartWithWindowsCheckBox" IsChecked="{Binding IsEnabled, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                  IsEnabled="{Binding CanChange}" AutomationProperties.Name="Iniciar NetLane com o Windows">
+                            <TextBlock Text="Iniciar com o Windows" FontSize="11" TextWrapping="Wrap" />
+                        </CheckBox>
+                        <TextBlock Text="{Binding Status}" Style="{StaticResource Caption}" FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap" />
+                    </StackPanel>
                     <Border Background="{DynamicResource SurfaceBrush}" CornerRadius="8" Padding="12" Margin="0,0,0,18">
                         <StackPanel>
                             <TextBlock Text="ROTEAMENTO" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource MutedBrush}" />
@@ -244,7 +251,7 @@
                                         <DataGridTemplateColumn Header="Aplicativo" Width="*" MinWidth="240">
                                             <DataGridTemplateColumn.CellTemplate><DataTemplate>
                                                 <Grid Margin="12,12"><Grid.ColumnDefinitions><ColumnDefinition Width="42" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
-                                                    <Border Width="32" Height="32" Background="{DynamicResource SubtleBrush}" CornerRadius="8" VerticalAlignment="Center" HorizontalAlignment="Left"><TextBlock Text="{Binding AppInitial}" FontWeight="SemiBold" FontSize="16" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource AccentBrush}" /></Border>
+                                                    <controls:ExecutableIcon ExecutablePath="{Binding ExecutablePath}" VerticalAlignment="Center" HorizontalAlignment="Left" />
                                                     <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding DisplayName}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                         <TextBlock Text="{Binding ExecutablePath}" FontSize="11" Foreground="{DynamicResource MutedBrush}" TextTrimming="CharacterEllipsis" ToolTip="{Binding ExecutablePath}" Margin="0,3,0,0" />

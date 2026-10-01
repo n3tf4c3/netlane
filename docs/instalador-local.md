@@ -1,8 +1,29 @@
 # Instalador local — prévia x64
 
+**QA posterior da 0.3.4 — 2026-10-01:** [ícones conferidos pelo usuário e entrada de inicialização confirmada](inicializacao-e-icones.md#confirmações-do-usuário--2026-10-01), NetLane.UI Ativado na captura e comando esperado do pacote instalado no Run. Logon real adiado pelo usuário; limpeza do autorun na remoção ainda não ensaiada. Pedido de ai-memory, commit/push abrange fontes, testes e documentação; pacote e recibo da instalação permanecem locais e inalterados. Registros abaixo são históricos.
+
+**Prévia 0.3.4 instalada em 2026-09-30 às 23:53:** [atualização sobre a 0.3.3](#atualização-da-033-para-a-034--2026-09-30) concluída após “vamos seguir” e “fechado”, com UAC/assistente manual. Retorno 0 e StageVerified=true; inventário, registro, atalho e ícone conferidos. Cinco arquivos do perfil com backup/preservação por hash, rede/DNS/IPv6/autostart e 17 arquivos protegidos iguais, Defender ativo. Nenhum autorun registrado; QA de ícones/opção pela UI instalada e login real ainda pendentes. Sem novo commit/push. Registros abaixo são históricos.
+
 **UI da 0.3.3 validada pelo usuário em 2026-09-30 às 22:41:** **“Testado e validado”** após a orientação Visão geral → Qualidade → Iniciar. [Confirmação e leitura posterior](qualidade-conexao.md#confirmação-do-usuário--2026-09-30): 0.3.3 instalada, processo da UI presente e nenhum serviço, perfil anterior/interfaces iguais e preferência de qualidade criada. Relato do usuário, sem novos cliques automatizados ou captura de amostras. Instalação e rodada de qualidade concluídas; QA completo do instalador continua false. Sem commit/push. Registros abaixo são históricos.
 
 **Prévia 0.3.3 instalada em 2026-09-30 às 22:27:** após **“vamos remover a 0.3.2 e instalar a 0.3.3”**, [remoção e instalação concluídas](#remoção-da-032-e-instalação-da-033--2026-09-30), `StageVerified=true` em ambas e `SequenceVerified=true`. Programa, registro, atalho e ícone corretos; quatro arquivos do perfil com backup/preservação por hash, rede/DNS/IPv6/autostart e 26 arquivos protegidos iguais, Defender ativo e nenhum processo NetLane restante. UI instalada da 0.3.3 ainda não aberta pelo supervisor; QA completo permanece false. Registros abaixo são históricos.
+
+## Atualização da 0.3.3 para a 0.3.4 — 2026-09-30
+
+Etapa autorizada por “vamos seguir”, após a proposta de atualizar a 0.3.4 e validar a inicialização. NetLane fechado normalmente pelo usuário, confirmado por “fechado” e ausência de processos. Supervisor sem elevação; UAC/assistente operados manualmente. Execução única entre **23:52:55 e 23:53:19 (America/Cuiaba)**, sem encerramento forçado.
+
+- Pacote preview-20260930-startup-icons/NetLane-0.3.4-preview-win-x64-setup.exe, SHA-256 **4468E105CCAEB4EC09FCA23A614E158183476B5ED32AED12642AB8390F88604B**. Instalação anterior 0.3.3 e seus 758 hashes conferidos antes de executar. Retorno **0**, todos os processos do instalador encerrados e **StageVerified=true**.
+- Programa instalado em C:\Program Files\NetLane, versão da UI **0.3.4.0** e registro **0.3.4**. **758/758 hashes** iguais, manifesto idêntico ao pacote e **760 arquivos** esperados, sem arquivos desconhecidos ou reparse points. Atalho para NetLane.UI.exe, ícone NetLane.UI.exe,0; logo extraído 32×32 igual ao fonte, zero pixels diferentes, sem iniciar o aplicativo.
+- **Cinco arquivos do perfil**, incluindo quality-settings.json, preservados por hash e copiados com verificação para artifacts/installer-qa-20260930-034/profile-backup/. Regras reais do checkout e **17 arquivos protegidos** iguais antes/depois. Nenhum dado importado ou alterado.
+- Rotas padrão, DNS, políticas de rota IPv4/IPv6, bindings IPv6, métricas/modos, serviços/tarefas/autostart e política RemoteSigned preservados. **Wi-Fi 5 / Ethernet 55 em manual**, Defender Normal com proteção em tempo real ativa. Entrada NetLane no Run continua ausente; instalar não ativa a opção. Nenhum processo NetLane restante na conclusão; serviço, sondagens e mudanças de rede não emitidos.
+
+Recibo imutável artifacts/installer-qa-20260930-034/upgrade-result.json, SHA-256 **C57857F515183076C5976847DD07250726CD8F22F227961FD3EC24043792A7FD**. Supervisor, progresso, lançamento e logs estão na mesma pasta. Recibos anteriores de build, conferência estática e implementação permanecem históricos e inalterados.
+
+Próximo: conferir os ícones e a opção [Iniciar com o Windows](inicializacao-e-icones.md) pela UI instalada. Marcar/desmarcar, logon real e limpeza da entrada pelo novo desinstalador ainda não foram acompanhados. **FullInstallerQaVerified=false**; cancelamento, demais guardas/outras sessões, downgrade, falha de cópia/rollback e assinatura/distribuição seguem pendentes. Nenhum reboot/logoff, novo build, rodada de testes, commit/push ou contato com suporte nesta etapa.
+
+## Preparação da 0.3.4 — 2026-09-30
+
+[Inicialização com o Windows e ícones individuais](inicializacao-e-icones.md) preparados; pacote preview-20260930-startup-icons/NetLane-0.3.4-preview-win-x64-setup.exe, SHA-256 4468E105CCAEB4EC09FCA23A614E158183476B5ED32AED12642AB8390F88604B, 69.481.679 bytes. Conferência estática aprovada: 759 arquivos, ícone correto, sem dados locais. Não executado; **0.3.3 permanece instalada**. Autorun é uma opção por usuário ativada pela UI, não pelo instalador. Novo desinstalador remove apenas o comando esperado no HKCU da conta que executa a remoção; outras entradas/contas são preservadas. Limpeza da entrada e logon real ainda aguardam QA autorizado.
 
 ## Remoção da 0.3.2 e instalação da 0.3.3 — 2026-09-30
 
