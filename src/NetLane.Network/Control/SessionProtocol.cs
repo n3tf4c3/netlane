@@ -9,11 +9,13 @@ using System.Security.Principal;
 using System.Text.Json;
 using Microsoft.Win32.SafeHandles;
 using NetLane.Core.Models;
+using NetLane.Network.DefaultConnection;
 
 namespace NetLane.Network.Control;
 
 public sealed record SessionMessage(string Kind, string? PolicyPath = null, bool AllowTemporaryRoutePolicies = false,
-    RoutingServiceSnapshot? Snapshot = null, string? Detail = null, bool Success = true);
+    RoutingServiceSnapshot? Snapshot = null, string? Detail = null, bool Success = true,
+    ConnectionRequest? ConnectionRequest = null, ConnectionResult? ConnectionResult = null);
 
 public sealed class SessionProtocol(Stream stream)
 {
@@ -58,7 +60,7 @@ public static class SessionPipe
 
     public static NamedPipeServerStream CreateServer(string name)
     {
-        if (!IsValidName(name) && name != "NetLane.RoutingSession.v1") throw new ArgumentException("Nome de canal inválido.");
+        if (!IsValidName(name) && name is not ("NetLane.RoutingSession.v1" or "NetLane.DefaultConnection.v1")) throw new ArgumentException("Nome de canal inválido.");
         // CurrentUserOnly also compares elevation; explicit ACLs allow the UAC boundary.
         // This is not authentication by itself: both peers must also match the expected OS PID.
         var security = new PipeSecurity();

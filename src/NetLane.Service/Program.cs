@@ -14,6 +14,7 @@ internal static class Program
 {
     public static async Task<int> Main(string[] args)
     {
+        if (args.FirstOrDefault() == "--default-connection-session") return await DefaultConnectionCommand.RunAsync(args);
         if (args.FirstOrDefault() == "--ui-session") return await ManagedUiSession.RunAsync(args);
         if (args.Contains("--check-routing", StringComparer.OrdinalIgnoreCase))
         {

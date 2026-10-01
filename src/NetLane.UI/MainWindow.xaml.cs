@@ -12,6 +12,10 @@ using NetLane.Network;
 using NetLane.UI.Monitoring;
 using NetLane.UI.ServiceControl;
 using NetLane.Network.Control;
+using NetLane.Network.DefaultConnection;
+using NetLane.UI.DefaultConnection;
+using NetLane.Network.Quality;
+using NetLane.UI.Quality;
 
 namespace NetLane.UI;
 
@@ -25,14 +29,20 @@ public partial class MainWindow : Window
     private readonly Func<bool>? _confirmDiscardChanges;
     private readonly Func<ServiceConfirmation, bool>? _confirmService;
     private readonly DispatcherTimer _monitorTimer;
+    private readonly DispatcherTimer _qualityTimer;
     private bool _refreshing;
     private bool _refreshingProcesses;
     private bool _closed;
     private bool _closeAfterServiceStop;
+    private bool _exitRequested;
+    private bool _hideToTrayPending;
     internal bool IsConfirmationOpen { get; private set; }
     internal event EventHandler? ConfirmationStateChanged;
+    internal event EventHandler? HideToTrayRequested;
     public InterfaceDashboard Dashboard { get; }
     public ServiceControlViewModel ServiceControls { get; }
+    public DefaultConnectionViewModel DefaultConnection { get; }
+    public QualityMonitorViewModel QualityMonitor { get; }
     public ProcessConnectionsDashboard ProcessConnections { get; } = new();
 
     public MainWindow() : this(new RoutingPolicyFile(ApplicationPaths.ResolvePolicyFile(
@@ -40,16 +50,19 @@ public partial class MainWindow : Window
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData))), new WindowsNetworkInterfaceDetector(),
         new WindowsInterfaceTrafficSource(), new InterfaceSelectionFile(Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "NetLane", "interface-selection.json")),
-        connectionsSource: new WindowsProcessConnectionSource()) { }
+        connectionsSource: new WindowsProcessConnectionSource(), defaultConnectionControl: new WindowsDefaultConnectionControl(ServiceExecutableLocator.Find(AppContext.BaseDirectory)),
+        qualityProbe: new WindowsQualityProbe()) { }
 
     internal MainWindow(RoutingPolicyFile file, INetworkInterfaceDetector detector,
         IInterfaceTrafficSource? trafficSource = null, InterfaceSelectionFile? selectionFile = null, IServiceSession? serviceSession = null,
-        IProcessConnectionSource? connectionsSource = null, Func<bool>? confirmDiscardChanges = null)
-        : this(file, detector, trafficSource, selectionFile, serviceSession, connectionsSource, confirmDiscardChanges, null) { }
+        IProcessConnectionSource? connectionsSource = null, Func<bool>? confirmDiscardChanges = null, IDefaultConnectionControl? defaultConnectionControl = null,
+        IQualityProbe? qualityProbe = null)
+        : this(file, detector, trafficSource, selectionFile, serviceSession, connectionsSource, confirmDiscardChanges, null, defaultConnectionControl, qualityProbe) { }
 
     internal MainWindow(RoutingPolicyFile file, INetworkInterfaceDetector detector,
         IInterfaceTrafficSource? trafficSource, InterfaceSelectionFile? selectionFile, IServiceSession? serviceSession,
-        IProcessConnectionSource? connectionsSource, Func<bool>? confirmDiscardChanges, Func<ServiceConfirmation, bool>? confirmService)
+        IProcessConnectionSource? connectionsSource, Func<bool>? confirmDiscardChanges, Func<ServiceConfirmation, bool>? confirmService,
+        IDefaultConnectionControl? defaultConnectionControl = null, IQualityProbe? qualityProbe = null)
     {
         InitializeComponent();
         ApplyHighContrastPalette();
@@ -61,10 +74,16 @@ public partial class MainWindow : Window
         ProcessConnectionsPanel.DataContext = ProcessConnections;
         ServiceControls = new(serviceSession ?? new WindowsServiceSession(file.FilePath, ServiceExecutableLocator.Find(AppContext.BaseDirectory)), Dispatcher);
         ServiceControlPanel.DataContext = ServiceControls;
+        DefaultConnection = new(defaultConnectionControl, new ConnectionSettingsFile(Path.Combine(Path.GetDirectoryName(file.FilePath)!, "default-connection.json")));
+        DefaultConnectionPanel.DataContext = DefaultConnection;
+        DefaultConnection.PropertyChanged += DefaultConnectionChanged;
+        ServiceControls.PropertyChanged += ServiceOperationChanged;
         _editor = new PolicyEditor(file,
             sessionSnapshot: () => ServiceControls.Session.OwnsRunningProcess ? ServiceControls.Session.Snapshot : null,
             hasOwnedSession: () => ServiceControls.Session.OwnsRunningProcess);
         Dashboard = new InterfaceDashboard(selectionFile ?? new InterfaceSelectionFile(Path.Combine(Path.GetDirectoryName(file.FilePath)!, "interface-selection.json")));
+        QualityMonitor = new(Dashboard, qualityProbe, new QualitySettingsFile(Path.Combine(Path.GetDirectoryName(file.FilePath)!, "quality-settings.json")));
+        QualityPanel.DataContext = QualityMonitor;
         DataContext = _editor;
         UsagePanel.DataContext = Dashboard;
         _rulesView = CollectionViewSource.GetDefaultView(_editor.Rows);
@@ -74,6 +93,8 @@ public partial class MainWindow : Window
         Dashboard.AvailableInterfacesChanged += DashboardInterfacesChanged;
         _monitorTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(2) };
         _monitorTimer.Tick += MonitorTimer_Tick;
+        _qualityTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+        _qualityTimer.Tick += QualityTimer_Tick;
         Loaded += Window_Loaded;
         RefreshAdapters();
         _editor.Load();
@@ -134,16 +155,23 @@ public partial class MainWindow : Window
     }
 
     private void Window_Loaded(object sender, RoutedEventArgs e)
-    { _monitorTimer.Start(); _ = RefreshProcessConnectionsAsync(); }
+    { _monitorTimer.Start(); _qualityTimer.Start(); _ = RefreshProcessConnectionsAsync(); _ = DefaultConnection.RefreshAsync(force: true); }
+    private async void QualityTimer_Tick(object? sender, EventArgs e) => await QualityMonitor.RefreshAsync();
+    private async void ToggleQualityButton_Click(object sender, RoutedEventArgs e) => await QualityMonitor.ToggleAsync();
     private async void MonitorTimer_Tick(object? sender, EventArgs e) =>
-        await Task.WhenAll(RefreshNetworkAsync(), RefreshProcessConnectionsAsync());
+        await Task.WhenAll(RefreshNetworkAsync(), RefreshProcessConnectionsAsync(), DefaultConnection.RefreshAsync());
+    private async void ApplyDefaultConnectionButton_Click(object sender, RoutedEventArgs e) => await DefaultConnection.ApplyAsync();
+    private async void RestoreDefaultConnectionButton_Click(object sender, RoutedEventArgs e) => await DefaultConnection.RestoreAsync();
+    private async void RefreshDefaultConnectionButton_Click(object sender, RoutedEventArgs e) => await DefaultConnection.RefreshAsync(force: true);
+    private void DefaultConnectionChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => ServiceControls.ExternalOperationBusy = DefaultConnection.IsBusy;
+    private void ServiceOperationChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e) => DefaultConnection.OtherOperationBusy = ServiceControls.IsBusy;
     private void ResetMeasurementButton_Click(object sender, RoutedEventArgs e) => Dashboard.CurrentInterface?.ResetMeasurement();
     private void SaveSelectionButton_Click(object sender, RoutedEventArgs e) => Dashboard.SaveSelection();
 
     internal void ShowDiagnostics() => WorkspaceTabs.SelectedIndex = 3;
     internal void SetTrayAvailability(bool available)
     {
-        TrayHintText.Text = available ? "Minimizar → bandeja · X → sair"
+        TrayHintText.Text = available ? "X ou minimizar → bandeja · Sair no ícone"
             : "Bandeja indisponível. O painel permanece na barra de tarefas.";
         TrayHintText.Visibility = Visibility.Visible;
     }
@@ -190,7 +218,7 @@ public partial class MainWindow : Window
             ? "Você autorizou ativar routepolicies temporariamente em IPv4/IPv6, se necessário. As opções alteradas serão restauradas ao parar."
             : "As opções routepolicies do Windows não serão ativadas. Se estiverem desativadas, o início será recusado.";
         return RunConfirmation(() => _confirmService?.Invoke(ServiceConfirmation.Start) ?? MessageBox.Show(this, "O Windows solicitará autorização de administrador. Somente as regras salvas serão aplicadas.\n\n"
-            + flags + "\n\nFechar esta janela encerra a sessão. Nenhum aplicativo será fechado ou reaberto pelo NetLane. Continuar?",
+            + flags + "\n\nEncerrar o NetLane encerra a sessão. Nenhum aplicativo será fechado ou reaberto pelo NetLane. Continuar?",
             "Iniciar sessão de roteamento", MessageBoxButton.YesNo, MessageBoxImage.Information, MessageBoxResult.No) == MessageBoxResult.Yes);
     }
 
@@ -213,12 +241,15 @@ public partial class MainWindow : Window
         if (!SystemParameters.HighContrast) return;
         foreach (var key in new[] { "CanvasBrush", "SidebarBrush", "SurfaceBrush", "SubtleBrush", "AccentSoftBrush", "WarningSurfaceBrush", "SuccessSurfaceBrush" })
             Resources[key] = SystemColors.WindowBrush;
-        foreach (var key in new[] { "TextBrush", "MutedBrush", "LineBrush", "WarningBrush", "WarningLineBrush", "SuccessBrush" })
+        foreach (var key in new[] { "TextBrush", "MutedBrush", "LineBrush", "WarningBrush", "WarningLineBrush", "SuccessBrush", "ErrorBrush" })
             Resources[key] = SystemColors.WindowTextBrush;
         Resources["AccentBrush"] = SystemColors.HighlightBrush;
         Resources["OnAccentBrush"] = SystemColors.HighlightTextBrush;
         Resources["DownloadBrush"] = SystemColors.WindowTextBrush;
         Resources["UploadBrush"] = SystemColors.HotTrackBrush;
+        Resources["QualityBubbleBrush"] = SystemColors.WindowBrush;
+        Resources["QualityBubbleLineBrush"] = SystemColors.WindowTextBrush;
+        Resources["QualityBubbleTextBrush"] = SystemColors.WindowTextBrush;
     }
 
     private void AddButton_Click(object sender, RoutedEventArgs e)
@@ -292,18 +323,43 @@ public partial class MainWindow : Window
         "Existem alterações não salvas. Deseja descartá-las?", "NetLane",
         MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes);
 
+    internal void RequestExit()
+    {
+        _hideToTrayPending = false;
+        _exitRequested = true;
+        try { Close(); }
+        finally { _exitRequested = false; }
+    }
+
     private void Window_Closing(object? sender, CancelEventArgs e)
     {
+        if (DefaultConnection.IsBusy) { e.Cancel = true; return; }
         if (!_closeAfterServiceStop)
         {
             if (ServiceControls.IsBusy || IsConfirmationOpen) { e.Cancel = true; return; }
+            if (!_exitRequested && HideToTrayRequested is not null)
+            {
+                e.Cancel = true;
+                if (!_hideToTrayPending)
+                {
+                    _hideToTrayPending = true;
+                    // Hide after the cancelled Closing event, when WPF allows visibility changes again.
+                    Dispatcher.BeginInvoke(DispatcherPriority.Normal, () =>
+                    {
+                        if (!_hideToTrayPending) return;
+                        _hideToTrayPending = false;
+                        if (!_closed && !_exitRequested) HideToTrayRequested?.Invoke(this, EventArgs.Empty);
+                    });
+                }
+                return;
+            }
             e.Cancel = !ConfirmDiscard();
             if (e.Cancel) return;
             if (ServiceControls.Session.OwnsRunningProcess)
             {
                 e.Cancel = true;
                 if (RunConfirmation(() => _confirmService?.Invoke(ServiceConfirmation.StopAndExit) ?? MessageBox.Show(this,
-                    "Fechar o painel também encerra a sessão de roteamento iniciada por esta janela. Deseja parar o serviço e fechar?",
+                    "Encerrar o NetLane também encerra a sessão de roteamento iniciada por esta janela. Deseja parar o serviço e sair?",
                     "Encerrar NetLane", MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) == MessageBoxResult.Yes))
                     _ = StopServiceAndCloseAsync();
                 return;
@@ -312,8 +368,13 @@ public partial class MainWindow : Window
         _closed = true;
         _monitorTimer.Stop();
         _monitorTimer.Tick -= MonitorTimer_Tick;
+        _qualityTimer.Stop();
+        _qualityTimer.Tick -= QualityTimer_Tick;
+        QualityMonitor.Dispose();
         Dashboard.AvailableInterfacesChanged -= DashboardInterfacesChanged;
         ServiceControls.Dispose();
+        DefaultConnection.PropertyChanged -= DefaultConnectionChanged;
+        ServiceControls.PropertyChanged -= ServiceOperationChanged;
     }
 
     internal async Task StopServiceAndCloseAsync()

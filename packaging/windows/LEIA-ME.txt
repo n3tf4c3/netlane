@@ -6,18 +6,37 @@ instalacao/desinstalacao em todas as versoes do Windows. Nao e uma release publi
 Arquivos do programa: Program Files\NetLane
 Regras: %LOCALAPPDATA%\NetLane\netlane-rules.json
 Preferencias: %LOCALAPPDATA%\NetLane\interface-selection.json
+Configuracao anterior da conexao padrao: %LOCALAPPDATA%\NetLane\default-connection.json
+Destino do teste de qualidade: %LOCALAPPDATA%\NetLane\quality-settings.json
 
 O instalador nao importa regras do checkout, nao altera regras existentes do
 perfil e nao remove dados do usuario na desinstalacao. Novos perfis comecam sem
 regras. Para migrar suas regras de desenvolvimento, combine uma copia/backup
 separadamente, com o painel e o servico parados.
 
-Abra pelo menu Iniciar sem executar como administrador. O painel pede UAC apenas
-para iniciar a sessao de roteamento. Nao ha servico Windows permanente, inicio
+Abra pelo menu Iniciar sem executar como administrador. O painel pede UAC para
+iniciar a sessao de roteamento ou aplicar/restaurar a conexao padrao. Nao ha servico Windows permanente, inicio
 automatico, atalho na inicializacao ou alteracao de rede feita pelo instalador.
 
-Minimizar oculta na bandeja. Para instalar/atualizar/remover, use Sair e aguarde
-o fechamento normal e a parada do servico. O instalador nao mata processos.
+Na Visao geral, Conexao padrao permite escolher cabo ou Wi-Fi para o trafego IPv4
+dos apps em Automatico. Escolher na lista nao muda a rede: clique em Aplicar e
+confirme o UAC. Essa escolha permanece ao fechar o NetLane e reiniciar o Windows.
+Restaurar configuracao anterior recupera o modo/prioridade guardados antes da
+primeira troca. IPv6, gateway e DNS nao sao alterados por essa opcao. As regras
+especificas dos apps continuam independentes, com o servico de roteamento ativo.
+
+X e Minimizar ocultam na bandeja. Para instalar/atualizar/remover, use Sair no
+menu do icone e aguarde o fechamento normal e a parada do servico. O instalador
+nao mata processos.
+
+Na Visao geral, Qualidade permite escolher um IPv4 para ping ou um site HTTPS.
+Clique em Iniciar para testar separadamente cada placa selecionada, a cada 5 s.
+O selo resume ate 12 amostras recentes; passe o mouse para latencia, jitter e
+sondagens perdidas/falhas do site. Ping filtrado nao comprova queda de Internet.
+HTTPS inclui TCP, TLS e resposta do site; falhas nao sao perda de pacotes.
+O monitor continua ao ocultar na bandeja; Parar ou Sair encerra as medicoes.
+O destino fica salvo, mas a medicao comeca desativada a cada abertura. Nao e
+teste de velocidade maxima e nao altera a conexao padrao nem as regras dos apps.
 
 Roteamento depende dos pre-requisitos verificados pelo painel. Politica aceita
 nao e prova de trafego. VPN, bloqueio contra vazamentos e IPv6 nao estao validados.

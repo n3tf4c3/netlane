@@ -91,6 +91,23 @@
                 <TabItem Header="Visão geral" Tag="Acompanhe suas conexões, em tempo real.">
                     <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Padding="0,0,4,0">
                         <StackPanel x:Name="UsagePanel">
+                            <Border x:Name="DefaultConnectionPanel" Style="{StaticResource Card}" Padding="16" Margin="0,0,0,16">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <TextBlock DockPanel.Dock="Right" Text="{Binding CurrentLabel}" Style="{StaticResource Caption}" Margin="12,0,0,0" VerticalAlignment="Center" />
+                                        <TextBlock Text="Conexão padrão" Style="{StaticResource SectionTitle}" />
+                                    </DockPanel>
+                                    <TextBlock Text="Escolha a saída de Internet para os apps em Automático. As regras específicas de cada app continuam valendo." Style="{StaticResource Caption}" Margin="0,8,0,0" />
+                                    <WrapPanel Margin="0,12,0,0">
+                                        <ComboBox x:Name="DefaultConnectionChoiceBox" ItemsSource="{Binding Choices}" DisplayMemberPath="Label" SelectedItem="{Binding Selected, Mode=TwoWay}" Width="200" Margin="0,0,8,8" AutomationProperties.Name="Conexão padrão do computador" />
+                                        <Button x:Name="ApplyDefaultConnectionButton" Content="Aplicar" Style="{StaticResource PrimaryButton}" Click="ApplyDefaultConnectionButton_Click" IsEnabled="{Binding CanApply}" Margin="0,0,8,8" />
+                                        <Button x:Name="RestoreDefaultConnectionButton" Content="Restaurar configuração anterior" Click="RestoreDefaultConnectionButton_Click" IsEnabled="{Binding CanRestore}" Margin="0,0,8,8" />
+                                        <Button Content="Atualizar" Click="RefreshDefaultConnectionButton_Click" IsEnabled="{Binding CanRefresh}" Margin="0,0,0,8" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding Status}" Style="{StaticResource Caption}" FontSize="11" />
+                                    <TextBlock Text="Padrão IPv4 · Aplicar solicita autorização do Windows. A escolha permanece após fechar o NetLane e reiniciar o computador." Style="{StaticResource Caption}" FontSize="11" Margin="0,5,0,0" />
+                                </StackPanel>
+                            </Border>
                             <Expander x:Name="InterfaceSelectionExpander" IsExpanded="False" Margin="0,0,0,8">
                                 <Expander.Header><DockPanel><TextBlock DockPanel.Dock="Right" Text="Gerenciar interfaces" Foreground="{DynamicResource AccentBrush}" FontSize="12" VerticalAlignment="Center" /><StackPanel Orientation="Horizontal"><TextBlock Text="Suas conexões" Style="{StaticResource SectionTitle}" /><TextBlock Text="{Binding SelectionSummary}" Style="{StaticResource Caption}" VerticalAlignment="Center" Margin="12,0,12,0" /></StackPanel></DockPanel></Expander.Header>
                                 <Border Style="{StaticResource Card}" Padding="16">
@@ -111,6 +128,21 @@
                                     </StackPanel>
                                 </Border>
                             </Expander>
+                            <Border x:Name="QualityPanel" Style="{StaticResource Card}" Padding="14,10" Margin="0,0,0,12">
+                                <StackPanel>
+                                    <Grid>
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="Qualidade" FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        <TextBlock Grid.Column="1" Text="{Binding Status}" ToolTip="{Binding Status}" Style="{StaticResource Caption}" FontSize="11" TextWrapping="NoWrap" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,12,0" />
+                                        <Button Grid.Column="2" x:Name="ToggleQualityButton" Content="{Binding ButtonLabel}" Click="ToggleQualityButton_Click" IsEnabled="{Binding CanToggle}" MinWidth="82" AutomationProperties.Name="Iniciar ou parar a medição de qualidade" />
+                                    </Grid>
+                                    <WrapPanel Margin="0,8,0,0">
+                                        <WrapPanel.Style><Style TargetType="WrapPanel"><Style.Triggers><DataTrigger Binding="{Binding IsRunning}" Value="True"><Setter Property="Visibility" Value="Collapsed" /></DataTrigger></Style.Triggers></Style></WrapPanel.Style>
+                                        <ComboBox x:Name="QualityModeBox" ItemsSource="{Binding Modes}" SelectedItem="{Binding SelectedMode, Mode=TwoWay}" DisplayMemberPath="Label" IsEnabled="{Binding CanEdit}" Width="132" Margin="0,0,8,0" AutomationProperties.Name="Tipo de teste de qualidade" />
+                                        <TextBox x:Name="QualityTargetBox" Text="{Binding TargetText, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" IsEnabled="{Binding CanEdit}" Width="238" MaxLength="512" AutomationProperties.Name="IP ou site para medir a qualidade" ToolTip="Ping: endereço IPv4. Site: endereço HTTPS. Configure antes de iniciar." />
+                                    </WrapPanel>
+                                </StackPanel>
+                            </Border>
                             <ListBox x:Name="SelectedInterfacesList" ItemsSource="{Binding SelectedInterfaces}" SelectedItem="{Binding CurrentInterface, Mode=TwoWay}"
                                      ItemContainerStyle="{StaticResource InterfaceCard}" Background="Transparent" BorderThickness="0" Margin="0,0,-12,8"
                                      ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Disabled"
@@ -119,12 +151,10 @@
                                 <ListBox.ItemTemplate><DataTemplate>
                                     <StackPanel>
                                         <Grid Margin="0,0,0,12">
-                                            <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                            <Border Width="32" Height="32" CornerRadius="8" Background="{DynamicResource SubtleBrush}" HorizontalAlignment="Left">
-                                                <TextBlock Text="{Binding IconGlyph}" Style="{StaticResource Glyph}" Foreground="{DynamicResource AccentBrush}" FontSize="17" />
-                                            </Border>
-                                            <StackPanel Grid.Column="1"><TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding IpAddress}" Style="{StaticResource Caption}" /></StackPanel>
-                                            <TextBlock Grid.Column="2" Text="{Binding ConnectionStatus}" Style="{StaticResource Caption}" FontSize="11" Margin="8,0,0,0" />
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <StackPanel VerticalAlignment="Center"><TextBlock Text="{Binding Name}" FontSize="15" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" /><TextBlock Text="{Binding IpAddress}" Style="{StaticResource Caption}" /></StackPanel>
+                                            <TextBlock Grid.Column="1" Text="{Binding ConnectionStatus}" Style="{StaticResource Caption}" FontSize="10" Margin="8,4,8,0" VerticalAlignment="Top" />
+                                            <controls:ConnectionQualityIndicator Grid.Column="2" IconGlyph="{Binding DataContext.IconGlyph, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" DataContext="{Binding Quality}" />
                                         </Grid>
                                         <UniformGrid Columns="2">
                                             <StackPanel><TextBlock Text="↓  Download" Style="{StaticResource Caption}" /><TextBlock Text="{Binding DownloadRate}" FontSize="20" FontWeight="SemiBold" Margin="0,3,0,0" /></StackPanel>
@@ -266,7 +296,7 @@
                                     <DockPanel><TextBlock DockPanel.Dock="Right" Text="{Binding ModeLabel}" Style="{StaticResource Caption}" VerticalAlignment="Center" /><TextBlock Text="Controle do serviço" Style="{StaticResource SectionTitle}" /></DockPanel>
                                     <TextBlock Text="A autorização de administrador é solicitada somente ao iniciar. Fechar esta janela encerra a sessão e restaura as opções temporárias." Style="{StaticResource Caption}" Margin="0,10,0,0" />
                                     <CheckBox x:Name="TemporaryRoutePoliciesCheckBox" Content="Autorizar routepolicies temporariamente, se necessário" IsChecked="{Binding AllowTemporaryRoutePolicies, Mode=TwoWay}" Margin="0,14,0,0" AutomationProperties.Name="Autorizar ativação temporária de routepolicies" />
-                                    <TextBlock Text="Essa opção é global do Windows, mas a alteração não é persistida. Nenhum gateway, DNS, métrica ou arquivo sincronizado é alterado." Style="{StaticResource Caption}" FontSize="11" Margin="26,5,0,0" />
+                                    <TextBlock Text="Essa autorização de routepolicies vale só durante a sessão. A conexão padrão, escolhida na Visão geral, é uma configuração independente." Style="{StaticResource Caption}" FontSize="11" Margin="26,5,0,0" />
                                     <StackPanel Orientation="Horizontal" Margin="0,16,0,12">
                                         <Button x:Name="StartServiceButton" Content="Iniciar serviço" Style="{StaticResource PrimaryButton}" Click="StartServiceButton_Click" IsEnabled="{Binding CanStart}" />
                                         <Button x:Name="StopServiceButton" Content="Parar" Click="StopServiceButton_Click" IsEnabled="{Binding CanStop}" Margin="8,0,0,0" />

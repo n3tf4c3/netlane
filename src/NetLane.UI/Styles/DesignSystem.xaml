@@ -16,6 +16,10 @@
     <SolidColorBrush x:Key="WarningSurfaceBrush" Color="#FFF6E8" />
     <SolidColorBrush x:Key="WarningLineBrush" Color="#F0DFC3" />
     <SolidColorBrush x:Key="SuccessBrush" Color="#227148" />
+    <SolidColorBrush x:Key="ErrorBrush" Color="#B91C1C" />
+    <SolidColorBrush x:Key="QualityBubbleBrush" Color="#171B21" />
+    <SolidColorBrush x:Key="QualityBubbleLineBrush" Color="#3B424D" />
+    <SolidColorBrush x:Key="QualityBubbleTextBrush" Color="#E1E5EA" />
     <SolidColorBrush x:Key="SuccessSurfaceBrush" Color="#EAF5EF" />
 
     <BooleanToVisibilityConverter x:Key="BooleanVisibility" />

@@ -8,15 +8,21 @@ public sealed class ServiceControlViewModel : INotifyPropertyChanged, IDisposabl
 {
     private readonly Dispatcher _dispatcher;
     private bool _allowTemporary;
+    private bool _externalOperationBusy;
     public IServiceSession Session { get; }
     public bool IsBusy { get; private set; }
-    public bool CanStart => !IsBusy && Session.IsAvailable && !Session.OwnsRunningProcess;
-    public bool CanStop => !IsBusy && Session.OwnsRunningProcess;
+    public bool CanStart => !IsBusy && !ExternalOperationBusy && Session.IsAvailable && !Session.OwnsRunningProcess;
+    public bool CanStop => !IsBusy && !ExternalOperationBusy && Session.OwnsRunningProcess;
     public bool CanRestart => CanStop && Session.IsAvailable;
     public string Status { get; private set; }
     public string ExecutablePath => Session.ServiceExecutablePath ?? "Executável não encontrado.";
     public string ModeLabel => Session.OwnsRunningProcess ? "Sessão vinculada a esta janela" : "Sem instalação permanente";
     public event PropertyChangedEventHandler? PropertyChanged;
+    public bool ExternalOperationBusy
+    {
+        get => _externalOperationBusy;
+        set { if (_externalOperationBusy == value) return; _externalOperationBusy = value; Notify(); }
+    }
 
     public bool AllowTemporaryRoutePolicies
     {
@@ -42,7 +48,7 @@ public sealed class ServiceControlViewModel : INotifyPropertyChanged, IDisposabl
 
     private async Task<bool> RunAsync(Func<Task> operation)
     {
-        if (IsBusy) return false;
+        if (IsBusy || ExternalOperationBusy) return false;
         IsBusy = true;
         Notify();
         try { await operation(); Status = Session.Status; return true; }

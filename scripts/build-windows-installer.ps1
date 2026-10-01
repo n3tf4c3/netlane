@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$NsisCompilerPath,
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.3.0',
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.3.3',
     [string]$OutputDirectory
 )
 
@@ -80,13 +80,13 @@ foreach ($assetsFile in Get-ChildItem -LiteralPath (Join-Path $output 'build\obj
 
 foreach ($required in @('NetLane.UI.exe', 'NetLane.UI.runtimeconfig.json', 'coreclr.dll',
         'service\NetLane.Service.exe', 'service\NetLane.Service.runtimeconfig.json', 'service\coreclr.dll',
-        'service\appsettings.json', 'netlane-installed.layout')) {
+        'service\appsettings.json', 'service\default-connection.protocol', 'netlane-installed.layout')) {
     if (-not (Test-Path -LiteralPath (Join-Path $payload $required) -PathType Leaf)) { throw "Arquivo obrigatório ausente: $required" }
 }
 $defaults = Get-Content -LiteralPath (Join-Path $payload 'service\appsettings.json') -Raw | ConvertFrom-Json
 if (@($defaults.NetLane.Routing.Policies).Count -ne 0) { throw 'O pacote não pode incluir regras de exemplo ou locais no appsettings.' }
 foreach ($file in Get-PayloadFiles) {
-    if ($file.Name -match '(?i)(^netlane-rules\.|^interface-selection\.|\.pdb$|\.runtime\.(json|lock)$|\.log$|\.bak$|\.trx$|Probe|Review|RoutingCheck)') {
+    if ($file.Name -match '(?i)(^netlane-rules\.|^interface-selection\.|^default-connection\.json|\.pdb$|\.runtime\.(json|lock)$|\.log$|\.bak$|\.trx$|Probe|Review|RoutingCheck)') {
         throw "Arquivo privado ou de ensaio proibido no pacote: $($file.Name)"
     }
 }
