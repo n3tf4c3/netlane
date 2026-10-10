@@ -7,6 +7,61 @@ use crate::{
 use gpui::{App, WindowHandle, px, size};
 use netlane_windows::desktop::{ProofPanelCommand, TrayAction};
 use std::{path::PathBuf, time::Duration};
+/// Only synthetic packets and explicit themes; no installed data or network.
+pub fn packets(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) {
+    std::fs::create_dir_all(&directory).expect("packet proof output");
+    window.update(cx, |_, w, cx| {
+        cx.spawn_in(w, async move |this, cx| {
+            for (name, theme, query, select, width, height) in [
+                ("01-packets-dark.png", "NetLane Dark", "UDP", true, 1320., 920.),
+                ("02-packets-light-filter.png", "One Light", "50002", true, 1320., 920.),
+                ("03-packets-minimum-empty.png", "NetLane Dark", "missing", false, 1000., 640.),
+                ("06-packets-dark-details.png", "NetLane Dark", "50000", true, 1320., 920.),
+            ] {
+                this.update(cx, |ws, cx| {
+                    Themes::set_active(cx, theme); ws.proof_packets(query, select, cx);
+                    assert_eq!(ws.proof_packet_matches(cx), if query == "UDP" {6} else if query.starts_with("500") {1} else {0});
+                }).unwrap();
+                cx.update(|w, _| w.resize(size(px(width), px(height)))).unwrap();
+                cx.background_executor().timer(Duration::from_millis(550)).await;
+                cx.update(|w, cx| {w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
+            }
+            for (name, theme) in [("04-brand-dark.png","NetLane Dark"),("05-brand-light.png","One Light")] {
+                this.update(cx, |ws, cx| { ws.page=Page::Settings;Themes::set_active(cx,theme);cx.notify(); }).unwrap();
+                cx.update(|w, _| w.resize(size(px(1320.),px(920.)))).unwrap();
+                cx.background_executor().timer(Duration::from_millis(550)).await;
+                cx.update(|w, cx| {w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
+            }
+            for (name,theme,width,height) in [("07-codex-context-dark.png","NetLane Dark",1320.,920.),("08-codex-context-light.png","One Light",1320.,920.),("09-codex-minimum.png","NetLane Dark",1000.,640.)] {
+                this.update(cx,|ws,cx| {Themes::set_active(cx,theme);ws.proof_codex(cx);}).unwrap();
+                cx.update(|w,_|w.resize(size(px(width),px(height)))).unwrap();
+                cx.background_executor().timer(Duration::from_millis(550)).await;
+                this.update(cx,|ws,cx|assert!(ws.proof_codex_context(cx))).unwrap();
+                cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
+            }
+            for (name,theme) in [("10-long-samples-dark.png","NetLane Dark"),("11-baseline-light.png","One Light")] {
+                this.update(cx,|ws,cx|{Themes::set_active(cx,theme);ws.proof_long_dump(cx);assert!(ws.proof_long_valid(cx));}).unwrap();
+                cx.update(|w,_|w.resize(size(px(1320.),px(920.)))).unwrap();
+                cx.background_executor().timer(Duration::from_millis(550)).await;
+                cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
+            }
+            this.update(cx,|ws,cx|{Themes::set_active(cx,"NetLane Dark");ws.proof_analyze_dump(cx);assert!(ws.proof_analyzed_valid(cx));}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("12-dump-analysis-codex.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{ws.proof_collection_start(cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(120)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("13-rotating-synthetic-running.png")).unwrap();}).unwrap();
+            for _ in 0..40 {
+                cx.background_executor().timer(Duration::from_millis(200)).await;
+                if this.update(cx,|ws,cx|ws.proof_collection_valid(cx)).unwrap(){break;}
+            }
+            this.update(cx,|ws,cx|assert!(ws.proof_collection_valid(cx))).unwrap();
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("14-rotating-synthetic-complete.png")).unwrap();}).unwrap();
+            std::fs::write(directory.join("verified.txt"),"Synthetic packet selection, search, empty result, compact viewport, dark/light branding and reviewed Codex context passed. Virtualized samples, full 10000-packet statistics, baseline comparison and simulated conversation with validated references passed. Synthetic rotating collection wrote 300 records, closed its source and analyzed completed PCAP segments. Clipboard was not changed. No inference, real capture, network, routing or installed profile accessed.\n").unwrap();
+            this.update_in(cx,|ws,w,cx|ws.request_close(w,cx)).unwrap();
+        }).detach();
+    }).unwrap();
+}
 pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) {
     std::fs::create_dir_all(&directory).expect("proof output directory");
     window.update(cx,|_,w,cx|{

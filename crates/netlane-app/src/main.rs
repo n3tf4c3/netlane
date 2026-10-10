@@ -1,9 +1,12 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod assets;
+mod codex_view;
+mod collection_view;
 mod demo;
 mod desktop;
 mod executable_icons;
 mod lifecycle;
+mod packet_view;
 #[cfg(feature = "gui-test")]
 mod proof;
 mod settings;
@@ -71,6 +74,19 @@ fn run() -> anyhow::Result<()> {
     }
     #[cfg(feature = "gui-test")]
     let start_in_tray = startup || proof.is_some();
+    #[cfg(feature = "gui-test")]
+    let packet_proof = args
+        .iter()
+        .position(|a| a == "--packet-proof")
+        .and_then(|i| args.get(i + 1))
+        .map(PathBuf::from);
+    #[cfg(feature = "gui-test")]
+    if packet_proof.is_some() {
+        anyhow::ensure!(
+            demo && proof.is_none(),
+            "A prova de pacotes exige --demo e deve ser executada separadamente."
+        );
+    }
     #[cfg(not(feature = "gui-test"))]
     let start_in_tray = startup;
     gpui_platform::application()
@@ -119,6 +135,10 @@ fn run() -> anyhow::Result<()> {
                     #[cfg(feature = "gui-test")]
                     if let Some(directory) = proof {
                         proof::start(window, directory, cx);
+                    }
+                    #[cfg(feature = "gui-test")]
+                    if let Some(directory) = packet_proof {
+                        proof::packets(window, directory, cx);
                     }
                     if !start_in_tray {
                         cx.activate(true);

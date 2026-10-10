@@ -1,8 +1,46 @@
 # NetLane
 
-Cada app, sua rota. Projeto experimental Windows para configurar a conexão de rede por executável.
+Aplicação Windows em evolução para diagnóstico de rede com IA. O monitor de
+conexões e a seleção de saída por executável continuam como ferramentas do produto.
+
+A [ampliação definida em 10/10/2026](docs/diagnostico-rede-ia.md) prevê captura de
+pacotes, importação/exportação PCAP e PCAPNG, investigação com **Codex como agente
+principal**, Claude e Gemini como alternativas opcionais, e relatórios baseados
+em evidências. A primeira implementação já permite
+importar e analisar PCAP/PCAPNG na prévia Rust, comparar uma referência e conversar
+com Codex após revisar o contexto. Captura Windows com Npcap e rotação tem
+implementação inicial, validada com fonte fictícia. Exportação derivada e
+relatórios continuam planejados.
 
 ## Estado atual
+
+**Diagnóstico iniciado — 2026-10-10:** nova identidade aplicada à GUI, executáveis
+e bandeja Rust. Tela **Pacotes** com importação local PCAP/PCAPNG, SHA-256, busca,
+uma tabela virtualizada inspirada no termIAX, detalhes e RAW opcional. A análise
+percorre o dump inteiro em segundo plano, retendo até 512 amostras de 2 KiB,
+com limites de 64 GiB/100 milhões de registros. A inspeção permanece
+em memória, preserva o original e informa os limites. `--demo` usa
+somente o exemplo fictício. [Escopo e próximos passos](docs/diagnostico-rede-ia.md#primeira-implementação).
+O programa .NET instalado permanece independente desta prévia.
+
+**Contexto para Codex — 2026-10-10:** selecione um pacote em **Pacotes** e clique
+**Preparar para Codex**. A tela **Codex** reúne até 16 pacotes da mesma captura,
+problema e pergunta; **Revisar contexto** mostra o texto completo e **Copiar para
+Codex** permite levá-lo à sua conversa. Metadados incluem endereços e portas;
+bytes dos pacotes e caminho do arquivo não são anexados. A verificação optativa
+de metadados do App Server usa um perfil próprio. **Conectar Codex** oferece
+login ChatGPT, modelos, envio explícito, resposta progressiva e cancelamento em
+outra ponte isolada, adaptada do termIAX, com catálogo sem ferramentas e CLI
+0.162.0. A prova nativa não usou conta ou inferência; esse QA real ainda falta.
+Veja [validação e limites](docs/diagnostico-rede-ia.md#contexto-para-codex).
+
+**Referência de captura — 2026-10-10:** **Usar como referência** permite comparar
+volume, proporção de TCP RST e destinos novos. Os totais incluem todos os pacotes;
+a busca da tabela consulta as amostras. Achados têm hash/números dos pacotes e
+limiares explícitos. **Captura longa** oferece interface, BPF, disco/duração,
+segmentos PCAP e análise em paralelo com filas limitadas. A prova usa uma fonte
+fictícia; Npcap real e coletas de muitas horas ainda precisam de QA.
+[Reaproveitamento do termIAX](docs/reaproveitamento-termiax.md).
 
 **QA Rust no Sandbox — 2026-10-10:** instalação limpa, UI em demonstração,
 reinstalação da mesma versão e remoção concluídas, com payload/dados fictícios

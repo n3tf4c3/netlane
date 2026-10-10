@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="cableGradTrans" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#38bdf8"/>
+      <stop offset="50%" stop-color="#14b8a6"/>
+      <stop offset="100%" stop-color="#0d9488"/>
+    </linearGradient>
+  </defs>
+  <g transform="translate(46, 56) scale(0.82)">
+    <rect x="74" y="325" width="44" height="24" rx="4" fill="#14b8a6"/>
+    <rect x="68" y="345" width="56" height="58" rx="8" fill="#e2e8f0"/>
+    <rect x="78" y="385" width="36" height="18" rx="3" fill="#94a3b8"/>
+    <line x1="77" y1="352" x2="77" y2="368" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="87" y1="352" x2="87" y2="368" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="96" y1="352" x2="96" y2="368" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="105" y1="352" x2="105" y2="368" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="115" y1="352" x2="115" y2="368" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+
+    <path d="M 96 325 L 96 140 C 96 70, 195 70, 195 140 L 195 310 C 195 375, 295 375, 295 310 L 295 140" 
+          fill="none" stroke="url(#cableGradTrans)" stroke-width="38" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M 96 315 L 96 145 C 96 95, 195 95, 195 145 L 195 305 C 195 355, 295 355, 295 305 L 295 145" 
+          fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" opacity="0.85"/>
+
+    <path d="M 108 140 L 285 320" fill="none" stroke="#ffffff" stroke-width="32" stroke-linecap="round"/>
+    <path d="M 108 140 L 285 320" fill="none" stroke="#0f172a" stroke-width="20" stroke-linecap="round"/>
+
+    <path d="M 285 330 C 285 375, 330 380, 360 380 L 415 380" 
+          fill="none" stroke="url(#cableGradTrans)" stroke-width="38" stroke-linecap="round"/>
+    <path d="M 285 330 C 285 375, 330 380, 360 380 L 405 380" 
+          fill="none" stroke="#ffffff" stroke-width="12" stroke-linecap="round" opacity="0.85"/>
+
+    <rect x="273" y="105" width="44" height="24" rx="4" fill="#14b8a6"/>
+    <rect x="267" y="52" width="56" height="58" rx="8" fill="#e2e8f0"/>
+    <rect x="277" y="44" width="36" height="16" rx="3" fill="#94a3b8"/>
+    <line x1="276" y1="75" x2="276" y2="92" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="285" y1="75" x2="285" y2="92" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="295" y1="75" x2="295" y2="92" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="305" y1="75" x2="305" y2="92" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+    <line x1="314" y1="75" x2="314" y2="92" stroke="#f59e0b" stroke-width="4" stroke-linecap="round"/>
+  </g>
+</svg>

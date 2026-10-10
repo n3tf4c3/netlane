@@ -96,7 +96,7 @@ impl CallbackState {
             hIcon: self.icon,
             ..Default::default()
         };
-        let tip = wide("NetLane · Cada app, sua rota");
+        let tip = wide("NetLane · Diagnóstico de rede");
         data.szTip[..tip.len()].copy_from_slice(&tip);
         data
     }

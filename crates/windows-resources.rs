@@ -2,7 +2,7 @@
 fn main() {
     println!("cargo:rerun-if-changed=../windows-resources.rs");
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") { return; }
-    let icon = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/brand/netlane.ico");
+    let icon = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../assets/brand/netlane-diagnostics.ico");
     println!("cargo:rerun-if-changed={}",icon.display());
     let icon=icon.canonicalize().expect("NetLane icon").display().to_string().trim_start_matches(r"\\?\").replace('\\',"/");
     let version=std::env::var("CARGO_PKG_VERSION").unwrap();

@@ -22,6 +22,8 @@ gpui_platform.workspace = true
 netlane-core.workspace = true
 netlane-windows.workspace = true
 netlane-agent.workspace = true
+netlane-capture.workspace = true
+netlane-ai.workspace = true
 zeroize = "1"
 raw-window-handle = { version = "0.6", features = ["std"] }
 image = { version = "0.25.10", default-features = false }
