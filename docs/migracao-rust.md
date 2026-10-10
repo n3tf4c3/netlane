@@ -113,6 +113,33 @@ O instalador/desinstalador Rust e a remoção futura de autorun ainda estão pen
 Referências de implementação: [ícone nativo](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)
 e [inicialização por usuário](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys).
 
+## Ícones por aplicativo (2026-10-10)
+
+Regras e Conexões exibem o primeiro ícone do executável local em 20 px. A leitura
+de recursos não executa o aplicativo. O provedor Win32 rasteriza em 32 × 32 px,
+preserva transparência e libera ícones, bitmaps e contextos GDI em todos os caminhos.
+As duas telas compartilham o cache; pixels iguais preservam a imagem da GPU.
+
+A leitura ocorre em até dois trabalhos de segundo plano. Os caches nativo e GPUI
+guardam até 128 executáveis cada; tamanho e data de modificação são reavaliados
+ao solicitar novamente após cinco segundos. Resultados atrasados de caminhos
+removidos são ignorados. Conexões solicita apenas a página visível, de até 50
+linhas; em Regras, os caminhos distintos além do limite usam o marcador padrão.
+Imagens removidas também são liberadas explicitamente no contexto da janela.
+
+A consulta aceita caminhos absolutos locais `.exe`. UNC, dispositivos, unidades
+de rede, arquivos offline, com recall ou reparse points — inclusive nos diretórios
+ancestrais — usam o marcador padrão. Arquivos ausentes, recursos sem ícone e
+falhas de leitura têm o mesmo fallback. Essas verificações são conservadoras:
+um executável acessível por junction também pode aparecer sem seu ícone.
+Nenhum ícone é salvo no perfil. A demonstração comum não lê ícones de executáveis;
+a prova `gui-test` habilita a consulta somente para fixtures, incluindo o próprio
+build e caminhos ausentes/remotos recusados antes da extração.
+
+Referências de implementação: [extração de recursos](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-extracticonexw),
+[rasterização do ícone](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-drawiconex)
+e [bitmap DIB](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibsection).
+
 ## Validação local
 
 ```powershell
@@ -131,14 +158,28 @@ original. Os testes Rust usam sessões WFP e opções simuladas; o teste de pipe
 usa um nome aleatório privado, autentica PID real e não lança agente/UAC/WFP.
 
 A prova visual compila com `gui-test`, abre **somente demonstração**, captura
-12 cenas reais pela GPU GPUI, verifica prévia/cancelamento/confirmação e releitura
+14 cenas reais pela GPU GPUI, verifica prévia/cancelamento/confirmação e releitura
 do tema do disco, edita/salva uma regra em memória e encerra com código zero.
 Também captura fonte máxima, lista compacta e estado vazio na janela mínima.
-O script recusa evidências anteriores e exige hashes distintos das 12 imagens.
+O script recusa evidências anteriores e exige hashes distintos das 14 imagens.
 A inspeção humana dos PNGs complementa as asserções; hash distinto sozinho não
 prova layout correto. O build comum exclui o capturador.
 
-Na continuação de 2026-10-10: **30 testes Rust aprovados**. As novas verificações
+Na etapa dos ícones de 2026-10-10: **36 testes Rust aprovados** (5 agente, 6 app,
+9 core e 16 Windows). Testes adicionais cobrem deduplicação concorrente, limite
+do cache, alteração do arquivo, conclusão atrasada, reuso de imagem, fallback,
+alpha/máscara e 32 ciclos de rasterização com contagens GDI/USER iguais antes e
+depois. Formatação, Clippy comum e com `gui-test`, e build Release passaram.
+A prova GPU verificou o ícone real do próprio build, mesma imagem nas duas telas
+e fallback imediato ao editar para UNC. Gerou 14 capturas; a revisão visual de
+Regras/Conexões cobriu tema claro/escuro, janela mínima e fallback. Os cenários
+de bandeja/saída também passaram.
+Evidências sob `artifacts/rust-icons-ui-20261010`; prévia comum sem capturador em
+`artifacts/rust-preview-icons-20261010`. Outros executáveis, outras escalas e o
+produto instalado ainda precisam de QA específico. Nenhuma sessão de rede,
+autorun real, UAC ou alteração do perfil instalado fez parte desta etapa.
+
+Na etapa de bandeja de 2026-10-10: **30 testes Rust aprovados**. As verificações
 cobrem registro em subárvore HKCU descartável, recusa de outro caminho, preservação
 do valor legado, mutex de presença e reconfirmação da saída. A prova GPUI também
 exercita HWND real e callbacks da bandeja: abertura inicialmente oculta,
@@ -150,7 +191,7 @@ elevado permanecem QA separado. Falha ao reler o arquivo salvo antes de descarta
 mantém as edições. Evidências finais sob `artifacts/rust-tray-ui-20261010-final`;
 prévia comum em `artifacts/rust-preview-20261010-final`.
 
-Resultados desta rodada (2026-10-09/10): **26 testes Rust**, **283 testes .NET**,
+Resultados da primeira rodada (2026-10-09/10): **26 testes Rust**, **283 testes .NET**,
 oito fixtures diferenciais aprovadas e 12 cenas GPUI distintas, com código de
 saída zero. Build Release, formatação e Clippy sem avisos passaram. O monitor
 Rust também leu adaptadores e conexões reais sem iniciar uma sessão de roteamento;
@@ -167,7 +208,7 @@ isso valida a coleta local, não a aplicação de políticas. Evidências sob
 | Agente elevado/WFP/limpeza | implementado e compilado; canal/controle testados sem políticas reais |
 | Bandeja e saída segura | port implementado; provas locais com HWND/callbacks reais e sessão simulada |
 | Inicialização com Windows | registrador implementado/testado em chave temporária; disponível só no futuro pacote instalado; logon/remoção pendentes |
-| Ícones por processo | port ainda pendente |
+| Ícones por processo | implementados; cache/recursos testados e prova GPU com executável do próprio build; QA instalado pendente |
 | Qualidade por conexão e alteração da conexão padrão | port ainda pendente; nenhum ensaio ou alteração de métrica realizado |
 | Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port |
 | Instalador, upgrade/remoção, assinatura e publicação | adaptação/validação pendentes; procedimentos atuais continuam valendo |

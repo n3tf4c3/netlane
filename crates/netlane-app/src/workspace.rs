@@ -1,6 +1,7 @@
 use crate::{
     demo,
     desktop::Desktop,
+    executable_icons::ExecutableIcons,
     lifecycle::{ExitDecision, exit_decision},
     settings::{AppSettings, Settings},
     text_input::{TextInput, TextInputEvent},
@@ -72,6 +73,7 @@ pub struct Workspace {
     executable: Entity<TextInput>,
     selected: Vec<String>,
     traffic: TrafficTracker,
+    icons: ExecutableIcons,
     started: Instant,
     controller: Option<netlane_agent::Controller>,
     allow_flags: bool,
@@ -91,6 +93,73 @@ pub struct Workspace {
     proof_session: Option<netlane_agent::SessionState>,
 }
 impl Workspace {
+    #[cfg(feature = "gui-test")]
+    pub fn proof_prepare_icons(&mut self, cx: &mut Context<Self>) {
+        assert!(self.demo && self.controller.is_none());
+        self.icons = ExecutableIcons::new(true);
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        self.policies[0].executable_path = Some(executable.clone());
+        self.policies[0].application_id = "NetLane.exe (fixture)".into();
+        self.snapshot.connections[0].executable = Some(executable);
+        self.snapshot.connections[0].name = "NetLane.exe".into();
+        let missing = self
+            .profile
+            .join("missing-icon-fixture.exe")
+            .to_string_lossy()
+            .into_owned();
+        assert!(!std::path::Path::new(&missing).exists());
+        self.policies[1].executable_path = Some(missing.clone());
+        self.snapshot.connections[1].executable = Some(missing);
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_icons_ready(&self) -> bool {
+        let (count, busy) = self.icons.stats();
+        assert!(count <= 128 && busy <= 2);
+        assert!(
+            self.icons
+                .image(self.policies[1].executable_path.as_deref())
+                .is_none()
+        );
+        self.icons
+            .image(self.policies[0].executable_path.as_deref())
+            .is_some_and(|image| {
+                assert_eq!(image.as_bytes(0).unwrap().len(), 32 * 32 * 4);
+                assert_eq!(
+                    self.icons
+                        .image(self.snapshot.connections[0].executable.as_deref())
+                        .unwrap()
+                        .id,
+                    image.id
+                );
+                true
+            })
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_icon_remote_fallback(&mut self, cx: &mut Context<Self>) {
+        assert!(self.demo);
+        self.policies[0].executable_path = Some(r"\\unreachable-fixture\app.exe".into());
+        self.snapshot.connections[0].executable = self.policies[0].executable_path.clone();
+        assert!(
+            self.icons
+                .image(self.policies[0].executable_path.as_deref())
+                .is_none()
+        );
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_restore_icon_fixture(&mut self, cx: &mut Context<Self>) {
+        let executable = std::env::current_exe()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+        self.policies[0].executable_path = Some(executable.clone());
+        self.snapshot.connections[0].executable = Some(executable);
+        cx.notify();
+    }
     #[cfg(feature = "gui-test")]
     pub fn proof_desktop(&self) -> &Desktop {
         self.desktop.as_ref().unwrap()
@@ -251,6 +320,7 @@ impl Workspace {
             executable,
             selected,
             traffic: TrafficTracker::default(),
+            icons: ExecutableIcons::new(!is_demo),
             started: Instant::now(),
             controller,
             allow_flags: false,
@@ -1107,11 +1177,9 @@ impl Workspace {
                 "Os totais contam apenas esta medição e incluem o tráfego de todos os aplicativos.",
             ))
     }
-    fn connections(&self, cx: &mut Context<Self>) -> gpui::Div {
-        let t = cx.theme().clone();
+    fn connection_rows(&self, cx: &App) -> Vec<&netlane_core::Connection> {
         let query = self.filter.read(cx).text().to_lowercase();
-        let rows: Vec<_> = self
-            .snapshot
+        self.snapshot
             .connections
             .iter()
             .filter(|c| {
@@ -1126,7 +1194,62 @@ impl Workspace {
                 .to_lowercase()
                 .contains(&query)
             })
-            .collect();
+            .collect()
+    }
+    fn application_icon(&self, path: Option<&str>, color: gpui::Hsla) -> gpui::AnyElement {
+        if let Some(image) = self.icons.image(path) {
+            gpui::img(image)
+                .size(px(20.))
+                .flex_none()
+                .into_any_element()
+        } else {
+            icon("desktop_windows", 20., color).into_any_element()
+        }
+    }
+    fn refresh_icons(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let paths = match self.page {
+            Page::Rules => self
+                .policies
+                .iter()
+                .filter_map(|p| p.executable_path.clone())
+                .collect(),
+            Page::Connections => {
+                let rows = self.connection_rows(cx);
+                let page = self.connection_page.min(rows.len().saturating_sub(1) / 50);
+                rows.into_iter()
+                    .skip(page * 50)
+                    .take(50)
+                    .filter_map(|c| c.executable.clone())
+                    .collect()
+            }
+            _ => vec![],
+        };
+        let (requests, dropped) = self.icons.prepare(paths, Instant::now());
+        for image in dropped {
+            cx.drop_image(image, Some(window));
+        }
+        for request in requests {
+            cx.spawn_in(window, async move |this, cx| {
+                let pixels = cx
+                    .background_executor()
+                    .spawn(async move { request.provider.get(&request.path) })
+                    .await;
+                let _ = this.update_in(cx, |ws, w, cx| {
+                    if let Some(old) =
+                        ws.icons
+                            .complete(&request.key, request.ticket, pixels, Instant::now())
+                    {
+                        cx.drop_image(old, Some(w));
+                    }
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
+    }
+    fn connections(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let t = cx.theme().clone();
+        let rows = self.connection_rows(cx);
         let page = self.connection_page.min(rows.len().saturating_sub(1) / 50);
         let mut list = div().w_full().min_w_0().flex().flex_col();
         list = list.child(
@@ -1188,14 +1311,23 @@ impl Workspace {
                             .flex_none()
                             .min_w_0()
                             .flex()
-                            .flex_col()
-                            .gap(px(3.))
-                            .child(c.name.clone())
+                            .items_center()
+                            .gap(px(8.))
+                            .child(self.application_icon(c.executable.as_deref(), t.text_muted))
                             .child(
                                 div()
-                                    .text_size(px(11.))
-                                    .text_color(t.text_muted)
-                                    .child(format!("PID {}", c.pid)),
+                                    .flex_1()
+                                    .min_w_0()
+                                    .flex()
+                                    .flex_col()
+                                    .gap(px(3.))
+                                    .child(c.name.clone())
+                                    .child(
+                                        div()
+                                            .text_size(px(11.))
+                                            .text_color(t.text_muted)
+                                            .child(format!("PID {}", c.pid)),
+                                    ),
                             ),
                     )
                     .child(
@@ -1343,7 +1475,9 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(icon("desktop_windows", 18., t.text_muted))
+                            .child(
+                                self.application_icon(p.executable_path.as_deref(), t.text_muted),
+                            )
                             .child(
                                 div()
                                     .flex_1()
@@ -1542,6 +1676,7 @@ impl Focusable for Workspace {
 }
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.refresh_icons(window, cx);
         let t = cx.theme().clone();
         let settings = AppSettings::get(cx).clone();
         let mut nav = div().flex().flex_col().gap(px(4.)).p(px(10.));
