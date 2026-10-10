@@ -93,6 +93,14 @@ pub fn exclusive_file(path: &Path) -> Result<File> {
 pub fn atomic_write(path: &Path, bytes: &[u8], backup: bool) -> Result<()> {
     atomic_write_inner(path, bytes, backup, None)
 }
+pub fn atomic_write_checked(
+    path: &Path,
+    bytes: &[u8],
+    backup: bool,
+    expected: Option<&str>,
+) -> Result<()> {
+    atomic_write_inner(path, bytes, backup, Some(expected))
+}
 fn atomic_write_inner(
     path: &Path,
     bytes: &[u8],

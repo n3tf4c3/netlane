@@ -16,6 +16,7 @@ gui-test = ["gpui/test-support", "gpui_platform/test-support", "netlane-windows/
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+uuid.workspace = true
 gpui.workspace = true
 gpui_platform.workspace = true
 netlane-core.workspace = true

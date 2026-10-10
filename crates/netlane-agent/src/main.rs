@@ -32,6 +32,15 @@ fn run() -> anyhow::Result<()> {
         return Ok(());
     }
     #[cfg(windows)]
+    if args.len() == 4 && args[0] == "--default-connection-session" {
+        let pid = args[2].parse()?;
+        let start = args[3].parse()?;
+        return tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?
+            .block_on(netlane_agent::default_connection::run(&args[1], pid, start));
+    }
+    #[cfg(windows)]
     if args.len() == 4 && args[0] == "--ui-session" {
         let pid = args[2].parse()?;
         let start = args[3].parse()?;

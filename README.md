@@ -4,6 +4,12 @@ Cada app, sua rota. Projeto experimental Windows para configurar a conexão de r
 
 ## Estado atual
 
+**Conexão padrão em Rust — 2026-10-10:** seleção de cabo/Wi-Fi, confirmação,
+Aplicar e restauração da configuração anterior no painel GPUI. Recuperação
+atômica antes do UAC, proteção contra mudanças externas e reversão de falhas
+portadas. Validação local com métricas simuladas; nenhuma troca real de rede.
+Veja a [implementação e os limites](docs/migracao-rust.md#conexão-padrão-2026-10-10).
+
 **Qualidade por conexão em Rust — 2026-10-10:** controles manuais de Ping/HTTPS,
 balão de latência por placa, classificação e detalhes, com resultados somente em
 memória. Backend Windows portado; validação local com simulações, sem sondagens
