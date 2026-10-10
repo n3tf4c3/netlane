@@ -9,8 +9,8 @@ principal**, Claude e Gemini como alternativas opcionais, e relatórios baseados
 em evidências. A primeira implementação já permite
 importar e analisar PCAP/PCAPNG na prévia Rust, comparar uma referência e conversar
 com Codex após revisar o contexto. Captura Windows com Npcap e rotação tem
-implementação inicial, validada com fonte fictícia. Exportação derivada e
-relatórios continuam planejados.
+implementação inicial, validada com fonte fictícia. Exportação de amostras em
+PCAP/PCAPNG e rascunhos locais Markdown/HTML estão disponíveis na prévia.
 
 ## Estado atual
 
@@ -41,6 +41,17 @@ limiares explícitos. **Captura longa** oferece interface, BPF, disco/duração,
 segmentos PCAP e análise em paralelo com filas limitadas. A prova usa uma fonte
 fictícia; Npcap real e coletas de muitas horas ainda precisam de QA.
 [Reaproveitamento do termIAX](docs/reaproveitamento-termiax.md).
+
+**Exportação e relatórios — 2026-10-10:** em **Pacotes**, exporte o pacote
+selecionado ou as amostras da busca para uma pasta nova, com hash e mapeamento
+dos números no original. Os bytes retidos podem ser menores que o caplen de
+origem; o recibo informa a redução. Em **Codex**, revise o contexto e use
+**Exportar relatório local** sem conectar uma conta, ou **Exportar resposta e
+contexto** após encerrar o turno. Markdown, HTML, JSON e hashes mantêm a pergunta,
+modelo e evidências do envio; referências inválidas bloqueiam a resposta.
+Os arquivos incluem endereços e textos selecionados, e precisam de revisão
+antes de compartilhar. Cópia integral do original, investigação reabrível e PDF
+continuam pendentes. [Procedimento e limites](docs/diagnostico-rede-ia.md#exportação-e-relatórios-locais).
 
 **QA Rust no Sandbox — 2026-10-10:** instalação limpa, UI em demonstração,
 reinstalação da mesma versão e remoção concluídas, com payload/dados fictícios

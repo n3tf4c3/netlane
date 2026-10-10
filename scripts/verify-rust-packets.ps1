@@ -38,11 +38,11 @@ try {
         if ($exitCode -ne 0) { throw "Prévia encerrou com código $exitCode. Consulte stderr.txt." }
     } finally { $process.Dispose() }
     $hashes = @(Get-FileHash -Path (Join-Path $output 'scenes/*.png') -Algorithm SHA256)
-    if ($hashes.Count -ne 14 -or @($hashes.Hash | Select-Object -Unique).Count -ne 14) { throw 'Capturas ausentes ou repetidas.' }
+    if ($hashes.Count -ne 16 -or @($hashes.Hash | Select-Object -Unique).Count -ne 16) { throw 'Capturas ausentes ou repetidas.' }
     $receipt = Join-Path $output 'scenes/verified.txt'
     if (-not (Test-Path -LiteralPath $receipt)) { throw 'Falta o recibo dos exercícios da interface.' }
     $hashes | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $output 'scenes/hashes.json') -Encoding UTF8
-    @{ExitCode=$exitCode;Scenes=14;SyntheticPacketSelection=$true;SyntheticSearch=$true;CompactViewport=$true;DarkLightBranding=$true;CodexContextReviewed=$true;CodexConnectionSimulated=$true;VirtualizedPacketTable=$true;FullDumpAnalysis=$true;BaselineComparison=$true;SimulatedConversation=$true;SyntheticRotatingCollection=$true;NpcapOpened=$false;ClipboardChanged=$false;InferenceSent=$false;NativeFileDialogExercised=$false;NetworkTests=$false;CaptureStarted=$false;RoutingStarted=$false;InstalledProfileAccessed=$false} |
+    @{ExitCode=$exitCode;Scenes=16;SyntheticPacketSelection=$true;SyntheticSearch=$true;CompactViewport=$true;DarkLightBranding=$true;CodexContextReviewed=$true;CodexConnectionSimulated=$true;VirtualizedPacketTable=$true;FullDumpAnalysis=$true;BaselineComparison=$true;SimulatedConversation=$true;SyntheticRotatingCollection=$true;DerivedPacketExports=$true;LocalAndAssistedReports=$true;ImmutableReportSnapshot=$true;NpcapOpened=$false;ClipboardChanged=$false;InferenceSent=$false;NativeFileDialogExercised=$false;NetworkTests=$false;CaptureStarted=$false;RoutingStarted=$false;InstalledProfileAccessed=$false} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'verification.json') -Encoding UTF8
     Get-Content -LiteralPath $receipt -Encoding UTF8
     Write-Output "Prova visual aprovada: $output"

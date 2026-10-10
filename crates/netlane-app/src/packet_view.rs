@@ -197,6 +197,8 @@ impl PacketView {
             return;
         }
         self.data = Some(Inspection::scan(netlane_capture::example_scan()));
+        self.data.as_mut().unwrap().collection_note =
+            Some("Origem: exemplo fictício em memória; nenhum tráfego coletado.\n".into());
         self.label = "Exemplo fictício · nenhum tráfego coletado".into();
         self.status =
             "Dados em memória. Porta DNS é uma estimativa, sem análise do protocolo DNS.".into();
@@ -258,8 +260,10 @@ impl PacketView {
                 .as_ref()
                 .map(|report| netlane_ai::AnalysisEvidence {
                     summary: format!(
-                        "{}{}",
+                        "{}Período completo: {} a {} (UTC, nanossegundos Unix).\n{}",
                         report.summary_text(self.baseline.as_ref()),
+                        report.first_unix_nanos.as_deref().unwrap_or("ausente"),
+                        report.last_unix_nanos.as_deref().unwrap_or("ausente"),
                         data.collection_note.as_deref().unwrap_or("")
                     ),
                     analyzed_packets: report.packets,
@@ -291,9 +295,84 @@ impl PacketView {
         self.codex
             .update(cx, |panel, cx| panel.prepare(context, cx));
     }
+    fn export_selection(
+        &mut self,
+        format: netlane_capture::Format,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if self.busy || self.dialog.load(Ordering::Relaxed) {
+            return;
+        }
+        let selection = match self.selection() {
+            Ok(s) => s,
+            Err(e) => {
+                self.status = e.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        self.dialog.store(true, Ordering::Relaxed);
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Escolha onde salvar uma nova pasta com os pacotes selecionados".into()),
+        });
+        cx.spawn_in(window,async move|this,cx|{
+            let chosen=paths.await;
+            let parent=match chosen { Ok(Ok(Some(paths)))=>paths.into_iter().next(), _=>None };
+            let Some(parent)=parent else {
+                let _=this.update(cx,|this,cx|{this.dialog.store(false,Ordering::Relaxed);cx.notify();});return;
+            };
+            let directory=parent.join(format!("NetLane-pacotes-{}",uuid::Uuid::new_v4()));
+            let destination=directory.clone();
+            let _=this.update(cx,|this,cx|{this.status=format!("Exportando {} amostras em segundo plano…",selection.len());cx.notify();});
+            let result=cx.background_executor().spawn(async move{selection.save(&destination,format)}).await;
+            let _=this.update(cx,|this,cx|{
+                this.dialog.store(false,Ordering::Relaxed);
+                this.status=match result {
+                    Ok(r)=>format!("{} amostras exportadas · {} com bytes reduzidos · {} · recibo com SHA-256 e números de origem.",r.packets.len(),r.clipped_packets,directory.display()),
+                    Err(e)=>format!("Exportação não concluída: {e:#}. Arquivos parciais, se houver, preservados em {}.",directory.display()),
+                };cx.notify();
+            });
+        }).detach();
+    }
     fn cancel(&mut self) {
         self.generation = self.generation.wrapping_add(1);
         self.cancel.store(true, Ordering::Relaxed);
+    }
+    fn selection(&self) -> anyhow::Result<netlane_capture::export::Selection> {
+        let data = self
+            .data
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Abra uma captura primeiro."))?;
+        let indexes = self
+            .selected
+            .map_or_else(|| self.matching.clone(), |i| vec![i]);
+        netlane_capture::export::Selection::new(&data.capture, &indexes)
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_export(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        let selected = self.selection().unwrap();
+        assert_eq!(selected.len(), 1);
+        for (format, name) in [
+            (netlane_capture::Format::Pcap, "pcap"),
+            (netlane_capture::Format::PcapNg, "pcapng"),
+        ] {
+            let r = selected.save(&directory.join(name), format).unwrap();
+            assert_eq!(r.packets.len(), 1);
+            assert!(selected.save(&directory.join(name), format).is_err());
+        }
+        self.selected = None;
+        let filtered = self.selection().unwrap();
+        assert_eq!(filtered.len(), 6);
+        let r = filtered
+            .save(&directory.join("filtered"), netlane_capture::Format::PcapNg)
+            .unwrap();
+        assert_eq!(r.packets.len(), 6);
+        self.status="Prova: seleção e amostras da busca exportadas em PCAP/PCAPNG com recibos; originais preservados.".into();
+        cx.notify();
     }
     fn start_progress(&mut self, cx: &mut Context<Self>) {
         let progress = self.progress.clone();
@@ -371,7 +450,8 @@ impl PacketView {
                 this.busy=false;this.collection.update(cx,|c,cx|c.set_importing(false,cx));
                 if generation!=this.generation {this.status="Leitura cancelada. A captura atual foi preservada.".into();cx.notify();return;}
                 match result {
-                    Ok(data)=>{
+                    Ok(mut data)=>{
+                        data.collection_note=Some("Origem: dump importado. Método/ponto de coleta e perdas de origem não informados pelo importador.\n".into());
                         this.data=Some(data);this.label=label;this.selected=None;this.show_bytes=false;
                         this.status="Dump analisado por completo; a tabela mostra amostras distribuídas. Original preservado.".into();this.refilter(cx);
                     }
@@ -413,6 +493,9 @@ impl PacketView {
     pub fn proof_comparison(&mut self, cx: &mut Context<Self>) {
         self.baseline = Some(netlane_capture::comparison_example(true).report);
         self.data = Some(Inspection::scan(netlane_capture::comparison_example(false)));
+        self.data.as_mut().unwrap().collection_note = Some(
+            "Origem: dump e referência fictícios em memória; nenhum tráfego coletado.\n".into(),
+        );
         self.label = "Dump fictício de 10.000 pacotes · nenhuma coleta real".into();
         self.status = "Análise completa com referência fictícia e amostras distribuídas.".into();
         self.filter.update(cx, |f, cx| f.set_text("", cx));
@@ -535,6 +618,20 @@ impl Render for PacketView {
                             Self::button("prepare-dump-codex", "Preparar análise para Codex", cx)
                                 .on_click(cx.listener(|this, _, _, cx| this.prepare_codex(cx))),
                         )
+                        .child(
+                            Self::button("export-pcapng", "Exportar PCAPNG", cx).on_click(
+                                cx.listener(|this, _, w, cx| {
+                                    this.export_selection(netlane_capture::Format::PcapNg, w, cx)
+                                }),
+                            ),
+                        )
+                        .child(
+                            Self::button("export-pcap", "Exportar PCAP", cx).on_click(cx.listener(
+                                |this, _, w, cx| {
+                                    this.export_selection(netlane_capture::Format::Pcap, w, cx)
+                                },
+                            )),
+                        )
                     })
                     .when(self.baseline.is_some(), |row| {
                         row.child(
@@ -568,6 +665,8 @@ impl Render for PacketView {
             ));
         };
         let capture = &data.capture;
+        root=root.child(div().text_size(px(11.)).text_color(t.text_muted).child(
+            "Exportação: pacote selecionado, ou amostras da busca se não houver seleção. Inclui os bytes retidos (até 2 KiB por amostra), em uma pasta nova com recibo; não copia o dump inteiro."));
         root=root.child(div().p(px(14.)).bg(t.panel).rounded(px(6.)).flex().flex_col().gap(px(5.))
             .child(div().font_weight(FontWeight::SEMIBOLD).child(self.label.clone()))
             .child(format!("{} · {} pacotes · {} interfaces · {} bytes",capture.format.label(),capture.total_packets,capture.interfaces.len(),capture.file_bytes))
