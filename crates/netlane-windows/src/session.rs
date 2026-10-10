@@ -88,7 +88,11 @@ fn user_sid() -> Result<String> {
 }
 pub fn create_pipe(name: &str) -> Result<NamedPipeServer> {
     ensure!(
-        valid_name(name) || name == "NetLane.RoutingSession.v1",
+        valid_name(name)
+            || matches!(
+                name,
+                "NetLane.RoutingSession.v1" | "NetLane.DefaultConnection.v1"
+            ),
         "Nome de canal inválido."
     );
     let path = format!("\\\\.\\pipe\\{name}");
@@ -201,15 +205,65 @@ pub fn running(process: &OwnedHandle) -> bool {
     // SAFETY: Owned process handle remains valid for the nonblocking wait.
     unsafe { WaitForSingleObject(process.as_raw_handle(), 0) == WAIT_TIMEOUT }
 }
+pub fn exit_code(process: &OwnedHandle) -> Result<u32> {
+    let mut code = 0;
+    // SAFETY: Query-only owned process handle and initialized output pointer.
+    ensure!(
+        // SAFETY: Owned process handle and initialized DWORD output remain live.
+        unsafe {
+            windows_sys::Win32::System::Threading::GetExitCodeProcess(
+                process.as_raw_handle(),
+                &mut code,
+            )
+        } != 0,
+        "Saída do componente não confirmada."
+    );
+    Ok(code)
+}
+pub fn require_elevation() -> Result<()> {
+    use windows_sys::Win32::Security::{TOKEN_ELEVATION, TokenElevation};
+    let mut token = ptr::null_mut();
+    // SAFETY: Query-only process token and initialized pointer.
+    ensure!(
+        // SAFETY: Query-only process token with valid output storage.
+        unsafe { OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token) } != 0,
+        "Token indisponível."
+    );
+    // SAFETY: Successful token open transfers ownership to this wrapper.
+    let owned = unsafe { OwnedHandle::from_raw_handle(token) };
+    let mut info = TOKEN_ELEVATION { TokenIsElevated: 0 };
+    let mut size = 0;
+    // SAFETY: TOKEN_ELEVATION buffer is correctly sized and aligned; owned token remains live.
+    let ok = unsafe {
+        GetTokenInformation(
+            owned.as_raw_handle(),
+            TokenElevation,
+            (&mut info as *mut TOKEN_ELEVATION).cast(),
+            std::mem::size_of_val(&info) as u32,
+            &mut size,
+        )
+    };
+    ensure!(
+        ok != 0 && info.TokenIsElevated != 0,
+        "O comando exige autorização do Windows."
+    );
+    Ok(())
+}
 
 pub fn launch_agent(executable: &Path, name: &str) -> Result<(OwnedHandle, u32)> {
+    launch(executable, name, "--ui-session")
+}
+pub fn launch_default_agent(executable: &Path, name: &str) -> Result<(OwnedHandle, u32)> {
+    launch(executable, name, "--default-connection-session")
+}
+fn launch(executable: &Path, name: &str, command: &str) -> Result<(OwnedHandle, u32)> {
     ensure!(valid_name(name), "Nome de canal inválido.");
     ensure!(
         executable.is_absolute() && executable.is_file(),
         "Compile netlane-agent antes de iniciar."
     );
     let arguments = wide(&format!(
-        "--ui-session {name} {} {}",
+        "{command} {name} {} {}",
         std::process::id(),
         current_start()?
     ));

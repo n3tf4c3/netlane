@@ -39,6 +39,19 @@ impl Drop for Inbox {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Message {
+    DefaultHello {
+        version: u32,
+    },
+    DefaultApply {
+        request: netlane_core::default_connection::Request,
+    },
+    DefaultResult {
+        result: netlane_core::default_connection::OperationResult,
+    },
+    DefaultAck,
+    DefaultFinished {
+        accepted: bool,
+    },
     Hello {
         version: u32,
     },

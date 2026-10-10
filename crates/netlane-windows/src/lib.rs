@@ -1,4 +1,6 @@
 #[cfg(windows)]
+pub mod default_connection;
+#[cfg(windows)]
 pub mod desktop;
 pub mod flags;
 #[cfg(windows)]

@@ -1,4 +1,5 @@
 //! Session orchestration. A stopped process is not proof of successful cleanup.
+pub mod default_connection;
 use anyhow::{Result, ensure};
 use netlane_core::{persistence::PolicyFile, planning::PlannedRule};
 use netlane_windows::protocol::{self, Message, VERSION};

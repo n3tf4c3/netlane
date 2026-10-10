@@ -22,6 +22,8 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+#[path = "default_connection_view.rs"]
+mod default_connection_view;
 #[path = "quality_view.rs"]
 mod quality_view;
 
@@ -81,6 +83,15 @@ pub struct Workspace {
     quality_input: Entity<TextInput>,
     quality_status: String,
     quality_dns_busy: bool,
+    default_snapshot: Option<netlane_core::default_connection::Snapshot>,
+    default_journal: Option<netlane_core::default_connection::Journal>,
+    default_revision: Option<String>,
+    default_selected: Option<uuid::Uuid>,
+    default_status: String,
+    default_valid: bool,
+    default_reading: bool,
+    default_busy: bool,
+    default_confirmation: Option<default_connection_view::Confirmation>,
     #[cfg(feature = "gui-test")]
     proof_quality_details: bool,
     started: Instant,
@@ -354,6 +365,15 @@ impl Workspace {
             quality_input,
             quality_status,
             quality_dns_busy: false,
+            default_snapshot: None,
+            default_journal: None,
+            default_revision: None,
+            default_selected: None,
+            default_status: "Aguardando leitura da prioridade IPv4…".into(),
+            default_valid: false,
+            default_reading: false,
+            default_busy: false,
+            default_confirmation: None,
             #[cfg(feature = "gui-test")]
             proof_quality_details: false,
             started: Instant::now(),
@@ -376,6 +396,7 @@ impl Workspace {
             proof_session: None,
         };
         ws.refresh_startup();
+        ws.initialize_default(cx);
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
@@ -668,7 +689,7 @@ impl Workspace {
         cx.notify();
     }
     fn open_theme_picker(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.theme_picker.is_some() {
+        if self.theme_picker.is_some() || self.default_busy || self.default_confirmation.is_some() {
             return;
         }
         let picker = cx.new(|cx| ThemePicker::new(window, cx));
@@ -728,7 +749,12 @@ impl Workspace {
         cx.notify();
     }
     fn stop_session(&mut self, cx: &mut Context<Self>) {
-        if self.waiting_for_stop || self.closing || self.session_state().busy {
+        if self.waiting_for_stop
+            || self.closing
+            || self.session_state().busy
+            || self.default_busy
+            || self.default_confirmation.is_some()
+        {
             return;
         }
         if let Some(controller) = &self.controller
@@ -744,6 +770,8 @@ impl Workspace {
             || self.closing
             || self.file_dialog_open
             || self.theme_picker.is_some()
+            || self.default_busy
+            || self.default_confirmation.is_some()
         {
             return;
         }
@@ -826,12 +854,14 @@ impl Workspace {
             || self.file_dialog_open
             || self.theme_picker.is_some()
             || self.session_state().busy
+            || self.default_busy
+            || self.default_confirmation.is_some()
     }
     fn tray_state(&self) -> netlane_windows::desktop::TrayState {
         let state = self.session_state();
         let blocked = self.desktop_blocked();
         netlane_windows::desktop::TrayState {
-            status: if state.busy || self.waiting_for_stop {
+            status: if state.busy || self.waiting_for_stop || self.default_busy {
                 "Operação em andamento"
             } else if state.running {
                 "Sessão ativa · consulte o diagnóstico"
@@ -1208,6 +1238,7 @@ impl Workspace {
                 "Acompanhe o consumo por interface e escolha a saída dos aplicativos.",
                 cx,
             ))
+            .child(self.default_panel(cx))
             .child(self.quality_panel(cx))
             .child(cards)
             .child(
@@ -1784,11 +1815,16 @@ impl Render for Workspace {
         };
         let mut root = div()
             .id("workspace")
-            .key_context(if self.theme_picker.is_some() || self.closing {
-                "NetLaneOverlay"
-            } else {
-                "NetLane"
-            })
+            .key_context(
+                if self.theme_picker.is_some()
+                    || self.closing
+                    || self.default_confirmation.is_some()
+                {
+                    "NetLaneOverlay"
+                } else {
+                    "NetLane"
+                },
+            )
             .track_focus(&self.focus)
             .size_full()
             .flex()
@@ -1922,6 +1958,9 @@ impl Render for Workspace {
                     })
                     .child("Rust / GPUI"),
             );
+        if self.default_confirmation.is_some() {
+            root = root.child(gpui::deferred(self.default_overlay(cx)));
+        }
         if let Some(picker) = &self.theme_picker {
             root = root.child(gpui::deferred(
                 div()

@@ -17,6 +17,8 @@ flowchart LR
   IPC --> Agent[netlane-agent · sessão elevada]
   Agent --> Core
   Agent --> WFP[netlane-windows · WFP dinâmica]
+  UI --> Recovery[netlane-core · recuperação no perfil Rust]
+  Agent --> Priority[netlane-windows · prioridade IPv4 explícita]
 ```
 
 | Crate | Responsabilidade |
@@ -188,6 +190,62 @@ Referências: [ICMP com origem](https://learn.microsoft.com/en-us/windows/win32/
 [interface por socket](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options)
 e [SNI/validação TLS](https://docs.rs/native-tls/0.2.18/native_tls/struct.TlsConnector.html).
 
+## Conexão padrão (2026-10-10)
+
+**Visão geral → Conexão padrão · IPv4** mostra a prioridade observada, permite
+selecionar cabo/Wi-Fi, atualizar a leitura, aplicar e restaurar a configuração
+anterior. Selecionar não grava métricas. Aplicar/Restaurar abrem confirmação;
+na execução normal, o comando limitado do agente irmão solicita UAC. Abertura,
+`--startup` e atualização apenas leem; não há reaplicação automática.
+Demonstração simula a troca/restauração em memória, identificada no painel,
+sem PowerShell, UAC, perfil real ou arquivo de recuperação.
+
+O port preserva o cálculo da [referência .NET](conexao-padrao.md): soma da
+métrica de rota e interface, prioridade manual 5 para a escolhida e alternativas
+acima do total escolhido. VPN concorrente, destino desconectado, lista inválida,
+identidade/rotas alteradas e diferença entre configuração ativa e salva causam
+recusa. Interfaces físicas sem participação na escolha ficam fora da gravação.
+A leitura inclui rotas padrão de outras interfaces para detectar concorrência.
+
+`default-connection.json` fica somente no perfil Rust. O formato Original,
+Applied, Previous e os campos de métrica são compatíveis com o registro .NET;
+campos adicionais da raiz são preservados, sem importação automática. Gravação
+atômica com backup, revisão e trava por operação guarda os primeiros originais
+antes do UAC. Trocas posteriores mantêm esses originais. Arquivo inválido,
+maior que 64 KiB, removido/alterado externamente ou interface ausente bloqueiam
+a operação, sem substituir o registro. Cancelamento de autorização mantém um
+registro pendente; Restaurar pode eliminá-lo sem UAC se os originais já estiverem
+ativos. Não há restauração automática ao sair. O backup permanece como evidência;
+o leitor não o reaplica automaticamente após apagar o registro principal.
+
+O comando `--default-connection-session` é independente do WFP e compartilha
+com .NET a exclusão `NetLane.DefaultConnection.v1`. O canal local autentica PID
+exato nas duas pontas e PID/data de criação do proprietário; exige token elevado
+e um handshake próprio antes de receber mudanças. Nenhum caminho de recuperação
+entra no agente elevado. Alternativas são elevadas antes de reduzir a escolhida;
+identidade/prioridade são relidas antes de cada escrita. Falha parcial tenta
+reverter em ordem inversa, incluindo atualização parcial de estado ativo/salvo,
+e confere a reversão. Valores externos desconhecidos são preservados.
+
+Perda do canal ou da janela antes do reconhecimento provoca tentativa de
+reversão. O painel exige resposta, reconhecimento final, término do componente
+com código zero para sucesso e uma nova leitura antes de finalizar o registro.
+Perda após reconhecimento conserva o registro pendente para recuperação.
+Sair, X, Minimizar e iniciar/parar a sessão ficam bloqueados durante a operação;
+uma sessão WFP já ativa pode continuar. A gravação usa apenas GUID/inteiro em
+scripts fixos e módulos de sistema NetAdapter/NetTCPIP, via Windows PowerShell
+embutido. Não embarca o runtime .NET 8 do produto antigo. O provedor não muda
+gateway, DNS, estado das placas, IPv6, firewall ou `routepolicies`.
+
+O [Set-NetIPInterface](https://learn.microsoft.com/en-us/powershell/module/nettcpip/set-netipinterface?view=windowsserver2025-ps#-policystore)
+sem PolicyStore atualiza os estados ativo e persistente; a soma de métricas segue
+a [documentação do Windows](https://learn.microsoft.com/en-us/windows-server/networking/technologies/network-subsystem/net-sub-interface-metric).
+O port relê ambos. Prazo de 25 s do provedor e prazos de IPC são lógicos: um
+escritor CIM em andamento não é morto, para evitar corrida com a reversão. Um
+provedor travado pode manter a operação ocupada; duração, cancelamento, UAC,
+restauração real e persistência após reboot exigem QA autorizado separado.
+Nenhuma prioridade aplicada é prova de tráfego ou acesso à Internet.
+
 ## Validação local
 
 ```powershell
@@ -206,12 +264,31 @@ original. Os testes Rust usam sessões WFP e opções simuladas; o teste de pipe
 usa um nome aleatório privado, autentica PID real e não lança agente/UAC/WFP.
 
 A prova visual compila com `gui-test`, abre **somente demonstração**, captura
-18 cenas reais pela GPU GPUI, verifica prévia/cancelamento/confirmação e releitura
+21 cenas reais pela GPU GPUI, verifica prévia/cancelamento/confirmação e releitura
 do tema do disco, edita/salva uma regra em memória e encerra com código zero.
 Também captura fonte máxima, lista compacta e estado vazio na janela mínima.
-O script recusa evidências anteriores e exige hashes distintos das 18 imagens.
+O script recusa evidências anteriores e exige hashes distintos das 21 imagens.
 A inspeção humana dos PNGs complementa as asserções; hash distinto sozinho não
 prova layout correto. O build comum exclui o capturador.
+
+Na etapa de conexão padrão de 2026-10-10: **66 testes Rust aprovados**
+(10 agente, 9 app, 25 core e 22 Windows), formatação, Clippy comum/com `gui-test`
+e build Release aprovados. Testes novos cobrem troca Wi-Fi → cabo → restauração,
+originais persistentes, prioridades de rota, VPN concorrente, cancelamento,
+falha parcial nos dois estados, reversão incompleta, proteção de edição externa,
+identidade/rotas obsoletas, registro .NET, corrupção/limite/revisão e reabertura.
+IPC em memória cobre componente antigo, falso sucesso, canal sem reconhecimento,
+proprietário encerrado e ausência de recibo final. Testes do provedor conferem
+scripts/limites em memória, sem executar PowerShell para escrever métricas.
+
+A prova GPU passa nas 21 cenas, incluindo confirmação, Wi-Fi aplicada/restaurada
+em simulação e bloqueio de saída/minimização. Capturas claro/escuro e janela
+mínima de 1000×640 revisadas; conteúdo abaixo dos controles usa rolagem vertical.
+Evidências finais: `artifacts/rust-default-ui-20261010-final`; as duas provas anteriores
+também passaram e foram preservadas antes de reforçar identidade/revisão.
+Prévia comum: `artifacts/rust-preview-default-20261010`, sem capturador/marcador
+de instalação. Não houve UAC, escrita real de métricas, sessão WFP, sondagem,
+alteração de autorun/IPv6 ou acesso ao perfil instalado. QA real continua pendente.
 
 Na etapa de qualidade de 2026-10-10: **47 testes Rust aprovados** (5 agente,
 7 app, 15 core e 20 Windows). Os novos testes cobrem alvos/preferências .NET,
@@ -273,7 +350,7 @@ isso valida a coleta local, não a aplicação de políticas. Evidências sob
 | Inicialização com Windows | registrador implementado/testado em chave temporária; disponível só no futuro pacote instalado; logon/remoção pendentes |
 | Ícones por processo | implementados; cache/recursos testados e prova GPU com executável do próprio build; QA instalado pendente |
 | Qualidade por conexão | lógica/controles/provedores portados; testes e prova GPU com simulações; sondagens Windows reais e hover/DPI pendentes |
-| Alteração/restauração da conexão padrão | port ainda pendente; nenhuma alteração de métrica realizada |
+| Alteração/restauração da conexão padrão | lógica, recuperação, painel e comando portados; simulações aprovadas; UAC/métricas/reboot reais pendentes |
 | Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port |
 | Instalador, upgrade/remoção, assinatura e publicação | adaptação/validação pendentes; procedimentos atuais continuam valendo |
 | Licenças transitivas e entrega pública | revisão final pendente |
