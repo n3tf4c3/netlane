@@ -1,0 +1,54 @@
+//! Opt-in rendering of the actual GPUI application, with synthetic data only.
+use crate::{
+    settings::AppSettings,
+    theme::{ActiveTheme, Themes},
+    workspace::{Page, Workspace},
+};
+use gpui::{App, WindowHandle, px, size};
+use std::{path::PathBuf, time::Duration};
+pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) {
+    std::fs::create_dir_all(&directory).expect("proof output directory");
+    window.update(cx,|_,w,cx|{
+        cx.spawn_in(w,async move|this,cx|{
+            for (name,page,theme) in [
+                ("01-overview-dark.png",Page::Overview,"NetLane Dark"),
+                ("02-connections-dark.png",Page::Connections,"NetLane Dark"),
+                ("03-rules-dark.png",Page::Rules,"NetLane Dark"),
+                ("04-settings-dark.png",Page::Settings,"NetLane Dark"),
+                ("05-overview-light.png",Page::Overview,"One Light"),
+                ("06-connections-light.png",Page::Connections,"One Light"),
+                ("07-settings-light.png",Page::Settings,"One Light"),
+                ("08-diagnostics-dark.png",Page::Diagnostics,"One Dark Pro"),
+            ]{
+                this.update(cx,|ws,cx|{ws.page=page;Themes::set_active(cx,theme);cx.notify();}).unwrap();
+                cx.background_executor().timer(Duration::from_millis(450)).await;
+                cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
+            }
+            this.update_in(cx,|ws,w,cx|{ws.page=Page::Settings;ws.proof_open_theme_picker(w,cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("09-theme-picker.png")).unwrap();}).unwrap();
+            // Exercise real picker filtering, preview, cancellation, confirmation and persistence.
+            this.update(cx,|ws,cx|ws.proof_theme_filter("Ayu",cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            this.update(cx,|ws,cx|{assert!(cx.theme().name.starts_with("Ayu"));ws.proof_theme_cancel(cx);assert_eq!(cx.theme().name,"One Dark Pro");}).unwrap();
+            this.update_in(cx,|ws,w,cx|ws.proof_open_theme_picker(w,cx)).unwrap();
+            this.update(cx,|ws,cx|ws.proof_theme_filter("One Light",cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            this.update(cx,|ws,cx|{ws.proof_theme_confirm(cx);assert_eq!(AppSettings::get(cx).theme.as_deref(),Some("One Light"));assert_eq!(cx.theme().name,"One Light");assert_eq!(ws.proof_saved_theme().as_deref(),Some("One Light"));}).unwrap();
+            this.update(cx,|ws,cx|{ws.proof_edit_rule(cx);assert!(ws.dirty);ws.proof_save(cx);assert!(!ws.dirty);}).unwrap();
+            cx.update(|w,_|w.resize(size(px(1000.),px(640.)))).unwrap();
+            for (name,page,font,compact,empty) in [
+                ("10-settings-large-text.png",Page::Settings,20,false,false),
+                ("11-connections-compact.png",Page::Connections,13,true,false),
+                ("12-connections-empty.png",Page::Connections,13,false,true),
+            ] {
+                this.update(cx,|ws,cx|{ws.page=page;ws.proof_appearance(font,compact,cx);if empty {ws.snapshot.connections.clear();}cx.notify();}).unwrap();
+                cx.background_executor().timer(Duration::from_millis(450)).await;
+                cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
+            }
+            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 12 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nLarge text, compact layout and empty state captured at minimum window size.\nNo network, WFP session, UAC or installed profile accessed.\n").unwrap();
+            cx.background_executor().timer(Duration::from_millis(250)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);cx.quit();}).unwrap();
+        }).detach();
+    }).unwrap();
+}

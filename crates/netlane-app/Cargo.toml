@@ -1,0 +1,33 @@
+[package]
+name = "netlane-app"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "netlane"
+path = "src/main.rs"
+
+[features]
+gui-test = ["gpui/test-support", "gpui_platform/test-support"]
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+gpui.workspace = true
+gpui_platform.workspace = true
+netlane-core.workspace = true
+netlane-windows.workspace = true
+netlane-agent.workspace = true
+zeroize = "1"
+
+[build-dependencies]
+embed-resource = "3.0"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true
