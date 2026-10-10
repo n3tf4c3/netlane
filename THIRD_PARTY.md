@@ -26,3 +26,9 @@ avisos preservados. `NetLane Dark` adapta os mesmos tokens de aparência; o
 mantém os avisos dos temas. Estes avisos acompanham a prévia local; a revisão
 completa das licenças das dependências transitivas permanece um gate antes de
 distribuição pública.
+
+O builder do instalador Rust coleta também textos/avisos das crates transitivas
+restauradas e suas bibliotecas nativas, em `licenses/crates`, com origem,
+expressão de licença e hashes em `licenses/cargo-licenses.json`. As dependências
+sem texto são listadas em `Issues`; o inventário não inventa licenças nem aprova
+distribuição. Consulte [empacotamento Rust](docs/instalador-rust.md#licenças).
