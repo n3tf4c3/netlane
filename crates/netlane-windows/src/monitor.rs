@@ -2,6 +2,11 @@ use anyhow::Result;
 use netlane_core::NetworkSnapshot;
 
 #[cfg(windows)]
+pub fn adapters() -> Result<Vec<netlane_core::Adapter>> {
+    native::adapters()
+}
+
+#[cfg(windows)]
 pub fn snapshot() -> Result<NetworkSnapshot> {
     native::snapshot()
 }

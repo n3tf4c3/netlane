@@ -31,6 +31,9 @@ try {
     Copy-Item -LiteralPath (Join-Path $root 'assets/icons/LICENSE') -Destination (Join-Path $output 'licenses/material-symbols.txt')
     Copy-Item -LiteralPath (Join-Path $root 'assets/fonts/jetbrains-mono/OFL.txt') -Destination (Join-Path $output 'licenses/jetbrains-mono.txt')
     Copy-Item -LiteralPath (Join-Path $root 'assets/licenses/GPUI-APACHE.txt') -Destination (Join-Path $output 'licenses/gpui.txt')
+    Copy-Item -LiteralPath (Join-Path $root 'assets/licenses/native-tls-MIT.txt') -Destination (Join-Path $output 'licenses/native-tls.txt')
+    Copy-Item -LiteralPath (Join-Path $root 'assets/licenses/schannel-MIT.txt') -Destination (Join-Path $output 'licenses/schannel.txt')
+    Copy-Item -LiteralPath (Join-Path $root 'assets/licenses/httparse-MIT.txt') -Destination (Join-Path $output 'licenses/httparse.txt')
     [IO.File]::WriteAllText((Join-Path $output 'Abrir demonstracao.cmd'), '@echo off' + "`r`n" + 'start "" "%~dp0netlane.exe" --demo' + "`r`n", [Text.Encoding]::ASCII)
     $hashes = @(Get-FileHash -Path (Join-Path $output '*.exe') -Algorithm SHA256 | Select-Object @{Name='Name';Expression={Split-Path -Leaf $_.Path}},Hash)
     @{Version='0.4.0';ChecksSkipped=[bool]$SkipChecks;Installer=$false;Signed=$false;Files=$hashes} |

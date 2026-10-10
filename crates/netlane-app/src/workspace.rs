@@ -22,6 +22,8 @@ use std::{
     path::PathBuf,
     time::{Duration, Instant},
 };
+#[path = "quality_view.rs"]
+mod quality_view;
 
 actions!(workspace, [SelectTheme, SaveRules]);
 pub fn bind_keys(cx: &mut App) {
@@ -74,6 +76,13 @@ pub struct Workspace {
     selected: Vec<String>,
     traffic: TrafficTracker,
     icons: ExecutableIcons,
+    quality: netlane_core::quality::Monitor,
+    quality_preferences: netlane_core::quality::Settings,
+    quality_input: Entity<TextInput>,
+    quality_status: String,
+    quality_dns_busy: bool,
+    #[cfg(feature = "gui-test")]
+    proof_quality_details: bool,
     started: Instant,
     controller: Option<netlane_agent::Controller>,
     allow_flags: bool,
@@ -289,6 +298,25 @@ impl Workspace {
             TextInput::new("", "Pesquisar aplicativos, PID ou endereço…", cx).tab_stop(0)
         });
         let executable = cx.new(|cx| TextInput::new("", "Caminho completo do aplicativo .exe", cx));
+        let (quality_preferences, quality_status) = if is_demo {
+            (
+                netlane_core::quality::Settings::default(),
+                "Desativado · Iniciar usa amostras fictícias.".to_owned(),
+            )
+        } else {
+            match netlane_core::quality::Settings::load(&profile.join("quality-settings.json")) {
+                Ok(value) => (
+                    value,
+                    "Desativado · clique em Iniciar para medir.".to_owned(),
+                ),
+                Err(e) => (
+                    netlane_core::quality::Settings::default(),
+                    format!("Não foi possível ler o destino salvo: {e}. Escolha um destino."),
+                ),
+            }
+        };
+        let quality_input =
+            cx.new(|cx| TextInput::new(&quality_preferences.target, "IPv4 ou site HTTPS", cx));
         let subscription = cx.subscribe(&filter, |ws, _, _, cx| {
             ws.connection_page = 0;
             cx.notify();
@@ -321,6 +349,13 @@ impl Workspace {
             selected,
             traffic: TrafficTracker::default(),
             icons: ExecutableIcons::new(!is_demo),
+            quality: netlane_core::quality::Monitor::default(),
+            quality_preferences,
+            quality_input,
+            quality_status,
+            quality_dns_busy: false,
+            #[cfg(feature = "gui-test")]
+            proof_quality_details: false,
             started: Instant::now(),
             controller,
             allow_flags: false,
@@ -341,6 +376,15 @@ impl Workspace {
             proof_session: None,
         };
         ws.refresh_startup();
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |ws, cx| ws.refresh_quality(cx)).is_err() {
+                    break;
+                }
+            }
+        })
+        .detach();
         if is_demo {
             for sample in 0..30 {
                 let mut snapshot = demo::snapshot();
@@ -377,6 +421,7 @@ impl Workspace {
                                     }
                                     ws.traffic.sample(ws.started.elapsed(), &snapshot.adapters);
                                     ws.snapshot = snapshot;
+                                    ws.sync_quality();
                                 }
                                 Err(e) => {
                                     ws.snapshot = NetworkSnapshot {
@@ -384,6 +429,7 @@ impl Workspace {
                                         ..Default::default()
                                     };
                                     ws.traffic.reset();
+                                    ws.sync_quality();
                                 }
                             }
                             cx.notify();
@@ -665,6 +711,7 @@ impl Workspace {
             }
         }
         self.selected = selected;
+        self.sync_quality();
         cx.notify();
     }
     fn start_session(&mut self, cx: &mut Context<Self>) {
@@ -714,6 +761,7 @@ impl Workspace {
                 return;
             }
             ExitDecision::Quit => {
+                self.quality.stop();
                 cx.quit();
                 return;
             }
@@ -1032,7 +1080,8 @@ impl Workspace {
             }
             cards = cards.child(
                 div()
-                    .w(px(360.))
+                    .w(gpui::relative(0.48))
+                    .min_w(px(300.))
                     .p(px(if settings.compact { 14. } else { 20. }))
                     .bg(t.panel)
                     .rounded(px(8.))
@@ -1046,7 +1095,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .gap(px(10.))
-                            .child(icon("lan", 20., t.accent))
+                            .child(self.quality_indicator(a, cx))
                             .child(
                                 div()
                                     .flex_1()
@@ -1159,6 +1208,7 @@ impl Workspace {
                 "Acompanhe o consumo por interface e escolha a saída dos aplicativos.",
                 cx,
             ))
+            .child(self.quality_panel(cx))
             .child(cards)
             .child(
                 div()

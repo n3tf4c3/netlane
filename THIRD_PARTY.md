@@ -16,6 +16,9 @@ e temas não foram incorporados ao NetLane.
 | Gruvbox | tema de origem morhetz/gruvbox, MIT | `assets/themes/gruvbox/LICENSE` |
 | Material Symbols | Google, Apache-2.0 | `assets/icons/LICENSE` |
 | JetBrains Mono | JetBrains, SIL OFL 1.1 | `assets/fonts/jetbrains-mono/OFL.txt` |
+| native-tls 0.2.18 | rust-native-tls, MIT ou Apache-2.0; MIT escolhida | `assets/licenses/native-tls-MIT.txt` |
+| schannel 0.1.29 | steffengy, MIT; TLS nativo Windows | `assets/licenses/schannel-MIT.txt` |
+| httparse 1.10.1 | Sean McArthur, MIT ou Apache-2.0; MIT escolhida | `assets/licenses/httparse-MIT.txt` |
 
 Os arquivos de cores, ícones e fonte vieram da referência local termIAX com os
 avisos preservados. `NetLane Dark` adapta os mesmos tokens de aparência; o

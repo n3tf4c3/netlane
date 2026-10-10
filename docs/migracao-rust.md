@@ -140,6 +140,54 @@ Referências de implementação: [extração de recursos](https://learn.microsof
 [rasterização do ícone](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-drawiconex)
 e [bitmap DIB](https://learn.microsoft.com/en-us/windows/win32/api/wingdi/nf-wingdi-createdibsection).
 
+## Qualidade por conexão (2026-10-10)
+
+Em **Visão geral → Qualidade por conexão**, escolha Ping (IPv4) ou Site (HTTPS)
+e clique **Iniciar**. A cada abertura, o monitor começa parado, inclusive com
+`--startup`. Tipo/destino são as únicas preferências gravadas no perfil Rust,
+em `quality-settings.json`, após preparação bem-sucedida. O leitor aceita o
+formato .NET (`Mode` numérico ou texto e `Target`), sem importação automática.
+As amostras ficam somente em memória. Em demonstração, Iniciar produz valores
+fictícios identificados e não consulta DNS nem envia sondagens.
+
+Cada placa recebe balão da última tentativa, ícone com cor e classificação
+textual. O tooltip separa média, último valor, falhas, jitter, destino/IPv4 comum,
+origem/índice e idade da atualização. As cores seguem o tema; cor sozinha não
+comunica a classificação. Parar limpa os resultados e cancela a sessão; X e
+Minimizar mantêm a qualidade ativa. Sair cancela o monitor antes de encerrar.
+Uma chamada nativa em andamento pode terminar depois de Parar, mas seu resultado
+é descartado. Os campos ficam recolhidos durante a preparação/medição.
+
+A janela monotônica guarda até 12 tentativas concluídas em 60 segundos, exige
+cinco para classificar e não conecta pares de jitter separados por falha.
+Erros locais e interfaces indisponíveis não contam como tentativas perdidas.
+Mudanças de GUID/LUID/IPv4, remoção/desmarcação, parada ou nova sessão invalidam
+amostras e resultados em voo. Amostras vencidas deixam de produzir verde.
+Há até quatro sondagens concorrentes, com intervalo mínimo de cinco segundos
+por placa e prioridade para interfaces ainda sem amostra; carga pode adiar uma
+nova tentativa. Resultados cancelados continuam ocupando o limite até retornar.
+
+O provedor ICMP usa origem explícita e recusa weak-host send em interfaces
+ativas ou IPv4 duplicado para evitar atribuição ambígua. HTTPS fixa origem e
+`IP_UNICAST_IF`, confirma ambos após conectar, usa HEAD HTTP/1.1 com TLS mínimo
+1.2 e validação Schannel de cadeia/nome. Não usa proxy, cookies nem segue
+redirecionamentos; para nos cabeçalhos, limitados a 16 KiB. Qualquer status HTTP
+válido conta como resposta. DNS resolve um IPv4 comum por sessão, fora do tempo
+HTTPS; não mede DNS por placa. A espera lógica do DNS é de cinco segundos; o
+resolver do sistema pode terminar depois, sem aplicar resultado cancelado.
+ICMP tem timeout de três segundos e o socket HTTPS compartilha prazo de três
+segundos para conexão/I/O; validação nativa de certificados precisa de QA real.
+
+As heurísticas de Ping/HTTPS e sua interpretação seguem a
+[referência .NET](qualidade-conexao.md#medidas-e-interpretação). ICMP pode ser
+filtrado; ausência de ping não afirma queda da Internet. Falhas HTTPS incluem
+TLS/protocolo e não representam perda de pacotes. A função mede o caminho até
+o alvo escolhido, sem mudar rotas, métricas, DNS, IPv6 ou regras dos aplicativos.
+
+Referências: [ICMP com origem](https://learn.microsoft.com/en-us/windows/win32/api/icmpapi/nf-icmpapi-icmpsendecho2ex),
+[interface por socket](https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-ip-socket-options)
+e [SNI/validação TLS](https://docs.rs/native-tls/0.2.18/native_tls/struct.TlsConnector.html).
+
 ## Validação local
 
 ```powershell
@@ -158,12 +206,27 @@ original. Os testes Rust usam sessões WFP e opções simuladas; o teste de pipe
 usa um nome aleatório privado, autentica PID real e não lança agente/UAC/WFP.
 
 A prova visual compila com `gui-test`, abre **somente demonstração**, captura
-14 cenas reais pela GPU GPUI, verifica prévia/cancelamento/confirmação e releitura
+18 cenas reais pela GPU GPUI, verifica prévia/cancelamento/confirmação e releitura
 do tema do disco, edita/salva uma regra em memória e encerra com código zero.
 Também captura fonte máxima, lista compacta e estado vazio na janela mínima.
-O script recusa evidências anteriores e exige hashes distintos das 14 imagens.
+O script recusa evidências anteriores e exige hashes distintos das 18 imagens.
 A inspeção humana dos PNGs complementa as asserções; hash distinto sozinho não
 prova layout correto. O build comum exclui o capturador.
+
+Na etapa de qualidade de 2026-10-10: **47 testes Rust aprovados** (5 agente,
+7 app, 15 core e 20 Windows). Os novos testes cobrem alvos/preferências .NET,
+classificação por protocolo, expiração, jitter, erros locais, parada/reinício,
+mudança de IP, desmarcação/reseleção, resultados atrasados, concorrência e justiça
+do agendamento. As rotinas Windows foram compiladas; testes de ICMP/HTTPS usam
+interpretação de respostas, cabeçalhos em memória e cancelamento antes de I/O.
+A prova GPU gera 18 cenas, incluindo início/parada, Ping/HTTPS fictícios, janela
+mínima e componente de detalhes do tooltip. A prova de bandeja confirma que
+ocultar preserva a qualidade ativa. Hover real pelo mouse, APIs na rede,
+cancelamento nativo sob carga, DHCP/perda de placa e outros DPI são QA separado.
+Evidências finais sob `artifacts/rust-quality-ui-20261010-v2`; a primeira prova
+foi preservada após uma asserção de tema no roteiro, corrigida na segunda. Prévia em
+`artifacts/rust-preview-quality-20261010`. Nenhuma sondagem real, DNS de alvo,
+UAC, WFP, mudança de autorun ou acesso ao perfil instalado nesta validação.
 
 Na etapa dos ícones de 2026-10-10: **36 testes Rust aprovados** (5 agente, 6 app,
 9 core e 16 Windows). Testes adicionais cobrem deduplicação concorrente, limite
@@ -209,7 +272,8 @@ isso valida a coleta local, não a aplicação de políticas. Evidências sob
 | Bandeja e saída segura | port implementado; provas locais com HWND/callbacks reais e sessão simulada |
 | Inicialização com Windows | registrador implementado/testado em chave temporária; disponível só no futuro pacote instalado; logon/remoção pendentes |
 | Ícones por processo | implementados; cache/recursos testados e prova GPU com executável do próprio build; QA instalado pendente |
-| Qualidade por conexão e alteração da conexão padrão | port ainda pendente; nenhum ensaio ou alteração de métrica realizado |
+| Qualidade por conexão | lógica/controles/provedores portados; testes e prova GPU com simulações; sondagens Windows reais e hover/DPI pendentes |
+| Alteração/restauração da conexão padrão | port ainda pendente; nenhuma alteração de métrica realizada |
 | Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port |
 | Instalador, upgrade/remoção, assinatura e publicação | adaptação/validação pendentes; procedimentos atuais continuam valendo |
 | Licenças transitivas e entrega pública | revisão final pendente |
