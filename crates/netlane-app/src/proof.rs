@@ -43,7 +43,20 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
             cx.background_executor().timer(Duration::from_millis(450)).await;
             this.update(cx,|ws,_|assert!(ws.proof_icons_ready())).unwrap();
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("14-connections-icons.png")).unwrap();}).unwrap();
-            this.update_in(cx,|ws,w,cx|{ws.page=Page::Settings;ws.proof_open_theme_picker(w,cx);}).unwrap();
+            this.update(cx,|ws,cx|{ws.page=Page::Overview;Themes::set_active(cx,"NetLane Dark");ws.proof_quality_start(cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("15-quality-dark.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{Themes::set_active(cx,"One Light");ws.page=Page::Overview;cx.notify();}).unwrap();
+            cx.update(|w,_|w.resize(size(px(1000.),px(640.)))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("16-quality-minimum.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{ws.proof_quality_https(cx);ws.proof_quality_details(cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("17-quality-https-details.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|ws.proof_quality_stop(cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("18-quality-stopped.png")).unwrap();}).unwrap();
+            this.update_in(cx,|ws,w,cx|{ws.page=Page::Settings;Themes::set_active(cx,"One Dark Pro");ws.proof_open_theme_picker(w,cx);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(450)).await;
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("09-theme-picker.png")).unwrap();}).unwrap();
             // Exercise real picker filtering, preview, cancellation, confirmation and persistence.
@@ -68,12 +81,13 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
             // Real HWND and tray callback tests, with an in-memory session fixture only.
             let same_rule = this.update(cx,|ws,cx|{
                 assert!(ws.proof_desktop().available());
+                ws.proof_quality_start(cx);
                 ws.proof_edit_rule(cx);
                 ws.proof_desktop().proof_post_command(ProofPanelCommand::Close);
                 ws.policies[0].application_id.clone()
             }).unwrap();
             cx.background_executor().timer(Duration::from_millis(400)).await;
-            this.update(cx,|ws,_|{assert!(!ws.proof_desktop().visible());assert!(ws.dirty);ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
+            this.update(cx,|ws,_|{assert!(!ws.proof_desktop().visible());assert!(ws.dirty);assert!(ws.proof_quality_active());ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(400)).await;
             this.update(cx,|ws,_|{assert!(ws.proof_desktop().visible());assert_eq!(ws.policies[0].application_id,same_rule);assert!(ws.dirty);ws.proof_desktop().proof_post_command(ProofPanelCommand::Minimize);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(400)).await;
@@ -111,7 +125,7 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
             this.update(cx,|ws,cx|{assert!(ws.proof_desktop().visible());assert!(!ws.proof_desktop().available());ws.proof_edit_rule(cx);ws.proof_desktop().proof_post_command(ProofPanelCommand::Close);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(300)).await;
             this.update(cx,|ws,cx|{assert!(ws.proof_exit_confirmation());ws.proof_discard_failure(cx);assert!(ws.proof_exit_confirmation());ws.proof_cancel_exit(cx);ws.proof_save(cx);}).unwrap();
-            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 14 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nNative own-executable icon shared across Rules/Connections; missing and remote paths use fallback.\nLarge text, compact layout and empty state captured at minimum window size.\nStartup path starts hidden and restores the same panel through its own tray callback.\nNative X/minimize/tray restore preserve the same rule and unsaved edits.\nMaximized restore, Exit cancellation, own-icon recreation, failure fallback passed.\nNew edits during simulated cleanup are reconfirmed; missing cleanup receipt blocks Exit.\nBusy session keeps minimized owner visible. Final X without tray exits safely.\nNo network, WFP session, UAC, real autorun or installed profile accessed.\n").unwrap();
+            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 18 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nNative own-executable icon shared across Rules/Connections; missing and remote paths use fallback.\nManual quality Start/Stop, ICMP/HTTPS labels, synthetic window and minimum layout passed; details component rendered; quality survives tray hide.\nLarge text, compact layout and empty state captured at minimum window size.\nStartup path starts hidden and restores the same panel through its own tray callback.\nNative X/minimize/tray restore preserve the same rule and unsaved edits.\nMaximized restore, Exit cancellation, own-icon recreation, failure fallback passed.\nNew edits during simulated cleanup are reconfirmed; missing cleanup receipt blocks Exit.\nBusy session keeps minimized owner visible. Final X without tray exits safely.\nNo network, WFP session, UAC, real autorun or installed profile accessed.\n").unwrap();
             cx.background_executor().timer(Duration::from_millis(250)).await;
             this.update(cx,|ws,_|ws.proof_desktop().proof_post_command(ProofPanelCommand::Close)).unwrap();
         }).detach();

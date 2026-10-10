@@ -4,6 +4,12 @@ Cada app, sua rota. Projeto experimental Windows para configurar a conexão de r
 
 ## Estado atual
 
+**Qualidade por conexão em Rust — 2026-10-10:** controles manuais de Ping/HTTPS,
+balão de latência por placa, classificação e detalhes, com resultados somente em
+memória. Backend Windows portado; validação local com simulações, sem sondagens
+reais. A demonstração identifica os valores fictícios. Veja os limites e gates
+na [migração](docs/migracao-rust.md#qualidade-por-conexão-2026-10-10).
+
 **Migração Rust/GPUI iniciada — 2026-10-09:** nova arquitetura em quatro crates,
 painel no estilo do termIAX, 13 temas claros/escuros, fonte/densidade configuráveis
 e importação explícita de regras para perfil separado. Consulte a

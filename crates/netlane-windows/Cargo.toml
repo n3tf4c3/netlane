@@ -19,6 +19,9 @@ sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, features = ["Win32_Graphics_Gdi"] }
+socket2 = "0.6.5"
+native-tls = "0.2.18"
+httparse = "1.10.1"
 
 [dev-dependencies]
 tempfile.workspace = true
