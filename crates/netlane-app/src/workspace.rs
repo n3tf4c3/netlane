@@ -1,5 +1,7 @@
 use crate::{
     demo,
+    desktop::Desktop,
+    lifecycle::{ExitDecision, exit_decision},
     settings::{AppSettings, Settings},
     text_input::{TextInput, TextInputEvent},
     theme::{ActiveTheme, MONO_FONT, Themes, UI_FONT},
@@ -80,8 +82,53 @@ pub struct Workspace {
     connection_page: usize,
     closing: bool,
     waiting_for_stop: bool,
+    desktop: Option<Desktop>,
+    startup_registration: Option<netlane_windows::startup::StartupRegistration>,
+    startup_enabled: bool,
+    file_dialog_open: bool,
+    hide_pending: bool,
+    #[cfg(feature = "gui-test")]
+    proof_session: Option<netlane_agent::SessionState>,
 }
 impl Workspace {
+    #[cfg(feature = "gui-test")]
+    pub fn proof_desktop(&self) -> &Desktop {
+        self.desktop.as_ref().unwrap()
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_desktop_failure(&mut self) {
+        self.desktop.as_mut().unwrap().simulate_failure();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_set_session(&mut self, state: netlane_agent::SessionState) {
+        assert!(self.demo);
+        self.proof_session = Some(state);
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_exit_pending(&self) -> bool {
+        self.waiting_for_stop
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_exit_confirmation(&self) -> bool {
+        self.closing
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_cancel_exit(&mut self, cx: &mut Context<Self>) {
+        self.closing = false;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_discard_failure(&mut self, cx: &mut Context<Self>) {
+        assert!(self.demo && self.dirty && !self.policy_file.path.exists());
+        let previous = serde_json::to_value(&self.policies).unwrap();
+        std::fs::write(&self.policy_file.path, "{invalid fixture").unwrap();
+        self.demo = false;
+        let discarded = self.discard(cx);
+        self.demo = true;
+        std::fs::remove_file(&self.policy_file.path).unwrap();
+        assert!(!discarded && self.dirty);
+        assert_eq!(serde_json::to_value(&self.policies).unwrap(), previous);
+    }
     #[cfg(feature = "gui-test")]
     pub fn proof_open_theme_picker(&mut self, w: &mut Window, cx: &mut Context<Self>) {
         self.open_theme_picker(w, cx);
@@ -130,6 +177,7 @@ impl Workspace {
     pub fn new(
         profile: PathBuf,
         is_demo: bool,
+        default_profile: bool,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -213,7 +261,16 @@ impl Workspace {
             connection_page: 0,
             closing: false,
             waiting_for_stop: false,
+            desktop: None,
+            startup_registration: (!is_demo && default_profile)
+                .then(netlane_windows::startup::StartupRegistration::current),
+            startup_enabled: false,
+            file_dialog_open: false,
+            hide_pending: false,
+            #[cfg(feature = "gui-test")]
+            proof_session: None,
         };
+        ws.refresh_startup();
         if is_demo {
             for sample in 0..30 {
                 let mut snapshot = demo::snapshot();
@@ -312,6 +369,31 @@ impl Workspace {
         }
         cx.notify();
     }
+    fn discard(&mut self, cx: &mut Context<Self>) -> bool {
+        let discarded = if self.demo {
+            self.policies = demo::policies();
+            self.dirty = false;
+            true
+        } else {
+            match self.policy_file.load() {
+                Ok(saved) => {
+                    self.policies = saved.policies;
+                    self.revision = saved.revision;
+                    self.dirty = false;
+                    self.error = None;
+                    true
+                }
+                Err(e) => {
+                    self.error = Some(format!(
+                        "Não foi possível recarregar as regras salvas; suas edições foram mantidas: {e:#}"
+                    ));
+                    false
+                }
+            }
+        };
+        cx.notify();
+        discarded
+    }
     fn add_rule(&mut self, cx: &mut Context<Self>) {
         let path = self.executable.read(cx).text().trim().to_owned();
         if path.is_empty()
@@ -337,6 +419,10 @@ impl Workspace {
         cx.notify();
     }
     fn browse_application(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.file_dialog_open {
+            return;
+        }
+        self.file_dialog_open = true;
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -344,7 +430,12 @@ impl Workspace {
             prompt: Some("Adicionar aplicativo".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = paths.await
+            let result = paths.await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.file_dialog_open = false;
+                cx.notify();
+            });
+            if let Ok(Ok(Some(paths))) = result
                 && let Some(path) = paths.first()
             {
                 let path = path.to_string_lossy().into_owned();
@@ -358,11 +449,12 @@ impl Workspace {
         .detach();
     }
     fn import_rules(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.demo || self.dirty || !self.policies.is_empty() {
+        if self.demo || self.dirty || !self.policies.is_empty() || self.file_dialog_open {
             self.error = Some("Importe em um perfil vazio, sem alterações pendentes.".to_owned());
             cx.notify();
             return;
         }
+        self.file_dialog_open = true;
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
             directories: false,
@@ -370,7 +462,9 @@ impl Workspace {
             prompt: Some("Importar arquivo de regras JSON".into()),
         });
         cx.spawn_in(window, async move |this,cx| {
-            if let Ok(Ok(Some(paths))) = paths.await && let Some(path) = paths.first() {
+            let result = paths.await;
+            let _ = this.update(cx, |ws, cx| { ws.file_dialog_open = false; cx.notify(); });
+            if let Ok(Ok(Some(paths))) = result && let Some(path) = paths.first() {
                 let imported = PolicyFile::new(path).load();
                 let _ = this.update(cx, |ws,cx| {
                     if ws.dirty || !ws.policies.is_empty() {
@@ -398,6 +492,10 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.file_dialog_open {
+            return;
+        }
+        self.file_dialog_open = true;
         let application = self.policies[index].application_id.clone();
         let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
             files: true,
@@ -406,7 +504,12 @@ impl Workspace {
             prompt: Some("Associar executável à regra".into()),
         });
         cx.spawn_in(window, async move |this, cx| {
-            if let Ok(Ok(Some(paths))) = paths.await
+            let result = paths.await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.file_dialog_open = false;
+                cx.notify();
+            });
+            if let Ok(Ok(Some(paths))) = result
                 && let Some(path) = paths.first()
             {
                 let path = path.to_string_lossy().into_owned();
@@ -495,6 +598,9 @@ impl Workspace {
         cx.notify();
     }
     fn start_session(&mut self, cx: &mut Context<Self>) {
+        if self.desktop_blocked() {
+            return;
+        }
         if self.dirty {
             self.error = Some("Salve as alterações antes de iniciar.".to_owned());
         } else if let Some(controller) = &self.controller
@@ -505,6 +611,9 @@ impl Workspace {
         cx.notify();
     }
     fn stop_session(&mut self, cx: &mut Context<Self>) {
+        if self.waiting_for_stop || self.closing || self.session_state().busy {
+            return;
+        }
         if let Some(controller) = &self.controller
             && let Err(e) = controller.stop()
         {
@@ -513,18 +622,34 @@ impl Workspace {
         cx.notify();
     }
     pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.waiting_for_stop {
+        self.restore_panel();
+        if self.waiting_for_stop
+            || self.closing
+            || self.file_dialog_open
+            || self.theme_picker.is_some()
+        {
             return;
         }
-        if self.dirty {
-            self.closing = true;
-            cx.notify();
-            return;
+        match exit_decision(self.dirty, &self.session_state()) {
+            ExitDecision::Busy => return,
+            ExitDecision::ConfirmEdits => {
+                self.closing = true;
+                cx.notify();
+                return;
+            }
+            ExitDecision::CleanupUnconfirmed => {
+                self.page = Page::Diagnostics;
+                self.error = Some("A limpeza da sessão não foi confirmada. Consulte o diagnóstico; o painel continuará disponível.".to_owned());
+                cx.notify();
+                return;
+            }
+            ExitDecision::Quit => {
+                cx.quit();
+                return;
+            }
+            ExitDecision::StopAndWait => {}
         }
-        if self.controller.as_ref().is_some_and(|c| {
-            let s = c.state();
-            s.running || s.busy
-        }) {
+        {
             self.stop_session(cx);
             self.waiting_for_stop = true;
             self.notice = Some("Aguardando o encerramento seguro da sessão…".to_owned());
@@ -534,20 +659,14 @@ impl Workspace {
                     cx.background_executor()
                         .timer(Duration::from_millis(100))
                         .await;
-                    let Ok(done) = this.update(cx, |ws, cx| {
-                        let state = ws
-                            .controller
-                            .as_ref()
-                            .map(|c| c.state())
-                            .unwrap_or_default();
+                    let Ok(done) = this.update_in(cx, |ws, window, cx| {
+                        let state = ws.session_state();
                         if !state.running && !state.busy {
                             ws.waiting_for_stop = false;
-                            if state.cleanup_confirmed {
-                                cx.quit();
-                            } else {
-                                ws.error = Some(state.detail);
-                                cx.notify();
-                            }
+                            ws.notice = None;
+                            // Same guard as the first request: edits made during Stop must
+                            // be confirmed again, and an unconfirmed cleanup cannot be bypassed.
+                            ws.request_close(window, cx);
                             return true;
                         }
                         if Instant::now() >= deadline {
@@ -567,9 +686,214 @@ impl Workspace {
                 }
             })
             .detach();
-        } else {
-            cx.quit();
         }
+    }
+    fn session_state(&self) -> netlane_agent::SessionState {
+        #[cfg(feature = "gui-test")]
+        if let Some(state) = &self.proof_session {
+            return state.clone();
+        }
+        self.controller
+            .as_ref()
+            .map(|c| c.state())
+            .unwrap_or_else(|| netlane_agent::SessionState {
+                cleanup_confirmed: true,
+                detail: "Demonstração com dados fictícios. Roteamento indisponível.".to_owned(),
+                ..Default::default()
+            })
+    }
+    fn desktop_blocked(&self) -> bool {
+        self.closing
+            || self.waiting_for_stop
+            || self.file_dialog_open
+            || self.theme_picker.is_some()
+            || self.session_state().busy
+    }
+    fn tray_state(&self) -> netlane_windows::desktop::TrayState {
+        let state = self.session_state();
+        let blocked = self.desktop_blocked();
+        netlane_windows::desktop::TrayState {
+            status: if state.busy || self.waiting_for_stop {
+                "Operação em andamento"
+            } else if state.running {
+                "Sessão ativa · consulte o diagnóstico"
+            } else if !state.cleanup_confirmed {
+                "Limpeza não confirmada"
+            } else if self.demo {
+                "Demonstração · sessão indisponível"
+            } else {
+                "Sessão parada"
+            }
+            .to_owned(),
+            enabled_rules: self.policies.iter().filter(|p| p.enabled).count(),
+            total_rules: self.policies.len(),
+            dirty: self.dirty,
+            can_start: !blocked
+                && !self.demo
+                && !self.dirty
+                && !state.running
+                && state.cleanup_confirmed,
+            can_stop: !blocked && state.running,
+            can_exit: !blocked,
+        }
+    }
+    pub fn install_desktop(&mut self, startup: bool, window: &mut Window, cx: &mut Context<Self>) {
+        match Desktop::new(window, self.tray_state()) {
+            Ok(desktop) => {
+                self.desktop = Some(desktop);
+                if startup {
+                    self.request_hide(window, cx);
+                }
+            }
+            Err(e) => {
+                self.error = Some(format!(
+                    "Bandeja indisponível: {e:#}. O painel permanece na barra de tarefas."
+                ));
+                window.activate_window();
+            }
+        }
+        let subscription = cx.observe_window_activation(window, |ws, window, cx| {
+            if window.is_window_active() {
+                ws.refresh_startup();
+                cx.notify();
+            }
+        });
+        self._subscriptions.push(subscription);
+        cx.spawn_in(window, async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(100))
+                    .await;
+                if this
+                    .update_in(cx, |ws, w, cx| ws.poll_desktop(w, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+    pub fn request_hide(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.desktop_blocked() {
+            self.restore_panel();
+            return;
+        }
+        if let Some(desktop) = &self.desktop
+            && desktop.available()
+        {
+            let _ = desktop;
+            self.hide_pending = true;
+            let weak = cx.entity().downgrade();
+            window.defer(cx, move |_, cx| {
+                let _ = weak.update(cx, |ws, _| {
+                    if ws.hide_pending && !ws.desktop_blocked() {
+                        ws.hide_pending = false;
+                        if let Some(desktop) = &ws.desktop
+                            && desktop.available()
+                        {
+                            desktop.hide();
+                        }
+                    }
+                });
+            });
+        } else {
+            self.request_close(window, cx);
+        }
+    }
+    fn restore_panel(&mut self) {
+        self.hide_pending = false;
+        if let Some(desktop) = &self.desktop {
+            desktop.restore();
+        }
+    }
+    fn poll_desktop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        use netlane_windows::desktop::TrayAction;
+        let state = self.tray_state();
+        let actions = self
+            .desktop
+            .as_mut()
+            .map(|d| d.poll(state))
+            .unwrap_or_default();
+        for action in actions {
+            match action {
+                TrayAction::Unavailable => {
+                    self.error = Some("A bandeja ficou indisponível. O painel foi restaurado na barra de tarefas.".to_owned());
+                    cx.notify();
+                }
+                TrayAction::Open => self.restore_panel(),
+                TrayAction::Diagnostics => {
+                    if !self.closing && !self.file_dialog_open {
+                        self.restore_panel();
+                        self.page = Page::Diagnostics;
+                        cx.notify();
+                    }
+                }
+                TrayAction::Start => {
+                    if self.tray_state().can_start {
+                        self.restore_panel();
+                        self.page = Page::Diagnostics;
+                        self.notice = Some("Revise as regras e a autorização temporária; use Iniciar sessão para solicitar UAC.".to_owned());
+                        cx.notify();
+                    }
+                }
+                TrayAction::Stop => {
+                    if self.tray_state().can_stop {
+                        self.restore_panel();
+                        self.page = Page::Diagnostics;
+                        self.stop_session(cx);
+                    }
+                }
+                TrayAction::Exit => {
+                    if self.tray_state().can_exit {
+                        self.request_close(window, cx);
+                    }
+                }
+            }
+        }
+        if self
+            .desktop
+            .as_ref()
+            .is_some_and(|d| d.available() && d.minimized())
+        {
+            if self.desktop_blocked() {
+                self.restore_panel();
+            } else {
+                self.request_hide(window, cx);
+            }
+        }
+    }
+    fn refresh_startup(&mut self) {
+        match self
+            .startup_registration
+            .as_ref()
+            .map(|r| r.enabled())
+            .transpose()
+        {
+            Ok(enabled) => self.startup_enabled = enabled.unwrap_or(false),
+            Err(e) => {
+                self.startup_enabled = false;
+                self.error = Some(format!("Inicialização: {e:#}"));
+            }
+        }
+    }
+    fn toggle_startup(&mut self, cx: &mut Context<Self>) {
+        if let Some(registration) = &self.startup_registration
+            && registration.available()
+        {
+            match registration.set_enabled(!self.startup_enabled) {
+                Ok(()) => {
+                    self.refresh_startup();
+                    self.notice =
+                        Some("Preferência de inicialização confirmada pelo Windows.".to_owned());
+                }
+                Err(e) => {
+                    self.error = Some(format!("Não foi possível alterar a inicialização: {e:#}"))
+                }
+            }
+        }
+        cx.notify();
     }
     fn button(
         &self,
@@ -1148,8 +1472,7 @@ impl Workspace {
                     .when(self.dirty, |d| {
                         d.child(self.button("discard", "Descartar alterações", cx).on_click(
                             cx.listener(|ws, _, _, cx| {
-                                ws.dirty = false;
-                                ws.reload(cx);
+                                ws.discard(cx);
                             }),
                         ))
                     }),
@@ -1201,6 +1524,15 @@ impl Workspace {
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("NetLane · 0.4.0 Rust"))
                 .child(div().text_color(t.text_muted).child(format!("Interface GPUI · aparência {:?}. Preferências salvas neste perfil.",t.appearance)))
                 .child(div().font_family(MONO_FONT).text_size(px(11.)).text_color(t.text_muted).child(self.profile.display().to_string())))
+            .child(div().p(px(20.)).bg(t.panel).rounded(px(6.)).border_1().border_color(t.border).flex().flex_col().gap(px(12.))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("Bandeja e inicialização"))
+                .child(div().text_color(t.text_muted).child("X e Minimizar mantêm o painel na bandeja, com suas edições. Use Sair para encerrar com segurança."))
+                .child(self.button("startup",if self.startup_enabled { "✓ Abrir com o Windows" } else { "Abrir com o Windows" },cx)
+                    .when(self.startup_registration.as_ref().is_none_or(|r|!r.available()),|d|d.text_color(t.text_disabled).cursor_default())
+                    .on_click(cx.listener(|ws,_,_,cx|ws.toggle_startup(cx))))
+                .child(div().text_color(t.text_muted).child(if self.startup_registration.as_ref().is_some_and(|r|r.available()) {
+                    "Ao entrar no Windows, abre na bandeja em observação. Iniciar roteamento continua sendo uma ação manual."
+                } else { "A inicialização estará disponível no pacote Rust instalado. Demonstrações, builds de desenvolvimento e perfis alternativos não registram inicialização." })))
     }
 }
 impl Focusable for Workspace {
@@ -1456,9 +1788,10 @@ impl Render for Workspace {
                             .child(
                                 self.button("close-discard", "Descartar e sair", cx)
                                     .on_click(cx.listener(|ws, _, w, cx| {
-                                        ws.dirty = false;
-                                        ws.closing = false;
-                                        ws.request_close(w, cx);
+                                        if ws.discard(cx) {
+                                            ws.closing = false;
+                                            ws.request_close(w, cx);
+                                        }
                                     })),
                             )
                             .child(
