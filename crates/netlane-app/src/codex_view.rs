@@ -12,6 +12,10 @@ use netlane_ai::{
     Context as EvidenceContext,
     codex::{Probe, ProbeState},
 };
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
 use std::{path::PathBuf, time::Duration};
 pub struct ContextPrepared;
 pub struct CodexView {
@@ -36,11 +40,18 @@ pub struct CodexView {
     answering: bool,
     answer: String,
     sent_context: Option<EvidenceContext>,
+    sent_report: Option<netlane_ai::report::Draft>,
+    dialog: Arc<AtomicBool>,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<ContextPrepared> for CodexView {}
 impl CodexView {
-    pub fn new(demo: bool, profile: PathBuf, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        demo: bool,
+        profile: PathBuf,
+        dialog: Arc<AtomicBool>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let problem =
             cx.new(|cx| TextInput::new("", "Descreva o problema observado neste computador", cx));
         let question = cx.new(|cx| {
@@ -93,6 +104,8 @@ impl CodexView {
             answering: false,
             answer: String::new(),
             sent_context: None,
+            sent_report: None,
+            dialog,
             _subscriptions: subscriptions,
         }
     }
@@ -192,6 +205,7 @@ impl CodexView {
         self.conversation = self.conversation.wrapping_add(1);
         self.answer.clear();
         self.sent_context = None;
+        self.sent_report = None;
     }
     fn connect_agent(&mut self, cx: &mut Context<Self>) {
         if self.demo {
@@ -292,6 +306,7 @@ impl CodexView {
                 self.agent_ready = false;
                 self.answering = false;
                 self.answer.clear();
+                self.sent_report = None;
                 self.agent_status = "Conta desconectada do perfil NetLane.".into();
             }
             AgentEvent::Ready { agent } => {
@@ -311,6 +326,16 @@ impl CodexView {
             }
             AgentEvent::Done { conversation, note } if conversation == self.conversation => {
                 self.answering = false;
+                if let Some(r) = self.sent_report.as_mut().and_then(|d| d.response.as_mut()) {
+                    r.status = if self.demo {
+                        "Resposta fictícia; nenhuma inferência enviada."
+                    } else if note.is_some() {
+                        "Turno encerrado com aviso; pode conter resposta parcial."
+                    } else {
+                        "Turno concluído; conteúdo ainda requer revisão."
+                    }
+                    .into();
+                }
                 self.status = note.unwrap_or_else(|| {
                     "Resposta concluída. Revise fatos, hipóteses e referências.".into()
                 });
@@ -325,12 +350,20 @@ impl CodexView {
                 message,
             } if conversation.is_none_or(|id| id == self.conversation) => {
                 self.answering = false;
+                if let Some(r) = self.sent_report.as_mut().and_then(|d| d.response.as_mut()) {
+                    r.status = "Falha no turno; resposta parcial.".into();
+                }
                 self.status = message;
             }
             AgentEvent::Blocked { conversation, what } if conversation == self.conversation => {
                 self.status = format!("Capacidade recusada: {what}. Encerrando o agente.");
             }
             AgentEvent::Closed { message } => {
+                if self.answering
+                    && let Some(r) = self.sent_report.as_mut().and_then(|d| d.response.as_mut())
+                {
+                    r.status = "Agente encerrado; resposta parcial.".into();
+                }
                 self.agent = None;
                 self.agent_events = None;
                 self.agent_ready = false;
@@ -365,9 +398,27 @@ impl CodexView {
             cx.notify();
             return;
         }
-        self.sent_context = Some(context.clone());
-        self.answer.clear();
+        let sent_report = netlane_ai::report::Draft {
+            context: context.clone(),
+            problem: self.problem.read(cx).text().into(),
+            question: self.question.read(cx).text().into(),
+            response: Some(netlane_ai::report::Response {
+                provider: if self.demo { "Codex simulado" } else { "Codex" }.into(),
+                model: if self.demo {
+                    "fictício".into()
+                } else {
+                    self.model.as_ref().map_or("não informado".into(), |m| {
+                        format!("{} (esforço {})", m.model, m.effort)
+                    })
+                },
+                status: "Turno em andamento.".into(),
+                text: String::new(),
+            }),
+        };
         if self.demo {
+            self.sent_context = Some(context.clone());
+            self.sent_report = Some(sent_report);
+            self.answer.clear();
             self.preview = None;
             let number = context.packets[0].number;
             let hash = context.sha256.clone();
@@ -386,6 +437,9 @@ impl CodexView {
                 text: prompt,
             }) {
                 Ok(()) => {
+                    self.sent_context = Some(context.clone());
+                    self.sent_report = Some(sent_report);
+                    self.answer.clear();
                     self.preview = None;
                     self.answering = true;
                     self.status = "Analisando o contexto revisado…".into();
@@ -394,6 +448,74 @@ impl CodexView {
             }
         }
         cx.notify();
+    }
+    fn report_draft(
+        &self,
+        include_answer: bool,
+        cx: &App,
+    ) -> anyhow::Result<netlane_ai::report::Draft> {
+        if include_answer {
+            anyhow::ensure!(
+                !self.answering,
+                "Aguarde o encerramento do turno antes de exportar."
+            );
+            let mut draft = self
+                .sent_report
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Nenhuma resposta recebida."))?;
+            draft.response.as_mut().unwrap().text = self.answer.clone();
+            draft.validate()?;
+            Ok(draft)
+        } else {
+            let context = self
+                .evidence
+                .clone()
+                .ok_or_else(|| anyhow::anyhow!("Prepare as evidências primeiro."))?;
+            let problem = self.problem.read(cx).text().to_owned();
+            let question = self.question.read(cx).text().to_owned();
+            let prompt = context.prompt(&problem, &question)?;
+            anyhow::ensure!(
+                self.preview.as_ref() == Some(&prompt),
+                "Revise o contexto atualizado antes de exportar o relatório local."
+            );
+            Ok(netlane_ai::report::Draft {
+                context,
+                problem,
+                question,
+                response: None,
+            })
+        }
+    }
+    fn export_report(&mut self, include_answer: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.load(Ordering::Relaxed) {
+            return;
+        }
+        let draft = match self.report_draft(include_answer, cx) {
+            Ok(d) => d,
+            Err(e) => {
+                self.status = format!("Relatório recusado: {e:#}");
+                cx.notify();
+                return;
+            }
+        };
+        self.dialog.store(true, Ordering::Relaxed);
+        let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
+            files: false,
+            directories: true,
+            multiple: false,
+            prompt: Some("Escolha onde salvar uma nova pasta de relatório Markdown e HTML".into()),
+        });
+        cx.spawn_in(window,async move|this,cx|{
+            let parent=match paths.await {Ok(Ok(Some(paths)))=>paths.into_iter().next(),_=>None};
+            let Some(parent)=parent else {let _=this.update(cx,|this,cx|{this.dialog.store(false,Ordering::Relaxed);cx.notify();});return;};
+            let directory=parent.join(format!("NetLane-relatorio-{}",uuid::Uuid::new_v4()));let destination=directory.clone();
+            let _=this.update(cx,|this,cx|{this.status="Salvando rascunho e contexto em segundo plano…".into();cx.notify();});
+            let result=cx.background_executor().spawn(async move{draft.save(&destination)}).await;
+            let _=this.update(cx,|this,cx|{
+                this.dialog.store(false,Ordering::Relaxed);
+                this.status=match result {Ok(_)=>format!("Rascunho Markdown/HTML, contexto e hashes salvos em {}. Revise antes de compartilhar; inclui endereços e textos selecionados.",directory.display()),Err(e)=>format!("Relatório não concluído: {e:#}. Arquivos parciais, se houver, preservados em {}.",directory.display())};cx.notify();
+            });
+        }).detach();
     }
     fn cycle_model(&mut self, cx: &mut Context<Self>) {
         if self.answering || self.models.is_empty() {
@@ -515,6 +637,34 @@ impl CodexView {
                 && c.validate_references(&self.answer).is_ok()
         }) && self.answer.contains("Demonstração")
     }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_report(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        let original = self.report_draft(true, cx).unwrap();
+        self.question.update(cx, |q, cx| {
+            q.set_text("Pergunta alterada depois do envio", cx)
+        });
+        let snapshot = self.report_draft(true, cx).unwrap();
+        assert_eq!(snapshot.question, original.question);
+        assert_eq!(snapshot.context, original.context);
+        assert!(
+            snapshot
+                .response
+                .as_ref()
+                .unwrap()
+                .provider
+                .contains("simulado")
+        );
+        let receipt = snapshot.save(&directory.join("assisted")).unwrap();
+        assert!(receipt.references_checked);
+        assert!(self.report_draft(false, cx).is_err());
+        self.review(cx);
+        let local = self.report_draft(false, cx).unwrap();
+        assert!(local.response.is_none());
+        assert_eq!(local.question, "Pergunta alterada depois do envio");
+        local.save(&directory.join("local")).unwrap();
+        self.status="Prova: rascunhos Markdown/HTML e hashes salvos. A resposta conserva o contexto/pergunta do envio; o relatório local usa o contexto revisado atual.".into();
+        cx.notify();
+    }
 }
 impl Render for CodexView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
@@ -545,6 +695,7 @@ impl Render for CodexView {
                 .child(div().flex().flex_wrap().gap(px(8.))
                     .child(Self::button("codex-review","Revisar contexto",cx).on_click(cx.listener(|this,_,_,cx|this.review(cx))))
                     .child(Self::button("codex-copy","Copiar para Codex",cx).on_click(cx.listener(|this,_,_,cx|this.copy(cx))))
+                    .child(Self::button("codex-report-local","Exportar relatório local",cx).on_click(cx.listener(|this,_,w,cx|this.export_report(false,w,cx))))
                     .child(Self::button("codex-send",if self.answering {"Analisando…"}else if self.demo {"Simular análise"}else{"Enviar contexto revisado"},cx).on_click(cx.listener(|this,_,_,cx|this.send(cx))))
                     .when(self.answering,|d|d.child(Self::button("codex-interrupt","Interromper resposta",cx).on_click(cx.listener(|this,_,_,cx|{this.agent_command(Command::Cancel {conversation:this.conversation},cx);this.status="Interrupção solicitada. Aguardando encerramento do turno…".into();cx.notify();}))))
                     .child(Self::button("codex-reset","Nova análise",cx).on_click(cx.listener(|this,_,_,cx|this.reset(cx)))));
@@ -585,10 +736,13 @@ impl Render for CodexView {
             .child(div().text_size(px(11.)).text_color(t.text_muted).child("Perfil próprio, catálogo sem ferramentas e conversa em memória. Enviar usa sua conta; o acesso a cada modelo é confirmado pelo provedor.")));
         if !self.answer.is_empty() {
             view=view.child(div().flex().flex_col().gap(px(8.))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child("Resposta à pergunta atual"))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child("Resposta ao último contexto enviado"))
+                .when(self.sent_report.is_some(),|d|d.child(div().text_color(t.text_muted).child(format!("Pergunta no envio: {}",self.sent_report.as_ref().unwrap().question.chars().take(256).collect::<String>()))))
                 .child(div().id("codex-answer-scroll").max_h(px(260.)).overflow_y_scroll().p(px(14.)).bg(t.panel).rounded(px(6.)).child(self.visible_answer().to_owned()))
                 .child(div().text_size(px(11.)).text_color(t.text_muted).child(format!("{} bytes na resposta · visor limitado aos últimos 16 KiB; a cópia inclui a resposta completa.",self.answer.len())))
-                .child(Self::button("codex-copy-answer","Copiar resposta",cx).on_click(cx.listener(|this,_,_,cx|{cx.write_to_clipboard(ClipboardItem::new_string(this.answer.clone()));this.status="Resposta copiada. Revise as referências antes de usar em relatório.".into();cx.notify();}))));
+                .child(div().flex().flex_wrap().gap(px(8.))
+                    .child(Self::button("codex-copy-answer","Copiar resposta",cx).on_click(cx.listener(|this,_,_,cx|{cx.write_to_clipboard(ClipboardItem::new_string(this.answer.clone()));this.status="Resposta copiada. Revise as referências antes de usar em relatório.".into();cx.notify();})))
+                    .child(Self::button("codex-report-answer","Exportar resposta e contexto",cx).on_click(cx.listener(|this,_,w,cx|this.export_report(true,w,cx))))));
         }
         let busy = self.probe.as_ref().is_some_and(|p| !p.state().done);
         view.child(div().p(px(16.)).bg(t.panel).rounded(px(6.)).flex().flex_col().gap(px(10.))

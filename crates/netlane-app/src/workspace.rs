@@ -318,6 +318,17 @@ impl Workspace {
         self.codex.read(cx).proof_answer()
     }
     #[cfg(feature = "gui-test")]
+    pub fn proof_exports(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        std::fs::create_dir(directory).unwrap();
+        self.packets
+            .update(cx, |p, cx| p.proof_export(directory, cx));
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_reports(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        std::fs::create_dir(directory).unwrap();
+        self.codex.update(cx, |p, cx| p.proof_report(directory, cx));
+    }
+    #[cfg(feature = "gui-test")]
     pub fn proof_collection_start(&mut self, cx: &mut Context<Self>) {
         self.page = Page::Packets;
         self.packets.update(cx, |p, cx| p.proof_collection(cx));
@@ -420,7 +431,8 @@ impl Workspace {
         };
         let packet_dialog = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let capture_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let codex = cx.new(|cx| CodexView::new(is_demo, profile.clone(), cx));
+        let codex =
+            cx.new(|cx| CodexView::new(is_demo, profile.clone(), packet_dialog.clone(), cx));
         let codex_subscription = cx.subscribe(&codex, |ws, _, _: &ContextPrepared, cx| {
             ws.page = Page::Codex;
             cx.notify();

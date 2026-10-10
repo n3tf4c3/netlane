@@ -57,7 +57,13 @@ pub fn packets(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App
             }
             this.update(cx,|ws,cx|assert!(ws.proof_collection_valid(cx))).unwrap();
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("14-rotating-synthetic-complete.png")).unwrap();}).unwrap();
-            std::fs::write(directory.join("verified.txt"),"Synthetic packet selection, search, empty result, compact viewport, dark/light branding and reviewed Codex context passed. Virtualized samples, full 10000-packet statistics, baseline comparison and simulated conversation with validated references passed. Synthetic rotating collection wrote 300 records, closed its source and analyzed completed PCAP segments. Clipboard was not changed. No inference, real capture, network, routing or installed profile accessed.\n").unwrap();
+            this.update(cx,|ws,cx|{ws.proof_packets("UDP",true,cx);ws.proof_exports(&directory.join("exports"),cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("15-derived-export.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{ws.proof_long_dump(cx);ws.proof_analyze_dump(cx);ws.proof_reports(&directory.join("reports"),cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("16-report-snapshot.png")).unwrap();}).unwrap();
+            std::fs::write(directory.join("verified.txt"),"Synthetic packet selection, search, empty result, compact viewport, dark/light branding and reviewed Codex context passed. Virtualized samples, full 10000-packet statistics, baseline comparison and simulated conversation with validated references passed. Synthetic rotating collection wrote 300 records, closed its source and analyzed completed PCAP segments. Derived PCAP/PCAPNG selection/filter exports and no-overwrite receipts passed. Local and assisted Markdown/HTML reports passed; changed question cannot replace the immutable last-turn snapshot, and local report requires current review. Clipboard was not changed. No inference, real capture, network, routing or installed profile accessed.\n").unwrap();
             this.update_in(cx,|ws,w,cx|ws.request_close(w,cx)).unwrap();
         }).detach();
     }).unwrap();

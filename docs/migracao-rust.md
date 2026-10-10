@@ -43,8 +43,9 @@ Desde 10/10/2026, a identidade fornecida em SVG é incorporada como imagens e
 [ampliação para diagnóstico com IA](diagnostico-rede-ia.md#primeira-implementação).
 A tela Codex prepara, copia e envia contexto revisado por uma ponte isolada do
 App Server. Login, modelos e resposta progressiva têm implementação e provas
-sintéticas; conta/inferência reais ainda exigem QA. Geração de relatórios e
-QA real da captura Npcap com rotação permanecem pendentes.
+sintéticas; conta/inferência reais ainda exigem QA. Exportação derivada de amostras
+e relatórios Markdown/HTML locais têm implementação inicial. Investigação
+reabrível, PDF e QA real da captura Npcap com rotação permanecem pendentes.
 
 O painel coleta a cada dois segundos, sem elevação e sem enviar sondagens de
 rede. As conexões observadas são TCP/IPv4 estabelecidas; saída observada não

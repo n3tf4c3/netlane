@@ -7,8 +7,10 @@ com **Codex**. Claude e Gemini são adaptadores opcionais futuros.
 
 O monitor de conexões, a qualidade por interface e a seleção de saída por
 aplicativo continuam como ferramentas. Esta ampliação usa Rust/GPUI 0.4.0;
-a instalação .NET 0.3.4 e seus dados permanecem independentes. A captura Windows e a escrita rotativa têm implementação inicial. Exportação derivada,
-investigação persistente e geração de relatórios ainda faltam.
+a instalação .NET 0.3.4 e seus dados permanecem independentes. A captura Windows
+e a escrita rotativa têm implementação inicial. Exportação derivada de amostras
+e rascunhos Markdown/HTML locais estão implementados; investigação persistente,
+cópia integral do original e PDF ainda faltam.
 
 ## Primeira implementação
 
@@ -162,8 +164,10 @@ Referências: [App Server](https://learn.chatgpt.com/docs/app-server) e
 Testes usam dados gerados e servidores fictícios: dump de cerca de 138 MiB/
 70 mil pacotes, SHA completo, totais após coalescer janelas, amostragem distribuída,
 limites, cancelamento, baseline, referências esparsas, respostas atrasadas e
-recusa de ferramentas. A prova GPUI produz 14 cenas com tabela, claro/escuro,
-janela mínima, comparação de dez mil pacotes e conversa **simulada**. Também grava e reabre 11 segmentos de uma coleta fictícia de 300 pacotes, com fonte encerrada.
+recusa de ferramentas. A prova GPUI produz 16 cenas com tabela, claro/escuro,
+janela mínima, comparação de dez mil pacotes e conversa **simulada**. Também grava
+e reabre 11 segmentos de uma coleta fictícia de 300 pacotes, com fonte encerrada,
+e exercita exportações/relatórios com contexto imutável e recusa de sobrescrita.
 
 A prova nativa do Codex 0.162.0 confirma perfil restrito, catálogo próprio,
 thread efêmera e encerramento do filho em perfil novo, **sem login ou inferência**.
@@ -172,13 +176,76 @@ continuam como QA pendente. Diálogo de importação, copiar e arquivos de terce
 também precisam de QA manual. Não houve captura real, mudança de rotas, acesso
 ao perfil instalado, empacotamento ou atualização do produto .NET.
 
-Recibos locais: `artifacts/termiax-reuse-20261010/` e
-`artifacts/termiax-reference-gui-20261010-final/`. Foram aprovados **110 testes**,
-Clippy comum/com todas as features, formatação e builds Release comum/GPUI test.
-A prévia comum está em `artifacts/rust-preview-diagnostics-20261010/`; não é um
+Recibos da primeira publicação: `artifacts/termiax-reuse-20261010/` e
+`artifacts/termiax-reference-gui-20261010-final/` (14 cenas). Naquela etapa foram
+aprovados **110 testes**, Clippy comum/com todas as features, formatação e builds
+Release comum/GPUI test. A prévia daquele avanço está em
+`artifacts/rust-preview-diagnostics-20261010/`; não é um
 instalador ou versão assinada. Os 14 arquivos preexistentes protegidos e o ZIP da
 marca foram conferidos por hash. D1/D2/D3/D4 estão em progresso;
-D4b e armazenamento/relatórios continuam pendentes.
+D4b, armazenamento reabrível, cópia integral do original e PDF continuam pendentes.
+
+## Exportação e relatórios locais
+
+Na tela **Pacotes**, **Exportar PCAPNG** ou **Exportar PCAP** salva o pacote
+selecionado; sem seleção, salva somente as amostras que correspondem à busca.
+O botão não aplica a busca a todos os registros do dump. Até 512 amostras/1 MiB
+de bytes retidos são exportados em uma pasta nova `NetLane-pacotes-UUID` no
+destino escolhido. Não há sobrescrita de exportação existente. O recibo
+`receipt.json` é o marcador final de conclusão: registra SHA-256 de origem/saída,
+quantidades, caplen original/exportado e mapeamento dos números/interfaces/offsets
+no original. Erros preservam arquivos parciais, sem publicar o recibo final.
+O arquivo é reaberto e conferido por hash antes de concluir.
+
+A análise de dumps retém até 2 KiB por amostra. A saída contém esses bytes,
+com caplen correspondente ao exportado e comprimento original preservado;
+reduções adicionais constam no recibo. Não se trata de cópia integral nem de
+anonimização. Blocos auxiliares, estatísticas, nomes resolvidos, segredos de
+descriptografia, comentários e opções não modeladas não são transferidos.
+
+PCAP usa uma interface e nanossegundos UTC; pacotes sem horário ou fora do
+intervalo de segundos de 32 bits são recusados antes de escrever. PCAPNG
+preserva unidades/resolução/offset do horário e a ausência de horário; cada
+pacote recebe uma seção/interface derivada própria. Nomes de interfaces e
+enlaces são preservados; números/seções originais constam no recibo, não na
+estrutura reagrupada. Referências de layout consultadas: os rascunhos IETF
+[PCAP](https://www.ietf.org/archive/id/draft-ietf-opsawg-pcap-04.html) e
+[PCAPNG](https://www.ietf.org/archive/id/draft-ietf-opsawg-pcapng-05.html).
+Leitura externa por Wireshark/tcpdump permanece gate; essas ferramentas não
+foram encontradas neste ensaio e não foram instaladas.
+
+Na tela **Codex**, **Revisar contexto** e **Exportar relatório local** funcionam
+sem login/inferência e geram um rascunho sem resposta de IA. Após encerrar um
+turno, **Exportar resposta e contexto** usa uma cópia imutável do contexto,
+problema, pergunta e modelo do envio, mesmo quando os campos atuais mudam.
+A resposta é do último turno; a conversa anterior não é anexada. Turnos com
+aviso/falha mantêm indicação de resposta possivelmente parcial. Referências
+inválidas bloqueiam exportar a resposta; o relatório local continua disponível
+após revisar o contexto atual. Conferir referências não valida conclusões.
+
+A pasta nova `NetLane-relatorio-UUID` contém `report.md`, `report.html`,
+`context.json` e `receipt.json` com hashes dos três arquivos. Há origem e período
+quando disponíveis, totais, detalhes selecionados, baseline, limitações e campo
+de resposta assistida separado dos agregados locais. O JSON preserva a cópia do
+último envio. Texto não confiável é literal no Markdown e escapado no HTML,
+que não carrega scripts, links ou recursos externos. A gravação e conferência
+ocorrem em segundo plano; não anexam bytes do pacote ou credenciais do perfil.
+Endereços e textos do usuário/IA são exportados em texto aberto: revise antes
+de compartilhar. Persistência protegida/reabertura da investigação, pacote com
+original e PDF continuam etapas posteriores.
+
+As novas provas incluem redução de bytes, interfaces/relógios distintos,
+horário ausente, recusa de sobrescrita, hashes, HTML hostil e referências falsas.
+A GUI também confere que editar a pergunta não substitui a cópia do envio.
+Essas provas não abriram Npcap, conta real, rede ou perfil instalado.
+
+O avanço de exportação/relatórios passou por **117 testes** de workspace,
+Clippy comum/com todas as features, formatação e builds Release comum/GUI.
+Prova atual: `artifacts/diagnostics-exports-gui-20261010-final/`, com 16 cenas,
+exports/relatórios fictícios, recibo e renderização do HTML em navegador com
+perfil isolado. O layout da GUI e do HTML foi conferido visualmente. Prévia
+comum: `artifacts/rust-preview-reports-20261010/`. Esses artefatos ficam locais;
+diálogos nativos, arquivos de terceiros e interoperabilidade ainda exigem QA.
 
 ## Fluxo de trabalho
 
