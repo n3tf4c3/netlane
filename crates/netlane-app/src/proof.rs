@@ -5,11 +5,15 @@ use crate::{
     workspace::{Page, Workspace},
 };
 use gpui::{App, WindowHandle, px, size};
+use netlane_windows::desktop::{ProofPanelCommand, TrayAction};
 use std::{path::PathBuf, time::Duration};
 pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) {
     std::fs::create_dir_all(&directory).expect("proof output directory");
     window.update(cx,|_,w,cx|{
         cx.spawn_in(w,async move|this,cx|{
+            this.update(cx,|ws,_|{assert!(ws.proof_desktop().available());assert!(!ws.proof_desktop().visible());ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|assert!(ws.proof_desktop().visible())).unwrap();
             for (name,page,theme) in [
                 ("01-overview-dark.png",Page::Overview,"NetLane Dark"),
                 ("02-connections-dark.png",Page::Connections,"NetLane Dark"),
@@ -46,9 +50,55 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
                 cx.background_executor().timer(Duration::from_millis(450)).await;
                 cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
             }
-            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 12 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nLarge text, compact layout and empty state captured at minimum window size.\nNo network, WFP session, UAC or installed profile accessed.\n").unwrap();
+            // Real HWND and tray callback tests, with an in-memory session fixture only.
+            let same_rule = this.update(cx,|ws,cx|{
+                assert!(ws.proof_desktop().available());
+                ws.proof_edit_rule(cx);
+                ws.proof_desktop().proof_post_command(ProofPanelCommand::Close);
+                ws.policies[0].application_id.clone()
+            }).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(!ws.proof_desktop().visible());assert!(ws.dirty);ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(ws.proof_desktop().visible());assert_eq!(ws.policies[0].application_id,same_rule);assert!(ws.dirty);ws.proof_desktop().proof_post_command(ProofPanelCommand::Minimize);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(!ws.proof_desktop().visible());ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(ws.proof_desktop().visible());ws.proof_desktop().proof_post_command(ProofPanelCommand::Maximize);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(ws.proof_desktop().proof_maximized());ws.proof_desktop().proof_post_command(ProofPanelCommand::Minimize);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(!ws.proof_desktop().visible());ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(ws.proof_desktop().visible());assert!(ws.proof_desktop().proof_maximized());ws.proof_desktop().proof_post_action(TrayAction::Exit);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(300)).await;
+            this.update(cx,|ws,cx|{assert!(ws.proof_exit_confirmation());assert!(ws.dirty);ws.proof_cancel_exit(cx);ws.proof_save(cx);ws.proof_desktop().proof_recreate_icon();}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update_in(cx,|ws,w,cx|{
+                assert!(ws.proof_desktop().available());
+                ws.proof_set_session(netlane_agent::SessionState{running:true,cleanup_confirmed:false,..Default::default()});
+                ws.request_close(w,cx);
+                assert!(ws.proof_exit_pending());
+                ws.proof_edit_rule(cx); // New edit while the simulated Stop is pending.
+            }).unwrap();
+            cx.background_executor().timer(Duration::from_millis(200)).await;
+            this.update(cx,|ws,_|ws.proof_set_session(netlane_agent::SessionState{cleanup_confirmed:true,..Default::default()})).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,cx|{assert!(!ws.proof_exit_pending());assert!(ws.proof_exit_confirmation());assert!(ws.dirty);ws.proof_cancel_exit(cx);ws.proof_save(cx);ws.proof_set_session(netlane_agent::SessionState::default());}).unwrap();
+            this.update_in(cx,|ws,w,cx|ws.request_close(w,cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(300)).await;
+            this.update(cx,|ws,_|{assert_eq!(ws.page as usize,Page::Diagnostics as usize);assert!(ws.proof_desktop().visible());ws.proof_set_session(netlane_agent::SessionState{busy:true,cleanup_confirmed:true,..Default::default()});ws.proof_desktop().proof_post_command(ProofPanelCommand::Minimize);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(ws.proof_desktop().visible());ws.proof_set_session(netlane_agent::SessionState{cleanup_confirmed:true,..Default::default()});ws.proof_desktop().proof_post_command(ProofPanelCommand::Close);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,_|{assert!(!ws.proof_desktop().visible());ws.proof_desktop_failure();}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(400)).await;
+            this.update(cx,|ws,cx|{assert!(ws.proof_desktop().visible());assert!(!ws.proof_desktop().available());ws.proof_edit_rule(cx);ws.proof_desktop().proof_post_command(ProofPanelCommand::Close);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(300)).await;
+            this.update(cx,|ws,cx|{assert!(ws.proof_exit_confirmation());ws.proof_discard_failure(cx);assert!(ws.proof_exit_confirmation());ws.proof_cancel_exit(cx);ws.proof_save(cx);}).unwrap();
+            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 12 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nLarge text, compact layout and empty state captured at minimum window size.\nStartup path starts hidden and restores the same panel through its own tray callback.\nNative X/minimize/tray restore preserve the same rule and unsaved edits.\nMaximized restore, Exit cancellation, own-icon recreation, failure fallback passed.\nNew edits during simulated cleanup are reconfirmed; missing cleanup receipt blocks Exit.\nBusy session keeps minimized owner visible. Final X without tray exits safely.\nNo network, WFP session, UAC, real autorun or installed profile accessed.\n").unwrap();
             cx.background_executor().timer(Duration::from_millis(250)).await;
-            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);cx.quit();}).unwrap();
+            this.update(cx,|ws,_|ws.proof_desktop().proof_post_command(ProofPanelCommand::Close)).unwrap();
         }).detach();
     }).unwrap();
 }

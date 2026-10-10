@@ -82,6 +82,37 @@ Use **Escolher .exe** na própria regra; o modo, a interface e os campos adicion
 permanecem preservados até salvar a edição no perfil Rust.
 Uma interface escolhida explicitamente não é substituída silenciosamente.
 
+## Bandeja e inicialização (2026-10-10)
+
+O painel Rust usa o ícone original com `Shell_NotifyIconW` e menu nativo do
+Windows. **X** e **Minimizar** ocultam a mesma janela, sem parar a sessão nem
+salvar/descartar edições. Clique no ícone ou **Abrir NetLane** restaura o estado
+normal/maximizado. O menu mostra sessão, contagem e edições; isso não comprova
+tráfego. **Diagnóstico** e **Parar com segurança** usam os controles do painel.
+**Iniciar sessão…** restaura o diagnóstico para revisar as opções e solicitar
+UAC pelo botão; o menu não autoriza flags temporárias automaticamente.
+
+**Sair** confirma edições, espera o agente e exige limpeza confirmada. Alterações
+feitas durante essa espera são reconfirmadas. Uma falha de limpeza bloqueia nova
+tentativa de saída; não se força o encerramento do agente. Operações/confirmações
+mantêm o proprietário visível. Falha da bandeja restaura o painel e permite a
+saída segura pelo X. O ícone próprio é recriado ao receber `TaskbarCreated`;
+testar esse evento no componente não equivale a reiniciar o Explorer real.
+
+Em Configurações, **Abrir com o Windows** começa desligado e fica indisponível
+em demonstrações, builds de desenvolvimento, prévias e perfis alternativos.
+A futura embalagem instalada deverá fornecer `netlane-rust-installed.layout`
+com conteúdo `1`, ao lado de `netlane.exe`, em caminho estável. O registrador
+valida caminho/argumentos e comprimento; modifica somente `NetLaneRust` em HKCU
+Run, preservando o `NetLane` legado e recusando entradas Rust de outro local.
+`--startup` deve ser usado sozinho: abre oculto em observação, sem iniciar agente
+ou qualidade, e suprime a abertura duplicada desse mesmo executável. Se o ícone
+falhar, a janela aparece. Não criar o marcador manualmente em uma prévia.
+O instalador/desinstalador Rust e a remoção futura de autorun ainda estão pendentes.
+
+Referências de implementação: [ícone nativo](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)
+e [inicialização por usuário](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys).
+
 ## Validação local
 
 ```powershell
@@ -107,6 +138,18 @@ O script recusa evidências anteriores e exige hashes distintos das 12 imagens.
 A inspeção humana dos PNGs complementa as asserções; hash distinto sozinho não
 prova layout correto. O build comum exclui o capturador.
 
+Na continuação de 2026-10-10: **30 testes Rust aprovados**. As novas verificações
+cobrem registro em subárvore HKCU descartável, recusa de outro caminho, preservação
+do valor legado, mutex de presença e reconfirmação da saída. A prova GPUI também
+exercita HWND real e callbacks da bandeja: abertura inicialmente oculta,
+X/minimizar/restaurar, estado maximizado, mesma regra/edições, cancelamento de Sair,
+recriação do ícone próprio, fallback após falha e edição durante parada simulada.
+Nenhum valor real de Run foi gravado e nenhuma sessão WFP foi aberta. Logon real,
+menu pelo mouse, outras escalas, reinício real do Explorer e runtime com agente
+elevado permanecem QA separado. Falha ao reler o arquivo salvo antes de descartar
+mantém as edições. Evidências finais sob `artifacts/rust-tray-ui-20261010-final`;
+prévia comum em `artifacts/rust-preview-20261010-final`.
+
 Resultados desta rodada (2026-10-09/10): **26 testes Rust**, **283 testes .NET**,
 oito fixtures diferenciais aprovadas e 12 cenas GPUI distintas, com código de
 saída zero. Build Release, formatação e Clippy sem avisos passaram. O monitor
@@ -122,7 +165,9 @@ isso valida a coleta local, não a aplicação de políticas. Evidências sob
 | Domínio, persistência e monitor | implementados; testes locais e fixtures de compatibilidade |
 | GUI GPUI e temas | implementados; prova visual local em dados fictícios |
 | Agente elevado/WFP/limpeza | implementado e compilado; canal/controle testados sem políticas reais |
-| Bandeja, inicialização com Windows e ícones por processo | port ainda pendente; X na prévia Rust solicita saída segura |
+| Bandeja e saída segura | port implementado; provas locais com HWND/callbacks reais e sessão simulada |
+| Inicialização com Windows | registrador implementado/testado em chave temporária; disponível só no futuro pacote instalado; logon/remoção pendentes |
+| Ícones por processo | port ainda pendente |
 | Qualidade por conexão e alteração da conexão padrão | port ainda pendente; nenhum ensaio ou alteração de métrica realizado |
 | Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port |
 | Instalador, upgrade/remoção, assinatura e publicação | adaptação/validação pendentes; procedimentos atuais continuam valendo |
@@ -133,4 +178,5 @@ Antes do cutover, portar as funções restantes e executar os ensaios autorizado
 com baseline e reversão. `Stopped` com limpeza confirmada é obrigatório para
 permitir outra sessão; simples saída do processo não confirma restauração.
 Nenhuma execução elevada, política real, mudança de rotas/métricas/bindings IPv6,
-instalação, assinatura, commit ou push faz parte desta validação.
+instalação ou assinatura faz parte desta validação. A publicação Git do código
+é registrada separadamente; não constitui CI remoto, instalação ou aprovação de runtime.

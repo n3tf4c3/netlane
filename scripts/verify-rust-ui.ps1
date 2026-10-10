@@ -36,7 +36,7 @@ try {
     $receipt = Join-Path $output 'scenes/verified.txt'
     if (-not (Test-Path -LiteralPath $receipt)) { throw 'Falta o recibo dos exercícios da interface.' }
     $hashes | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $output 'scenes/hashes.json') -Encoding UTF8
-    @{ExitCode=$exitCode;Scenes=12;UniqueScenes=12;NetworkTests=$false;RoutingStarted=$false;InstalledProfileAccessed=$false} |
+    @{ExitCode=$exitCode;Scenes=12;UniqueScenes=12;NativeTrayExercised=$true;SyntheticStartupHidden=$true;SyntheticCleanupReconfirmation=$true;NetworkTests=$false;RoutingStarted=$false;RealAutorunChanged=$false;InstalledProfileAccessed=$false} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'verification.json') -Encoding UTF8
     Get-Content -LiteralPath $receipt -Encoding UTF8
     Write-Output "Prova visual aprovada: $output"

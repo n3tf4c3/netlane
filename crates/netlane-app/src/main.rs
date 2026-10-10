@@ -1,6 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 mod assets;
 mod demo;
+mod desktop;
+mod lifecycle;
 #[cfg(feature = "gui-test")]
 mod proof;
 mod settings;
@@ -21,6 +23,16 @@ fn main() {
 fn run() -> anyhow::Result<()> {
     let args: Vec<_> = std::env::args().skip(1).collect();
     let demo = args.iter().any(|a| a == "--demo");
+    let startup = args.len() == 1 && args[0].eq_ignore_ascii_case("--startup");
+    anyhow::ensure!(
+        !args.iter().any(|a| a.eq_ignore_ascii_case("--startup")) || startup,
+        "--startup deve ser usado sozinho."
+    );
+    let _presence = netlane_windows::startup::StartupPresence::current()?;
+    if startup && _presence.already_running {
+        return Ok(());
+    }
+    let default_profile = !args.iter().any(|a| a == "--profile");
     let profile = args
         .iter()
         .position(|a| a == "--profile")
@@ -56,6 +68,10 @@ fn run() -> anyhow::Result<()> {
     if proof.is_some() {
         anyhow::ensure!(demo, "A prova visual exige --demo.");
     }
+    #[cfg(feature = "gui-test")]
+    let start_in_tray = startup || proof.is_some();
+    #[cfg(not(feature = "gui-test"))]
+    let start_in_tray = startup;
     gpui_platform::application()
         .with_assets(assets::Assets)
         .run(move |cx: &mut App| {
@@ -83,25 +99,29 @@ fn run() -> anyhow::Result<()> {
                         ..Default::default()
                     }),
                     window_min_size: Some(size(px(1000.), px(640.))),
+                    focus: !start_in_tray,
+                    show: !start_in_tray,
                     ..Default::default()
                 },
-                move |w, cx| cx.new(|cx| Workspace::new(profile, demo, w, cx)),
+                move |w, cx| cx.new(|cx| Workspace::new(profile, demo, default_profile, w, cx)),
             );
             match result {
                 Ok(window) => {
                     let _ = window.update(cx, |workspace, w, cx| {
                         let weak = cx.entity().downgrade();
                         w.on_window_should_close(cx, move |w, cx| {
-                            let _ = weak.update(cx, |ws, cx| ws.request_close(w, cx));
+                            let _ = weak.update(cx, |ws, cx| ws.request_hide(w, cx));
                             false
                         });
-                        let _ = workspace;
+                        workspace.install_desktop(start_in_tray, w, cx);
                     });
                     #[cfg(feature = "gui-test")]
                     if let Some(directory) = proof {
                         proof::start(window, directory, cx);
                     }
-                    cx.activate(true);
+                    if !start_in_tray {
+                        cx.activate(true);
+                    }
                 }
                 Err(e) => {
                     eprintln!("Janela: {e:#}");
