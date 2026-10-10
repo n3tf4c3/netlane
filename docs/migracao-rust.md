@@ -103,14 +103,15 @@ testar esse evento no componente não equivale a reiniciar o Explorer real.
 
 Em Configurações, **Abrir com o Windows** começa desligado e fica indisponível
 em demonstrações, builds de desenvolvimento, prévias e perfis alternativos.
-A futura embalagem instalada deverá fornecer `netlane-rust-installed.layout`
+A embalagem instalada Rust fornece `netlane-rust-installed.layout`
 com conteúdo `1`, ao lado de `netlane.exe`, em caminho estável. O registrador
 valida caminho/argumentos e comprimento; modifica somente `NetLaneRust` em HKCU
 Run, preservando o `NetLane` legado e recusando entradas Rust de outro local.
 `--startup` deve ser usado sozinho: abre oculto em observação, sem iniciar agente
 ou qualidade, e suprime a abertura duplicada desse mesmo executável. Se o ícone
 falhar, a janela aparece. Não criar o marcador manualmente em uma prévia.
-O instalador/desinstalador Rust e a remoção futura de autorun ainda estão pendentes.
+O instalador/desinstalador Rust por usuário está preparado para revisão estática;
+logon e remoção real de autorun continuam pendentes de QA no laboratório.
 
 Referências de implementação: [ícone nativo](https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-shell_notifyiconw)
 e [inicialização por usuário](https://learn.microsoft.com/en-us/windows/win32/setupapi/run-and-runonce-registry-keys).
@@ -339,6 +340,36 @@ isso valida a coleta local, não a aplicação de políticas. Evidências sob
 `artifacts/rust-ui-complete-20261010`, `artifacts/rust-compatibility` e
 `artifacts/rust-readonly-monitor`; prévia comum em `artifacts/rust-preview-20261010-v2`.
 
+## Empacotamento Rust (2026-10-10)
+
+O [instalador local Rust](instalador-rust.md) usa pasta, atalho e registro próprios
+por usuário, sem substituir a instalação .NET. Seus scripts compilam o build
+comum e o NSIS e verificam fontes, manifesto e extração sem executar o setup.
+Inclui avisos de recursos e inventário Cargo transitivo, com lacunas explícitas.
+Instalação, upgrade/reparo, remoção, autorun/logon, runtime MSVC, revisão final de
+licenças e assinatura continuam gates separados. A prévia portátil permanece
+sem marcador instalado. Não abrir o payload extraído como produto instalado.
+O [registro de QA estático](qa-empacotamento-rust-2026-10-10.md) preserva o
+primeiro pacote de 708 arquivos e as atualizações para 709 e 710 arquivos,
+com oito recusas do verificador e nenhum texto de licença ausente no inventário
+atual. As licenças posteriores de simd_helpers e seahash têm origem, parentesco
+e blob conferidos; sua coleta não aprova a revisão final de distribuição.
+O [laboratório Rust](qa-laboratorio-rust-2026-10-10.md)
+tem bundle e coletor próprios preparados; o acesso/snapshot da VM continuam pendentes.
+
+A [primeira rodada Rust no Sandbox](qa-sandbox-rust-2026-10-10.md) foi concluída
+depois da preparação estática: instalação limpa, UI Release instalada em
+demonstração com saída normal, reinstalação 0.4.0 e remoção por lista conhecida.
+Payload e preservação de arquivos fictícios foram conferidos por hash; host/.NET
+preservados e sessão encerrada. O token do Sandbox era administrativo;
+usuário comum/UAC, cancelamento, upgrade entre versões e os demais cenários
+continuam pendentes. Não houve agente, WFP ou testes reais de rede.
+Foi registrada acentuação incorreta no nome do produto no registro. A
+[correção de charset do pacote](qa-sandbox-rust-utf8-2026-10-10.md) foi comprovada
+em nova instalação, com os 710 hashes íntegros. UI demo, reinstalação da mesma
+versão e remoção também passaram no novo pacote. Sandbox encerrado e host/.NET
+preservados; mensagens do assistente/cancelamento continuam pendentes.
+
 ## Gates para substituir a versão .NET
 
 | Etapa | Estado nesta migração |
@@ -347,18 +378,19 @@ isso valida a coleta local, não a aplicação de políticas. Evidências sob
 | GUI GPUI e temas | implementados; prova visual local em dados fictícios |
 | Agente elevado/WFP/limpeza | implementado e compilado; canal/controle testados sem políticas reais |
 | Bandeja e saída segura | port implementado; provas locais com HWND/callbacks reais e sessão simulada |
-| Inicialização com Windows | registrador implementado/testado em chave temporária; disponível só no futuro pacote instalado; logon/remoção pendentes |
+| Inicialização com Windows | registrador e embalagem por usuário preparados; testes em chave temporária; logon/remoção reais pendentes |
 | Ícones por processo | implementados; cache/recursos testados e prova GPU com executável do próprio build; QA instalado pendente |
 | Qualidade por conexão | lógica/controles/provedores portados; testes e prova GPU com simulações; sondagens Windows reais e hover/DPI pendentes |
 | Alteração/restauração da conexão padrão | lógica, recuperação, painel e comando portados; simulações aprovadas; UAC/métricas/reboot reais pendentes |
 | Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port |
-| Instalador, upgrade/remoção, assinatura e publicação | adaptação/validação pendentes; procedimentos atuais continuam valendo |
-| Licenças transitivas e entrega pública | revisão final pendente |
+| Instalador, upgrade/remoção, assinatura e publicação | instalação/UI demo/reinstalação 0.4.0/remoção aprovadas no Sandbox; demais gates runtime, assinatura e publicação pendentes |
+| Licenças transitivas e entrega pública | inventário/textos transitivos coletados; lacunas e revisão final pendentes |
 
 Não considerar esta prévia uma substituição completa da versão instalada.
 Antes do cutover, portar as funções restantes e executar os ensaios autorizados
 com baseline e reversão. `Stopped` com limpeza confirmada é obrigatório para
 permitir outra sessão; simples saída do processo não confirma restauração.
-Nenhuma execução elevada, política real, mudança de rotas/métricas/bindings IPv6,
-instalação ou assinatura faz parte desta validação. A publicação Git do código
+As provas de roteamento continuam sem agente elevado, política real ou mudança
+de rotas/métricas/bindings IPv6. A instalação Rust foi ensaiada somente no
+Sandbox descrito acima; assinatura permanece pendente. A publicação Git do código
 é registrada separadamente; não constitui CI remoto, instalação ou aprovação de runtime.

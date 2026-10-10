@@ -1,2 +1,5 @@
 # Preserve whitespace in the upstream font license; check all product sources normally.
 assets/fonts/jetbrains-mono/OFL.txt whitespace=-blank-at-eol
+
+# License notices and Git provenance receipts are verified by their original bytes.
+assets/licenses/rust-supplements/** -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

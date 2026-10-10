@@ -1,0 +1,281 @@
+{
+    "Schema":  1,
+    "Packages":  [
+                     {
+                         "Name":  "accesskit",
+                         "Version":  "0.24.1",
+                         "GitCommit":  "a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-a55d3e1a/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-APACHE",
+                                             "Sha256":  "62C7A1E35F56406896D7AA7CA52D0CC0D272AC022B5D2796E7D6905DB8A3636A"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-a55d3e1a/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE-MIT",
+                                             "Sha256":  "23F18E03DC49DF91622FE2A76176497404E46CED8A715D9D2B67A7446571CCA3"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-a55d3e1a/LICENSE.chromium.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/a55d3e1a18bb9ef0e4bccc9083fb13c3e0ad8969/LICENSE.chromium",
+                                             "Sha256":  "845022E0C1DB1ABB41A6BA4CD3C4B674EC290F3359D9D3C78AE558D4C0ED9308"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "accesskit_consumer",
+                         "Version":  "0.38.0",
+                         "GitCommit":  "c88605b96d04431f9c3c792464a0f2f253480e94",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-c88605b9/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-APACHE",
+                                             "Sha256":  "62C7A1E35F56406896D7AA7CA52D0CC0D272AC022B5D2796E7D6905DB8A3636A"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-c88605b9/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-MIT",
+                                             "Sha256":  "23F18E03DC49DF91622FE2A76176497404E46CED8A715D9D2B67A7446571CCA3"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-c88605b9/LICENSE.chromium.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE.chromium",
+                                             "Sha256":  "845022E0C1DB1ABB41A6BA4CD3C4B674EC290F3359D9D3C78AE558D4C0ED9308"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "accesskit_windows",
+                         "Version":  "0.34.0",
+                         "GitCommit":  "c88605b96d04431f9c3c792464a0f2f253480e94",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-c88605b9/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-APACHE",
+                                             "Sha256":  "62C7A1E35F56406896D7AA7CA52D0CC0D272AC022B5D2796E7D6905DB8A3636A"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-c88605b9/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE-MIT",
+                                             "Sha256":  "23F18E03DC49DF91622FE2A76176497404E46CED8A715D9D2B67A7446571CCA3"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/AccessKit-accesskit-c88605b9/LICENSE.chromium.txt",
+                                             "Url":  "https://raw.githubusercontent.com/AccessKit/accesskit/c88605b96d04431f9c3c792464a0f2f253480e94/LICENSE.chromium",
+                                             "Sha256":  "845022E0C1DB1ABB41A6BA4CD3C4B674EC290F3359D9D3C78AE558D4C0ED9308"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "lyon",
+                         "Version":  "1.0.19",
+                         "GitCommit":  "56219c95c658d4f39de7b190d98e57d5773ba241",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-56219c95/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-APACHE",
+                                             "Sha256":  "216486F29671A4262EFE32AF6D84A75BEF398127F8C5F369B5C8305983887A06"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-56219c95/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-MIT",
+                                             "Sha256":  "80F275E90D799911ED3830A7F242A2EF5A4ADE2092FE0AA07BFB2D2CF2F2B95E"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "lyon_algorithms",
+                         "Version":  "1.0.21",
+                         "GitCommit":  "994526f2766c7e9bc5bb16687232fd7e8999dbdf",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-994526f2/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/994526f2766c7e9bc5bb16687232fd7e8999dbdf/LICENSE-APACHE",
+                                             "Sha256":  "216486F29671A4262EFE32AF6D84A75BEF398127F8C5F369B5C8305983887A06"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-994526f2/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/994526f2766c7e9bc5bb16687232fd7e8999dbdf/LICENSE-MIT",
+                                             "Sha256":  "80F275E90D799911ED3830A7F242A2EF5A4ADE2092FE0AA07BFB2D2CF2F2B95E"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "lyon_geom",
+                         "Version":  "1.0.19",
+                         "GitCommit":  "56219c95c658d4f39de7b190d98e57d5773ba241",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-56219c95/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-APACHE",
+                                             "Sha256":  "216486F29671A4262EFE32AF6D84A75BEF398127F8C5F369B5C8305983887A06"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-56219c95/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-MIT",
+                                             "Sha256":  "80F275E90D799911ED3830A7F242A2EF5A4ADE2092FE0AA07BFB2D2CF2F2B95E"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "lyon_path",
+                         "Version":  "1.0.19",
+                         "GitCommit":  "56219c95c658d4f39de7b190d98e57d5773ba241",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-56219c95/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-APACHE",
+                                             "Sha256":  "216486F29671A4262EFE32AF6D84A75BEF398127F8C5F369B5C8305983887A06"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-56219c95/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/56219c95c658d4f39de7b190d98e57d5773ba241/LICENSE-MIT",
+                                             "Sha256":  "80F275E90D799911ED3830A7F242A2EF5A4ADE2092FE0AA07BFB2D2CF2F2B95E"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "lyon_tessellation",
+                         "Version":  "1.0.22",
+                         "GitCommit":  "b456b143215a1942a617c4672776b68b9a30feee",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-b456b143/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/b456b143215a1942a617c4672776b68b9a30feee/LICENSE-APACHE",
+                                             "Sha256":  "216486F29671A4262EFE32AF6D84A75BEF398127F8C5F369B5C8305983887A06"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/nical-lyon-b456b143/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/lyon/b456b143215a1942a617c4672776b68b9a30feee/LICENSE-MIT",
+                                             "Sha256":  "80F275E90D799911ED3830A7F242A2EF5A4ADE2092FE0AA07BFB2D2CF2F2B95E"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "profiling",
+                         "Version":  "1.0.18",
+                         "GitCommit":  "8271551172eb6fa4cba47369aedd93790c623df9",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/aclysma-profiling-82715511/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-APACHE",
+                                             "Sha256":  "10D30A673CD5E9349BDC02AEB48F14B3386D27D0DA32DF8F0A555D4AA16AA551"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/aclysma-profiling-82715511/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT",
+                                             "Sha256":  "C8167FDEEED46D3F244D3F85C5BF998CE889343691C32BE2C61A8BC4B5C08333"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "profiling-procmacros",
+                         "Version":  "1.0.18",
+                         "GitCommit":  "8271551172eb6fa4cba47369aedd93790c623df9",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/aclysma-profiling-82715511/LICENSE-APACHE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-APACHE",
+                                             "Sha256":  "10D30A673CD5E9349BDC02AEB48F14B3386D27D0DA32DF8F0A555D4AA16AA551"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/aclysma-profiling-82715511/LICENSE-MIT.txt",
+                                             "Url":  "https://raw.githubusercontent.com/aclysma/profiling/8271551172eb6fa4cba47369aedd93790c623df9/LICENSE-MIT",
+                                             "Sha256":  "C8167FDEEED46D3F244D3F85C5BF998CE889343691C32BE2C61A8BC4B5C08333"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "pulp-wasm-simd-flag",
+                         "Version":  "0.1.1",
+                         "GitCommit":  "5eb07fd7b68edf0a5e19f71737d315f72a510295",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/sarah-quinones-pulp-5eb07fd7/LICENSE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/sarah-quinones/pulp/5eb07fd7b68edf0a5e19f71737d315f72a510295/LICENSE",
+                                             "Sha256":  "D64F878C89BD5F1E5ADA7E4AAD57690B122727CF5229B7B87EA1980C188DA1D9"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "seahash",
+                         "Version":  "4.1.0",
+                         "GitCommit":  "94b632aeac099031c373599313d5b5f0acbbaec0",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/redox-os-seahash-3088c5c9/LICENSE.txt",
+                                             "Url":  "https://gitlab.redox-os.org/redox-os/seahash/-/raw/3088c5c912b70b586d27bf553fbe964e025a2c89/LICENSE",
+                                             "Sha256":  "23F18E03DC49DF91622FE2A76176497404E46CED8A715D9D2B67A7446571CCA3"
+                                         }
+                                     ],
+                         "LicenseOnlyFollowup":  {
+                                                     "Provider":  "git-object-proof",
+                                                     "GitCommit":  "3088c5c912b70b586d27bf553fbe964e025a2c89",
+                                                     "EvidencePath":  "rust-supplements/redox-os-seahash-3088c5c9/license-commit.json",
+                                                     "EvidenceUrl":  "https://gitlab.redox-os.org/redox-os/seahash/-/commit/3088c5c912b70b586d27bf553fbe964e025a2c89",
+                                                     "EvidenceSha256":  "28F3CAF4379F122651D66558E276170C4524B80EEF67E062DDAE399FEBFD4720",
+                                                     "ReviewNote":  "Texto literal publicado pela origem; nao contem linha explicita de copyright. Revisao final de autoria e obrigacoes permanece pendente."
+                                                 }
+                     },
+                     {
+                         "Name":  "simd_helpers",
+                         "Version":  "0.1.0",
+                         "GitCommit":  "ca1a2f84aa386d758e98f8a609d990263932fb85",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/lu-zero-simd_helpers-82040194/LICENSE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/lu-zero/simd_helpers/82040194cd05affb060bf94d6f19f82a771d07fb/LICENSE",
+                                             "Sha256":  "D69F24AD84EC2ADE64C0B68BDB31B41170E997B158370342056918329CC9AF1E"
+                                         }
+                                     ],
+                         "LicenseOnlyFollowup":  {
+                                                     "GitCommit":  "82040194cd05affb060bf94d6f19f82a771d07fb",
+                                                     "EvidencePath":  "rust-supplements/lu-zero-simd_helpers-82040194/license-commit.json",
+                                                     "EvidenceUrl":  "https://api.github.com/repos/lu-zero/simd_helpers/commits/82040194cd05affb060bf94d6f19f82a771d07fb",
+                                                     "EvidenceSha256":  "B42AA183250B24DDFDCFAD5F63059D4542DA918FE904782B1586B44E96BBF938"
+                                                 }
+                     },
+                     {
+                         "Name":  "svg_fmt",
+                         "Version":  "0.4.5",
+                         "GitCommit":  "93f414cd572b5c2781df93dbdc068ed13443d05a",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/nical-rust_debug-93f414cd/LICENSE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/nical/rust_debug/93f414cd572b5c2781df93dbdc068ed13443d05a/LICENSE",
+                                             "Sha256":  "7E98BED7F100747AAAE7D82AB94FBE6B76FD6B84B09A3AAA413BFF8196D0FBB1"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "taffy",
+                         "Version":  "0.13.0",
+                         "GitCommit":  "45a56299d366ddb383e593a1f0372158d00e8530",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/DioxusLabs-taffy-45a56299/LICENSE.txt",
+                                             "Url":  "https://raw.githubusercontent.com/DioxusLabs/taffy/45a56299d366ddb383e593a1f0372158d00e8530/LICENSE",
+                                             "Sha256":  "F97DAF1A0124413DCCF399A4E6626B4B74ACD05282F80B6D64AC82225650B77A"
+                                         }
+                                     ]
+                     },
+                     {
+                         "Name":  "zune-inflate",
+                         "Version":  "0.2.54",
+                         "GitCommit":  "69502ce83fdfecdd0beefd677e2abb3781b29d98",
+                         "Notices":  [
+                                         {
+                                             "Path":  "rust-supplements/etemesi254-zune-image-69502ce8/LICENSE-ZLIB.txt",
+                                             "Url":  "https://raw.githubusercontent.com/etemesi254/zune-image/69502ce83fdfecdd0beefd677e2abb3781b29d98/LICENSE-ZLIB",
+                                             "Sha256":  "7FA429541E55B1509909E058F2D21A37467E4958EC713B357F6E0CF9DC4EE352"
+                                         },
+                                         {
+                                             "Path":  "rust-supplements/etemesi254-zune-image-69502ce8/LICENSE.md.txt",
+                                             "Url":  "https://raw.githubusercontent.com/etemesi254/zune-image/69502ce83fdfecdd0beefd677e2abb3781b29d98/LICENSE.md",
+                                             "Sha256":  "E870D7FD7819A9F0453C62798CB52AE95D148A8C91DC2DE1D983F997143C72DE"
+                                         }
+                                     ]
+                     }
+                 ]
+}

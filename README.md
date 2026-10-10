@@ -4,6 +4,21 @@ Cada app, sua rota. Projeto experimental Windows para configurar a conexão de r
 
 ## Estado atual
 
+**QA Rust no Sandbox — 2026-10-10:** instalação limpa, UI em demonstração,
+reinstalação da mesma versão e remoção concluídas, com payload/dados fictícios
+conferidos por hash. A acentuação do nome no registro foi corrigida e os quatro
+fluxos foram repetidos com o novo pacote: 710 hashes íntegros, saída normal e
+dados fictícios preservados. Sandbox encerrado e host/.NET preservados. Usuário
+comum, upgrade entre versões, assistente/cancelamento, rede real e demais gates
+continuam pendentes. Veja a
+[correção e os resultados](docs/qa-sandbox-rust-utf8-2026-10-10.md).
+
+**Empacotamento Rust — 2026-10-10:** instalador local por usuário preparado,
+com pasta/registro próprios, upgrade/remoção por lista compilada e inventário de
+licenças transitivas. Preserva a instalação .NET e os perfis. Compilação/extração
+estáticas não aprovam instalação real nem distribuição. Veja o
+[procedimento e os gates](docs/instalador-rust.md).
+
 **Conexão padrão em Rust — 2026-10-10:** seleção de cabo/Wi-Fi, confirmação,
 Aplicar e restauração da configuração anterior no painel GPUI. Recuperação
 atômica antes do UAC, proteção contra mudanças externas e reversão de falhas
