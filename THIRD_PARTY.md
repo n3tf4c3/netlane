@@ -1,0 +1,25 @@
+# Recursos de terceiros da interface Rust
+
+O painel usa GPUI, `gpui_platform` e `gpui_windows` da revisão
+`decbf641b18f1982b3475c037e7c5c554471574f` do Zed, a mesma do termIAX.
+As dependências efetivas estão em `Cargo.lock`; o patch de `async-task` também
+segue a revisão fixada no termIAX. O código da aplicação Zed e suas crates de UI
+e temas não foram incorporados ao NetLane.
+
+| Recurso | Origem / licença | Aviso incluído |
+| --- | --- | --- |
+| GPUI | Zed Industries, Apache-2.0 | `assets/licenses/GPUI-APACHE.txt` |
+| Entrada de texto | adaptação do componente termIAX e exemplo GPUI, Apache-2.0 | cabeçalho do componente e licença GPUI |
+| One Dark / One Light | temas de origem Atom, MIT | `assets/themes/one/LICENSE` |
+| One Dark Pro | Binaryify, MIT | `assets/themes/one-dark-pro/LICENSE` |
+| Ayu | Ike Ku, MIT | `assets/themes/ayu/LICENSE` |
+| Gruvbox | tema de origem morhetz/gruvbox, MIT | `assets/themes/gruvbox/LICENSE` |
+| Material Symbols | Google, Apache-2.0 | `assets/icons/LICENSE` |
+| JetBrains Mono | JetBrains, SIL OFL 1.1 | `assets/fonts/jetbrains-mono/OFL.txt` |
+
+Os arquivos de cores, ícones e fonte vieram da referência local termIAX com os
+avisos preservados. `NetLane Dark` adapta os mesmos tokens de aparência; o
+ícone da marca vem do próprio NetLane. A coleção `assets/themes/LICENSES`
+mantém os avisos dos temas. Estes avisos acompanham a prévia local; a revisão
+completa das licenças das dependências transitivas permanece um gate antes de
+distribuição pública.

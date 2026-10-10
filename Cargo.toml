@@ -1,0 +1,38 @@
+[workspace]
+resolver = "3"
+members = ["crates/netlane-core", "crates/netlane-windows", "crates/netlane-agent", "crates/netlane-app"]
+default-members = ["crates/netlane-core", "crates/netlane-windows", "crates/netlane-agent"]
+
+[workspace.package]
+version = "0.4.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4", "serde"] }
+tempfile = "3"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "process"] }
+gpui = { git = "https://github.com/zed-industries/zed", rev = "decbf641b18f1982b3475c037e7c5c554471574f" }
+gpui_platform = { git = "https://github.com/zed-industries/zed", rev = "decbf641b18f1982b3475c037e7c5c554471574f" }
+netlane-core = { path = "crates/netlane-core" }
+netlane-windows = { path = "crates/netlane-windows" }
+netlane-agent = { path = "crates/netlane-agent" }
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_NetworkManagement_WindowsFilteringPlatform", "Win32_Networking_WinSock", "Win32_Security", "Win32_Security_Authorization", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_LibraryLoader", "Win32_System_Pipes", "Win32_System_Threading", "Win32_System_Registry", "Win32_System_Rpc", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+
+[patch.crates-io]
+# Same Windows GPUI fix as termIAX; workspace patches are not inherited.
+async-task = { git = "https://github.com/smol-rs/async-task.git", rev = "b4486cd71e4e94fbda54ce6302444de14f4d190e" }
+
+[profile.dev.package."*"]
+debug = false
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+undocumented_unsafe_blocks = "deny"

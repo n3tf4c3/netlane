@@ -1,6 +1,6 @@
 # NetLane — guia do projeto
 
-Aplicativo Windows em .NET 8/WPF para observar conexões e controlar seleção de saída de rede por processo. A raiz da solução é `NetLane.sln`.
+Aplicativo Windows para observar conexões e controlar seleção de saída de rede por processo. A migração Rust/GPUI fica em `Cargo.toml` e `crates/`; a implementação .NET 8/WPF em `NetLane.sln` permanece como referência até concluir os gates de migração.
 
 ## Navegação e contexto
 - Este é o guia canônico; `CLAUDE.md` importa este arquivo. Leia também o guia local da área que for editar, quando existir.
@@ -13,6 +13,9 @@ Aplicativo Windows em .NET 8/WPF para observar conexões e controlar seleção d
 ## Mapa por assunto
 | Assunto | Caminho inicial |
 | --- | --- |
+| Migração Rust/GPUI e gates | `crates/AGENTS.md`, [migração](docs/migracao-rust.md), `Cargo.toml` |
+| Domínio / Win32 / agente / GUI Rust | `crates/netlane-core/`, `crates/netlane-windows/`, `crates/netlane-agent/`, `crates/netlane-app/` |
+| Prévia e QA Rust | `scripts/build-rust-preview.ps1`, `scripts/verify-rust-compatibility.ps1`, `scripts/verify-rust-ui.ps1` |
 | Regras e domínio | `src/NetLane.Core/` |
 | Rede, interfaces e WFP | `src/NetLane.Network/` |
 | Serviço e IPC | `src/NetLane.Service/` |
@@ -24,6 +27,7 @@ Aplicativo Windows em .NET 8/WPF para observar conexões e controlar seleção d
 | UI e bandeja | [interface](docs/interface-desktop.md), [bandeja](docs/bandeja-windows.md) |
 
 ## Comandos e limites
+- Rust: `cargo build --workspace --release --locked`, `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`. Demonstração com `netlane.exe --demo`; perfil Rust separado. Não inferir autorização para ativar o agente/WFP ao testar o port.
 - Da raiz: `dotnet build NetLane.sln --configuration Release` e `dotnet test NetLane.sln --configuration Release --no-build`. A suíte usa fixtures/sessões simuladas; não instala políticas de roteamento.
 - Ensaios em `scripts/` e `poc/` podem aplicar políticas reais e exigir elevação. Leia o procedimento específico e use somente a autorização vigente para o ensaio e seu alvo.
 - Um teste pausado permanece pausado. Não ative `routepolicies`, altere rotas/métricas, inicie testes de rede, instale o produto ou habilite IPv6 por inferência.

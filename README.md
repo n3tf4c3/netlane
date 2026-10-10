@@ -4,6 +4,13 @@ Cada app, sua rota. Projeto experimental Windows para configurar a conexão de r
 
 ## Estado atual
 
+**Migração Rust/GPUI iniciada — 2026-10-09:** nova arquitetura em quatro crates,
+painel no estilo do termIAX, 13 temas claros/escuros, fonte/densidade configuráveis
+e importação explícita de regras para perfil separado. Consulte a
+[prévia, arquitetura e gates da migração](docs/migracao-rust.md). A implementação
+.NET e o instalador permanecem referências até concluir a equivalência e o QA
+do port; os registros seguintes descrevem a linha .NET.
+
 **Marco da 0.3.4 — 2026-10-01:** usuário confirmou os ícones e enviou captura do NetLane.UI **Ativado** em Aplicativos → Inicialização. Leitura do registro confirma o comando esperado do pacote instalado. [Inicialização e ícones](docs/inicializacao-e-icones.md#confirmações-do-usuário--2026-10-01) registrados como confirmação do usuário e leitura local, sem prova de logon real. O usuário não pode reiniciar agora e informará o resultado depois. Solicitado **“salve no ai-memory, commit e push”**: este marco reúne fontes, testes e documentação da 0.3.4, incluindo a instalação aprovada sobre a 0.3.3. Binários, recibos, perfis, regras reais e guias/configurações locais preexistentes ficam fora do Git. Continuidade durável no escopo default/netlane, página notes/netlane-0-3-4-instalado-2026-10-01.md; conferir o hash efetivo no Git. Restam logon real, limpeza de autorun na desinstalação e demais ensaios de rede/instalador antes de uma versão estável. Registros abaixo são históricos.
 
 **Prévia 0.3.4 instalada — 2026-09-30 às 23:53 (America/Cuiaba):** após “vamos seguir” e “fechado”, [atualização sobre a 0.3.3](docs/instalador-local.md) concluída com UAC/assistente manual, retorno 0 e StageVerified=true. Registro, atalho, ícone e 758 hashes do inventário conferidos; cinco arquivos do perfil copiados/preservados, rede/DNS/IPv6/autostart e 17 arquivos protegidos iguais, Defender ativo. Wi-Fi continua prioritária (5 / Ethernet 55); nenhuma entrada de inicialização criada. [Ícones e opção Iniciar com o Windows](docs/inicializacao-e-icones.md) disponíveis para QA pela UI instalada; marcar/desmarcar, logon real e limpeza da entrada pelo desinstalador ainda pendentes. Código local após 7c27738, sem novo commit/push. Registros abaixo são históricos.

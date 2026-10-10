@@ -1,0 +1,70 @@
+{
+  "$schema": "https://zed.dev/schema/themes/v0.2.0.json",
+  "name": "One Dark Pro",
+  "author": "termIAX, a partir do tema One Dark Pro de Binaryify (MIT)",
+  "themes": [
+    {
+      "name": "One Dark Pro",
+      "appearance": "dark",
+      "style": {
+        "background": "#282c34ff",
+        "editor.background": "#282c34ff",
+        "panel.background": "#21252bff",
+        "surface.background": "#21252bff",
+        "elevated_surface.background": "#21252bff",
+        "title_bar.background": "#282c34ff",
+        "status_bar.background": "#21252bff",
+        "border": "#3e4452ff",
+        "border.variant": "#181a1fff",
+        "border.focused": "#528bffff",
+        "element.hover": "#2c313aff",
+        "ghost_element.hover": "#2c313aff",
+        "element.selected": "#323842ff",
+        "ghost_element.selected": "#323842ff",
+        "element.active": "#404754ff",
+        "text": "#abb2bfff",
+        "text.muted": "#9da5b4ff",
+        "text.placeholder": "#636b78ff",
+        "text.disabled": "#495162ff",
+        "text.accent": "#61afefff",
+        "termiax.text.title": "#dcdcdcff",
+        "termiax.text.strong": "#ecebebff",
+        "success": "#98c379ff",
+        "warning": "#d19a66ff",
+        "error": "#e06c75ff",
+        "termiax.group.blue": "#61afefff",
+        "termiax.group.green": "#98c379ff",
+        "termiax.group.amber": "#e5c07bff",
+        "termiax.group.violet": "#c678ddff",
+        "termiax.group.red": "#e06c75ff",
+        "terminal.background": "#282c34ff",
+        "terminal.foreground": "#abb2bfff",
+        "terminal.dim_foreground": "#636b78ff",
+        "termiax.terminal.cursor": "#528bffff",
+        "terminal.ansi.black": "#3f4451ff",
+        "terminal.ansi.red": "#e05561ff",
+        "terminal.ansi.green": "#8cc265ff",
+        "terminal.ansi.yellow": "#d18f52ff",
+        "terminal.ansi.blue": "#4aa5f0ff",
+        "terminal.ansi.magenta": "#c162deff",
+        "terminal.ansi.cyan": "#42b3c2ff",
+        "terminal.ansi.white": "#d7dae0ff",
+        "terminal.ansi.bright_black": "#4f5666ff",
+        "terminal.ansi.bright_red": "#ff616eff",
+        "terminal.ansi.bright_green": "#a5e075ff",
+        "terminal.ansi.bright_yellow": "#f0a45dff",
+        "terminal.ansi.bright_blue": "#4dc4ffff",
+        "terminal.ansi.bright_magenta": "#de73ffff",
+        "terminal.ansi.bright_cyan": "#4cd1e0ff",
+        "terminal.ansi.bright_white": "#e6e6e6ff",
+        "players": [
+          {
+            "cursor": "#528bffff",
+            "background": "#528bffff",
+            "selection": "#67769660"
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -1,0 +1,2 @@
+# Preserve whitespace in the upstream font license; check all product sources normally.
+assets/fonts/jetbrains-mono/OFL.txt whitespace=-blank-at-eol
