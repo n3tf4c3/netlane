@@ -2,6 +2,7 @@
 mod assets;
 mod demo;
 mod desktop;
+mod executable_icons;
 mod lifecycle;
 #[cfg(feature = "gui-test")]
 mod proof;

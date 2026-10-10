@@ -11,9 +11,16 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
     std::fs::create_dir_all(&directory).expect("proof output directory");
     window.update(cx,|_,w,cx|{
         cx.spawn_in(w,async move|this,cx|{
+            this.update(cx,|ws,cx|ws.proof_prepare_icons(cx)).unwrap();
             this.update(cx,|ws,_|{assert!(ws.proof_desktop().available());assert!(!ws.proof_desktop().visible());ws.proof_desktop().proof_post_action(TrayAction::Open);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(400)).await;
             this.update(cx,|ws,_|assert!(ws.proof_desktop().visible())).unwrap();
+            this.update(cx,|ws,cx|{ws.page=Page::Rules;cx.notify();}).unwrap();
+            for _ in 0..40 {
+                if this.update(cx,|ws,_|ws.proof_icons_ready()).unwrap() { break; }
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+            }
+            this.update(cx,|ws,_|assert!(ws.proof_icons_ready())).unwrap();
             for (name,page,theme) in [
                 ("01-overview-dark.png",Page::Overview,"NetLane Dark"),
                 ("02-connections-dark.png",Page::Connections,"NetLane Dark"),
@@ -28,6 +35,14 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
                 cx.background_executor().timer(Duration::from_millis(450)).await;
                 cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
             }
+            // Changing a row to a remote path immediately removes its old image, without I/O.
+            this.update(cx,|ws,cx|{ws.page=Page::Rules;ws.proof_icon_remote_fallback(cx);}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("13-rules-icon-fallback.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{ws.proof_restore_icon_fixture(cx);ws.page=Page::Connections;cx.notify();}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            this.update(cx,|ws,_|assert!(ws.proof_icons_ready())).unwrap();
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("14-connections-icons.png")).unwrap();}).unwrap();
             this.update_in(cx,|ws,w,cx|{ws.page=Page::Settings;ws.proof_open_theme_picker(w,cx);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(450)).await;
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("09-theme-picker.png")).unwrap();}).unwrap();
@@ -96,7 +111,7 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
             this.update(cx,|ws,cx|{assert!(ws.proof_desktop().visible());assert!(!ws.proof_desktop().available());ws.proof_edit_rule(cx);ws.proof_desktop().proof_post_command(ProofPanelCommand::Close);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(300)).await;
             this.update(cx,|ws,cx|{assert!(ws.proof_exit_confirmation());ws.proof_discard_failure(cx);assert!(ws.proof_exit_confirmation());ws.proof_cancel_exit(cx);ws.proof_save(cx);}).unwrap();
-            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 12 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nLarge text, compact layout and empty state captured at minimum window size.\nStartup path starts hidden and restores the same panel through its own tray callback.\nNative X/minimize/tray restore preserve the same rule and unsaved edits.\nMaximized restore, Exit cancellation, own-icon recreation, failure fallback passed.\nNew edits during simulated cleanup are reconfirmed; missing cleanup receipt blocks Exit.\nBusy session keeps minimized owner visible. Final X without tray exits safely.\nNo network, WFP session, UAC, real autorun or installed profile accessed.\n").unwrap();
+            std::fs::write(directory.join("verified.txt"),"GPUI rendering: 14 scenes\nTheme preview, cancellation, confirmation and disk persistence passed.\nDemo rule edit/save passed.\nNative own-executable icon shared across Rules/Connections; missing and remote paths use fallback.\nLarge text, compact layout and empty state captured at minimum window size.\nStartup path starts hidden and restores the same panel through its own tray callback.\nNative X/minimize/tray restore preserve the same rule and unsaved edits.\nMaximized restore, Exit cancellation, own-icon recreation, failure fallback passed.\nNew edits during simulated cleanup are reconfirmed; missing cleanup receipt blocks Exit.\nBusy session keeps minimized owner visible. Final X without tray exits safely.\nNo network, WFP session, UAC, real autorun or installed profile accessed.\n").unwrap();
             cx.background_executor().timer(Duration::from_millis(250)).await;
             this.update(cx,|ws,_|ws.proof_desktop().proof_post_command(ProofPanelCommand::Close)).unwrap();
         }).detach();

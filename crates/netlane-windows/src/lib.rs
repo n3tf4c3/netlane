@@ -1,6 +1,8 @@
 #[cfg(windows)]
 pub mod desktop;
 pub mod flags;
+#[cfg(windows)]
+pub mod icons;
 pub mod monitor;
 pub mod protocol;
 #[cfg(windows)]

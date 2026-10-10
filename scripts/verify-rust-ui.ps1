@@ -32,11 +32,11 @@ try {
         if ($exitCode -ne 0) { throw "Prévia encerrou com código $exitCode. Consulte stderr.txt." }
     } finally { $process.Dispose() }
     $hashes = @(Get-FileHash -Path (Join-Path $output 'scenes/*.png') -Algorithm SHA256)
-    if ($hashes.Count -ne 12 -or @($hashes.Hash | Select-Object -Unique).Count -ne 12) { throw 'Capturas ausentes ou repetidas.' }
+    if ($hashes.Count -ne 14 -or @($hashes.Hash | Select-Object -Unique).Count -ne 14) { throw 'Capturas ausentes ou repetidas.' }
     $receipt = Join-Path $output 'scenes/verified.txt'
     if (-not (Test-Path -LiteralPath $receipt)) { throw 'Falta o recibo dos exercícios da interface.' }
     $hashes | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath (Join-Path $output 'scenes/hashes.json') -Encoding UTF8
-    @{ExitCode=$exitCode;Scenes=12;UniqueScenes=12;NativeTrayExercised=$true;SyntheticStartupHidden=$true;SyntheticCleanupReconfirmation=$true;NetworkTests=$false;RoutingStarted=$false;RealAutorunChanged=$false;InstalledProfileAccessed=$false} |
+    @{ExitCode=$exitCode;Scenes=14;UniqueScenes=14;NativeExecutableIcon=$true;SharedIconAcrossRulesAndConnections=$true;RemoteIconFallback=$true;NativeTrayExercised=$true;SyntheticStartupHidden=$true;SyntheticCleanupReconfirmation=$true;NetworkTests=$false;RoutingStarted=$false;RealAutorunChanged=$false;InstalledProfileAccessed=$false} |
         ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'verification.json') -Encoding UTF8
     Get-Content -LiteralPath $receipt -Encoding UTF8
     Write-Output "Prova visual aprovada: $output"
