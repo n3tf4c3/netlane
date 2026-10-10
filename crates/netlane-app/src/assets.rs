@@ -4,6 +4,18 @@ use std::borrow::Cow;
 pub struct Assets;
 static ICONS: &[(&str, &[u8])] = &[
     (
+        "brand/icon-app.png",
+        include_bytes!("../../../assets/brand/icon-app.png"),
+    ),
+    (
+        "brand/logo-dark.png",
+        include_bytes!("../../../assets/brand/logo-dark.png"),
+    ),
+    (
+        "brand/logo-light.png",
+        include_bytes!("../../../assets/brand/logo-light.png"),
+    ),
+    (
         "icons/add.svg",
         include_bytes!("../../../assets/icons/add.svg"),
     ),

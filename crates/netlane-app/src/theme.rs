@@ -173,11 +173,11 @@ impl ActiveTheme for App {
 mod tests {
     use super::*;
     #[test]
-    fn embedded_themes_have_dark_light_and_termiax_tokens() {
+    fn embedded_themes_have_dark_light_and_netlane_tokens() {
         let themes = Themes::load_embedded();
         assert_eq!(themes.active.name, "NetLane Dark");
-        assert_eq!(themes.active.editor, hex(0x1e1e1e));
-        assert_eq!(themes.active.panel, hex(0x212121));
+        assert_eq!(themes.active.editor, hex(0x090d16));
+        assert_eq!(themes.active.panel, hex(0x0d1522));
         assert!(themes.all.iter().any(|t| t.name == "One Dark Pro"));
         assert!(themes.all.iter().any(|t| t.appearance == Appearance::Light));
         let names: std::collections::HashSet<_> =

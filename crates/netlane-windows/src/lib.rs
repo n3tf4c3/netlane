@@ -6,6 +6,8 @@ pub mod flags;
 #[cfg(windows)]
 pub mod icons;
 pub mod monitor;
+#[cfg(windows)]
+pub mod npcap;
 pub mod protocol;
 #[cfg(windows)]
 pub mod quality;

@@ -3,15 +3,18 @@
 Em 2026-10-09 foi iniciada a migração gradual autorizada, com uma prévia local
 0.4.0. O novo painel, domínio, monitor Win32 e agente de sessão são Rust.
 A solução `NetLane.sln` permanece como referência e fallback enquanto os
-gates de equivalência e runtime não estiverem concluídos. O instalador atual
-continua publicando a implementação .NET; este trabalho não altera o produto
-instalado nem sua inicialização.
+gates de equivalência e runtime não estiverem concluídos. A instalação .NET
+permanece independente; o pacote Rust usa executáveis e perfil próprios, com
+os gates de empacotamento e QA registrados abaixo. Esta prévia não altera o
+produto instalado nem sua inicialização.
 
 ## Arquitetura
 
 ```mermaid
 flowchart LR
   UI[netlane-app · GPUI] --> Core[netlane-core · regras e medições]
+  UI --> Capture[netlane-capture · PCAP e PCAPNG locais]
+  UI --> AI[netlane-ai · contexto e conversa Codex]
   UI --> Monitor[netlane-windows · consultas Win32]
   UI --> IPC[Named pipe autenticado]
   IPC --> Agent[netlane-agent · sessão elevada]
@@ -24,6 +27,8 @@ flowchart LR
 | Crate | Responsabilidade |
 | --- | --- |
 | `netlane-core` | JSON compatível, campos desconhecidos, SHA-256, gravação atômica/backup, seleção de interface, auxiliares Steam, contadores e transações simuláveis |
+| `netlane-capture` | leitor PCAP/PCAPNG, análise incremental com amostras limitadas, SHA-256, referência e escrita rotativa; fonte fictícia nos testes |
+| `netlane-ai` | contexto revisável, referências verificáveis, probe de metadados e conversa explícita em perfil próprio sem ferramentas do App Server |
 | `netlane-windows` | adaptadores/contadores/TCP IPv4/identidade de processos, ABI WFP, sessão dinâmica, ACL/identidade de peers e opções temporárias |
 | `netlane-agent` | validação e plano sem elevação; sessão explícita com UAC, heartbeat, owner PID/data de criação, limpeza e exclusão de concorrência com .NET |
 | `netlane-app` | navegação, cartões, conexões pesquisáveis, regras, diagnóstico e preferências de aparência |
@@ -32,7 +37,14 @@ A interface segue o termIAX: GPUI na mesma revisão, Segoe UI, JetBrains Mono,
 Material Symbols e cores por tokens de tema. Há 13 temas (NetLane Dark, One,
 One Dark Pro, Ayu e Gruvbox), busca, prévia ao navegar, confirmação com Enter
 e cancelamento com Esc. Tema, texto de 10–20 px e densidade são persistidos.
-As cinco telas são Visão geral, Conexões, Regras, Diagnóstico e Configurações.
+As sete telas são Visão geral, Pacotes, Codex, Conexões, Regras, Diagnóstico e Configurações.
+Desde 10/10/2026, a identidade fornecida em SVG é incorporada como imagens e
+ícone Windows próprios da versão Rust. A tela Pacotes inicia a
+[ampliação para diagnóstico com IA](diagnostico-rede-ia.md#primeira-implementação).
+A tela Codex prepara, copia e envia contexto revisado por uma ponte isolada do
+App Server. Login, modelos e resposta progressiva têm implementação e provas
+sintéticas; conta/inferência reais ainda exigem QA. Geração de relatórios e
+QA real da captura Npcap com rotação permanecem pendentes.
 
 O painel coleta a cada dois segundos, sem elevação e sem enviar sondagens de
 rede. As conexões observadas são TCP/IPv4 estabelecidas; saída observada não
@@ -86,7 +98,7 @@ Uma interface escolhida explicitamente não é substituída silenciosamente.
 
 ## Bandeja e inicialização (2026-10-10)
 
-O painel Rust usa o ícone original com `Shell_NotifyIconW` e menu nativo do
+O painel Rust usa o ícone da identidade NetLane com `Shell_NotifyIconW` e menu nativo do
 Windows. **X** e **Minimizar** ocultam a mesma janela, sem parar a sessão nem
 salvar/descartar edições. Clique no ícone ou **Abrir NetLane** restaura o estado
 normal/maximizado. O menu mostra sessão, contagem e edições; isso não comprova

@@ -1,8 +1,10 @@
 use crate::{
+    codex_view::{CodexView, ContextPrepared},
     demo,
     desktop::Desktop,
     executable_icons::ExecutableIcons,
     lifecycle::{ExitDecision, exit_decision},
+    packet_view::PacketView,
     settings::{AppSettings, Settings},
     text_input::{TextInput, TextInputEvent},
     theme::{ActiveTheme, MONO_FONT, Themes, UI_FONT},
@@ -37,6 +39,8 @@ pub fn bind_keys(cx: &mut App) {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Overview,
+    Packets,
+    Codex,
     Connections,
     Rules,
     Diagnostics,
@@ -46,6 +50,8 @@ impl Page {
     fn title(self) -> &'static str {
         match self {
             Self::Overview => "Visão geral",
+            Self::Packets => "Pacotes",
+            Self::Codex => "Codex",
             Self::Connections => "Conexões",
             Self::Rules => "Regras",
             Self::Diagnostics => "Diagnóstico",
@@ -55,6 +61,8 @@ impl Page {
     fn icon(self) -> &'static str {
         match self {
             Self::Overview => "lan",
+            Self::Packets => "search",
+            Self::Codex => "info",
             Self::Connections => "desktop_windows",
             Self::Rules => "tune",
             Self::Diagnostics => "info",
@@ -108,6 +116,10 @@ pub struct Workspace {
     startup_registration: Option<netlane_windows::startup::StartupRegistration>,
     startup_enabled: bool,
     file_dialog_open: bool,
+    packets: Entity<PacketView>,
+    codex: Entity<CodexView>,
+    packet_dialog: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    capture_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
     hide_pending: bool,
     #[cfg(feature = "gui-test")]
     proof_session: Option<netlane_agent::SessionState>,
@@ -257,6 +269,68 @@ impl Workspace {
         });
     }
     #[cfg(feature = "gui-test")]
+    pub fn proof_packets(&mut self, query: &str, select: bool, cx: &mut Context<Self>) {
+        self.page = Page::Packets;
+        self.packets.update(cx, |panel, cx| {
+            panel.example(cx);
+            panel.proof_filter(query, cx);
+            if select {
+                panel.proof_select();
+            }
+        });
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_packet_matches(&self, cx: &App) -> usize {
+        self.packets.read(cx).proof_matches()
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_codex(&mut self, cx: &mut Context<Self>) {
+        self.packets.update(cx, |panel, cx| panel.prepare_codex(cx));
+        self.codex.update(cx, |panel, cx| panel.proof_review(cx));
+        self.page = Page::Codex;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_codex_context(&self, cx: &App) -> bool {
+        self.codex.read(cx).proof_context()
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_long_dump(&mut self, cx: &mut Context<Self>) {
+        self.packets
+            .update(cx, |panel, cx| panel.proof_comparison(cx));
+        self.page = Page::Packets;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_long_valid(&self, cx: &App) -> bool {
+        self.packets.read(cx).proof_scan_valid()
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_analyze_dump(&mut self, cx: &mut Context<Self>) {
+        self.packets.update(cx, |panel, cx| panel.prepare_codex(cx));
+        self.codex.update(cx, |panel, cx| panel.proof_analysis(cx));
+        self.page = Page::Codex;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_analyzed_valid(&self, cx: &App) -> bool {
+        self.codex.read(cx).proof_answer()
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_collection_start(&mut self, cx: &mut Context<Self>) {
+        self.page = Page::Packets;
+        self.packets.update(cx, |p, cx| p.proof_collection(cx));
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_collection_valid(&self, cx: &App) -> bool {
+        self.packets.read(cx).proof_collection_valid(cx)
+            && !self
+                .capture_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+    }
+    #[cfg(feature = "gui-test")]
     pub fn proof_saved_theme(&self) -> Option<String> {
         AppSettings::load(self.profile.join("appearance.json"))
             .unwrap()
@@ -344,6 +418,23 @@ impl Workspace {
                 .ok()
                 .map(|p| netlane_agent::Controller::new(p.with_file_name("netlane-agent.exe")))
         };
+        let packet_dialog = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let capture_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let codex = cx.new(|cx| CodexView::new(is_demo, profile.clone(), cx));
+        let codex_subscription = cx.subscribe(&codex, |ws, _, _: &ContextPrepared, cx| {
+            ws.page = Page::Codex;
+            cx.notify();
+        });
+        let packets = cx.new(|cx| {
+            PacketView::new(
+                is_demo,
+                packet_dialog.clone(),
+                codex.clone(),
+                profile.clone(),
+                capture_active.clone(),
+                cx,
+            )
+        });
         let mut ws = Self {
             page: Page::Overview,
             snapshot,
@@ -381,7 +472,7 @@ impl Workspace {
             allow_flags: false,
             theme_picker: None,
             theme_subscription: None,
-            _subscriptions: vec![subscription, add_subscription],
+            _subscriptions: vec![subscription, add_subscription, codex_subscription],
             focus: cx.focus_handle(),
             connection_page: 0,
             closing: false,
@@ -391,6 +482,10 @@ impl Workspace {
                 .then(netlane_windows::startup::StartupRegistration::current),
             startup_enabled: false,
             file_dialog_open: false,
+            packets,
+            codex,
+            packet_dialog,
+            capture_active,
             hide_pending: false,
             #[cfg(feature = "gui-test")]
             proof_session: None,
@@ -766,9 +861,20 @@ impl Workspace {
     }
     pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.restore_panel();
+        if self
+            .capture_active
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            self.error = Some("Pare e feche a coleta de pacotes antes de sair.".into());
+            cx.notify();
+            return;
+        }
         if self.waiting_for_stop
             || self.closing
             || self.file_dialog_open
+            || self
+                .packet_dialog
+                .load(std::sync::atomic::Ordering::Relaxed)
             || self.theme_picker.is_some()
             || self.default_busy
             || self.default_confirmation.is_some()
@@ -852,6 +958,9 @@ impl Workspace {
         self.closing
             || self.waiting_for_stop
             || self.file_dialog_open
+            || self
+                .packet_dialog
+                .load(std::sync::atomic::Ordering::Relaxed)
             || self.theme_picker.is_some()
             || self.session_state().busy
             || self.default_busy
@@ -1736,6 +1845,7 @@ impl Workspace {
                 .child(div().flex().items_center().gap(px(12.)).child(div().flex_1().child("Densidade das listas"))
                     .child(self.button("density",if settings.compact{"Compacta"}else{"Confortável"},cx).on_click(cx.listener(|ws,_,_,cx|ws.change_settings(cx,|s|s.compact = !s.compact))))))
             .child(div().p(px(20.)).bg(t.panel).rounded(px(6.)).border_1().border_color(t.border).flex().flex_col().gap(px(8.))
+                .child(gpui::img(if t.appearance == crate::theme::Appearance::Light { "brand/logo-light.png" } else { "brand/logo-dark.png" }).w(px(360.)).h(px(112.)))
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("NetLane · 0.4.0 Rust"))
                 .child(div().text_color(t.text_muted).child(format!("Interface GPUI · aparência {:?}. Preferências salvas neste perfil.",t.appearance)))
                 .child(div().font_family(MONO_FONT).text_size(px(11.)).text_color(t.text_muted).child(self.profile.display().to_string())))
@@ -1763,6 +1873,8 @@ impl Render for Workspace {
         let mut nav = div().flex().flex_col().gap(px(4.)).p(px(10.));
         for page in [
             Page::Overview,
+            Page::Packets,
+            Page::Codex,
             Page::Connections,
             Page::Rules,
             Page::Diagnostics,
@@ -1801,6 +1913,8 @@ impl Render for Workspace {
         }
         let content = match self.page {
             Page::Overview => self.overview(cx),
+            Page::Packets => div().child(self.packets.clone()),
+            Page::Codex => div().child(self.codex.clone()),
             Page::Connections => self.connections(cx),
             Page::Rules => self.rules(cx),
             Page::Diagnostics => self.diagnostics(cx),
@@ -1847,14 +1961,14 @@ impl Render for Workspace {
                     .bg(t.chrome)
                     .border_b_1()
                     .border_color(t.divider)
-                    .child(icon("lan", 18., t.accent))
+                    .child(gpui::img("brand/icon-app.png").size(px(24.)))
                     .child(div().font_weight(FontWeight::SEMIBOLD).child("NetLane"))
                     .child(
                         div()
                             .flex_1()
                             .text_color(t.text_muted)
                             .text_size(px(11.))
-                            .child("Cada app, sua rota"),
+                            .child("Diagnóstico de rede"),
                     )
                     .child(
                         self.button("title-theme", &t.name, cx)
@@ -1889,13 +2003,13 @@ impl Render for Workspace {
                                         div()
                                             .text_size(px(18.))
                                             .font_weight(FontWeight::SEMIBOLD)
-                                            .child("Sua rede"),
+                                            .child("NetLane"),
                                     )
                                     .child(
                                         div()
                                             .text_size(px(11.))
                                             .text_color(t.text_muted)
-                                            .child("Interfaces e aplicativos"),
+                                            .child("Ferramentas de rede"),
                                     ),
                             )
                             .child(nav)
