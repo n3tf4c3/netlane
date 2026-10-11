@@ -124,14 +124,14 @@ impl NativePolicySession {
             .executable
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("Caminho do executável ausente."))?;
-        let path = std::path::Path::new(executable);
+        // Refuse remote/device paths by text before the elevated filesystem check.
         ensure!(
-            path.is_absolute() && path.is_file(),
-            "É necessário um executável local existente."
+            netlane_core::is_local_path(executable),
+            "Caminho de executável remoto/dispositivo recusado."
         );
         ensure!(
-            !executable.starts_with("\\\\") && !executable.starts_with("\\\\?\\"),
-            "Caminho de executável remoto/dispositivo recusado."
+            std::path::Path::new(executable).is_file(),
+            "É necessário um executável local existente."
         );
         let encoded = wide(executable);
         let mut blob = ptr::null_mut();

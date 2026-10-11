@@ -707,9 +707,22 @@ impl Workspace {
                 self.revision = Some(revision);
                 self.dirty = false;
                 self.error = None;
-                self.notice = Some(
-                    "Regras salvas. A sessão ativa lê as mudanças no próximo ciclo.".to_owned(),
-                );
+                // The elevated session applies only rules sent by this panel.
+                let sent = self
+                    .controller
+                    .as_ref()
+                    .map_or(Ok(false), |c| c.update(self.policies.clone()));
+                match sent {
+                    Ok(true) => {
+                        self.notice = Some("Regras salvas e enviadas à sessão ativa.".to_owned())
+                    }
+                    Ok(false) => self.notice = Some("Regras salvas.".to_owned()),
+                    Err(e) => {
+                        self.error = Some(format!(
+                            "Regras salvas, mas não enviadas à sessão ativa: {e:#}"
+                        ))
+                    }
+                }
             }
             Err(e) => self.error = Some(format!("Não foi possível salvar: {e:#}")),
         }
@@ -968,7 +981,11 @@ impl Workspace {
         if self.dirty {
             self.error = Some("Salve as alterações antes de iniciar.".to_owned());
         } else if let Some(controller) = &self.controller
-            && let Err(e) = controller.start(self.policy_file.path.clone(), self.allow_flags)
+            && let Err(e) = controller.start(
+                self.policy_file.path.clone(),
+                self.policies.clone(),
+                self.allow_flags,
+            )
         {
             self.error = Some(format!("Não foi possível iniciar: {e:#}"));
         }

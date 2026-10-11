@@ -47,6 +47,21 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
         })
         .collect()
 }
+/// Actionable rules whose executable is not a present local file fall back to Windows'
+/// choice. `exists` is never called for a remote or device path.
+pub fn retire_missing(rules: &mut [PlannedRule], exists: impl Fn(&str) -> bool) {
+    for rule in rules {
+        if rule.mode != RouteMode::Automatic
+            && rule
+                .executable
+                .as_deref()
+                .is_none_or(|p| !crate::is_local_path(p) || !exists(p))
+        {
+            rule.mode = RouteMode::Automatic;
+            rule.detail = "Executável ausente ou remoto; política retirada.".to_owned();
+        }
+    }
+}
 pub fn expand_related(
     policies: &[RoutingPolicy],
     exists: impl Fn(&str) -> bool,
@@ -73,7 +88,8 @@ pub fn expand_related(
         {
             continue;
         }
-        if !path.as_bytes().get(1).is_some_and(|c| *c == b':') && !path.starts_with("\\\\") {
+        // The elevated agent checks candidates with `exists`: never for a remote root.
+        if !crate::is_local_path(path) {
             continue;
         }
         let Some(root) = path.rsplit_once(['\\', '/']).map(|p| p.0) else {

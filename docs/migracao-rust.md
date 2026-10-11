@@ -30,7 +30,7 @@ flowchart LR
 | `netlane-capture` | leitor PCAP/PCAPNG, análise incremental com amostras limitadas, SHA-256, referência e escrita rotativa; fonte fictícia nos testes |
 | `netlane-ai` | contexto revisável, referências verificáveis, probe de metadados e conversa explícita em perfil próprio sem ferramentas do App Server |
 | `netlane-windows` | adaptadores/contadores/TCP IPv4/identidade de processos, ABI WFP, sessão dinâmica, ACL/identidade de peers e opções temporárias |
-| `netlane-agent` | validação e plano sem elevação; sessão explícita com UAC, heartbeat, owner PID/data de criação, limpeza e exclusão de concorrência com .NET |
+| `netlane-agent` | validação e plano sem elevação; sessão explícita com UAC, heartbeat, owner PID/data de criação, limpeza e exclusão de concorrência com .NET. Protocolo v2: as regras salvas no painel vão pelo canal autenticado (`Start`/`Update`); o processo elevado não relê o arquivo do perfil, recusa caminhos UNC/dispositivo pelo texto e mantém as políticas anteriores quando um ciclo falha. DLLs resolvidas só no System32 |
 | `netlane-app` | navegação, cartões, conexões pesquisáveis, regras, diagnóstico e preferências de aparência |
 
 A interface segue o termIAX: GPUI na mesma revisão, Segoe UI, JetBrains Mono,

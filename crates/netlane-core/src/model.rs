@@ -141,7 +141,12 @@ impl<'de> Deserialize<'de> for RoutingPolicy {
         })
     }
 }
+/// Rules per file; keeps a full session snapshot inside one control-channel frame.
+pub const MAX_POLICIES: usize = 4096;
 pub fn validate_policies(policies: &[RoutingPolicy]) -> Result<()> {
+    if policies.len() > MAX_POLICIES {
+        bail!("Limite de {MAX_POLICIES} regras excedido.");
+    }
     let mut names = std::collections::HashSet::new();
     for p in policies {
         if p.application_id.trim().is_empty() {
@@ -161,6 +166,17 @@ pub fn validate_policies(policies: &[RoutingPolicy]) -> Result<()> {
         }
     }
     Ok(())
+}
+/// Local drive path (`C:\…`), decided by text before any filesystem access.
+/// UNC (`\\host\…`), device (`\\?\`, `\\.\`) and relative paths are refused, so an
+/// elevated caller never opens an SMB connection while checking existence.
+pub fn is_local_path(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+        && !path.contains('\0')
 }
 pub fn file_name(path: &str) -> &str {
     path.rsplit(['\\', '/']).next().unwrap_or(path)
