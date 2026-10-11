@@ -250,6 +250,21 @@ pub fn require_elevation() -> Result<()> {
     Ok(())
 }
 
+/// First call of the elevated agent: later LoadLibrary calls search System32 only,
+/// so a DLL planted beside a user-writable executable is never loaded elevated.
+pub fn harden_dll_search() -> Result<()> {
+    use windows_sys::Win32::System::LibraryLoader::{
+        LOAD_LIBRARY_SEARCH_SYSTEM32, SetDefaultDllDirectories,
+    };
+    // SAFETY: Process-wide flag with a documented constant; no pointers involved.
+    ensure!(
+        // SAFETY: Documented flag value only; the call reads no caller memory.
+        unsafe { SetDefaultDllDirectories(LOAD_LIBRARY_SEARCH_SYSTEM32) } != 0,
+        "Não foi possível restringir a busca de DLLs: {}",
+        std::io::Error::last_os_error()
+    );
+    Ok(())
+}
 pub fn launch_agent(executable: &Path, name: &str) -> Result<(OwnedHandle, u32)> {
     launch(executable, name, "--ui-session")
 }
