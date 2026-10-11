@@ -94,11 +94,45 @@ public static class SessionPipe
         if (expected <= 0 || actual != expected) throw new UnauthorizedAccessException("O processo no canal não é a instância autorizada.");
     }
 
-    public static IDisposable AcquireRoutingLease()
+    public const string RoutingLease = "routing-session.v2.lock";
+    public const string DefaultConnectionLease = "default-connection.v2.lock";
+
+    public static IDisposable AcquireRoutingLease() => AcquireLease(RoutingLease, "NetLane.RoutingSession.v1",
+        "Já existe uma sessão de roteamento NetLane, ou o processo não está elevado. Encerre a sessão pela janela ou terminal que a iniciou.");
+
+    public static IDisposable AcquireDefaultConnectionLease() => AcquireLease(DefaultConnectionLease, "NetLane.DefaultConnection.v1",
+        "Já existe uma alteração de conexão padrão NetLane em andamento, ou o processo não está elevado.");
+
+    // Machine-wide exclusion shared with the Rust agent. Only administrators can create files
+    // under Common Files, so a user process can neither create the lock before the elevated
+    // session nor open it while it is held (no sharing). Delete-on-close also covers crashes.
+    // The v1 pipe is held only when free, for older versions; a squatted pipe no longer blocks.
+    internal static IDisposable AcquireLease(string name, string legacyPipe, string busy)
     {
-        try { return CreateServer("NetLane.RoutingSession.v1"); }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
-        { throw new IOException("Já existe uma sessão de roteamento NetLane. Encerre-a pela janela ou terminal que a iniciou.", ex); }
+        if (name is not (RoutingLease or DefaultConnectionLease) && !(name.StartsWith("lease-test-", StringComparison.Ordinal) && name.EndsWith(".v2.lock", StringComparison.Ordinal)))
+            throw new ArgumentException("Nome de exclusão inválido.");
+        if (!Environment.Is64BitProcess) throw new PlatformNotSupportedException("A exclusão de sessões exige processo x64.");
+        FileStream lockFile;
+        try
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles), "NetLane");
+            Directory.CreateDirectory(directory);
+            lockFile = new FileStream(Path.Combine(directory, name), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { throw new IOException(busy, ex); }
+        NamedPipeServerStream? legacy = null;
+        try { legacy = CreateServer(legacyPipe); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return new Lease(lockFile, legacy);
+    }
+
+    private sealed class Lease(FileStream lockFile, NamedPipeServerStream? legacy) : IDisposable
+    {
+        public void Dispose()
+        {
+            legacy?.Dispose();
+            lockFile.Dispose();
+        }
     }
 
     public static void RejectOtherServiceProcesses()

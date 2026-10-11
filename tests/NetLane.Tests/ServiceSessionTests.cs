@@ -54,6 +54,26 @@ public sealed class ServiceSessionTests
         Assert.Throws<UnauthorizedAccessException>(() => SessionPipe.VerifyServer(client, Environment.ProcessId + 1));
     }
 
+    [Fact]
+    public void SessionLeaseCannotBeSquattedWithoutElevationAndExcludesASecondSession()
+    {
+        // Test-only names; never the production leases shared with the Rust agent.
+        var name = "lease-test-" + Guid.NewGuid().ToString("N") + ".v2.lock";
+        var legacy = SessionPipe.Prefix + Guid.NewGuid().ToString("N");
+        Assert.Throws<ArgumentException>(() => SessionPipe.AcquireLease("..\\outside.v2.lock", legacy, "busy"));
+        if (!new WindowsPrincipal(WindowsIdentity.GetCurrent()).IsInRole(WindowsBuiltInRole.Administrator))
+        {
+            // A filtered or standard token cannot create files under Common Files, so a user
+            // process cannot occupy the lease before the elevated session.
+            Assert.Throws<IOException>(() => SessionPipe.AcquireLease(name, legacy, "busy"));
+            return;
+        }
+        var first = SessionPipe.AcquireLease(name, legacy, "busy");
+        Assert.Throws<IOException>(() => SessionPipe.AcquireLease(name, legacy, "busy"));
+        first.Dispose();
+        SessionPipe.AcquireLease(name, legacy, "busy").Dispose();
+    }
+
     [Theory]
     [InlineData("NetLane.UI.bad")]
     [InlineData("other-pipe")]
