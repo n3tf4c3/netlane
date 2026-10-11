@@ -72,6 +72,7 @@ type Compile = unsafe extern "C" fn(*mut c_void, *mut Bpf, *const c_char, c_int,
 type SetFilter = unsafe extern "C" fn(*mut c_void, *mut Bpf) -> c_int;
 type FreeCode = unsafe extern "C" fn(*mut Bpf);
 type Version = unsafe extern "C" fn() -> *const c_char;
+type GetError = unsafe extern "C" fn(*mut c_void) -> *const c_char;
 static RUNTIME_PATH: Mutex<Option<String>> = Mutex::new(None);
 struct Library {
     module: HMODULE,
@@ -296,6 +297,7 @@ impl Capture {
         let compile = symbol!(library, "pcap_compile", Compile);
         let set = symbol!(library, "pcap_setfilter", SetFilter);
         let free = symbol!(library, "pcap_freecode", FreeCode);
+        let error = symbol!(library, "pcap_geterr", GetError);
         let device = CString::new(device)?;
         let mut buffer = [0; 256];
         // SAFETY: native local name and correct error buffer. Not activated yet.
@@ -367,14 +369,20 @@ impl Capture {
             // SAFETY: active handle and initialized output; unknown IPv4
             // netmask prevents guessing the interface's broadcast configuration.
             let code = unsafe { compile(handle, &mut bpf, text.as_ptr(), 1, u32::MAX) };
-            ensure!(code == 0, "Filtro BPF não aceito pelo Npcap.");
+            // SAFETY: pcap_geterr returns the handle's NUL-terminated message, copied at once.
+            let detail = || native_string(unsafe { error(handle) });
+            ensure!(code == 0, "Filtro BPF não aceito pelo Npcap: {}", detail());
             // SAFETY: successfully compiled BPF belongs to libpcap; free after set.
             let code = unsafe { set(handle, &mut bpf) };
             // SAFETY: successful compilation owns this code; set copied it.
             unsafe {
                 free(&mut bpf);
             }
-            ensure!(code == 0, "Não foi possível aplicar o filtro BPF.");
+            ensure!(
+                code == 0,
+                "Não foi possível aplicar o filtro BPF: {}",
+                detail()
+            );
         }
         Ok(capture)
     }
