@@ -11,9 +11,11 @@ $build = Get-ArtifactPath $root $BuildDirectory
 $archiveTool = (Resolve-Path -LiteralPath $SevenZipPath).Path
 Assert-RegularPath $archiveTool
 $report = Get-Content -Raw -Encoding UTF8 (Get-PackageFile $build 'build-report.json') | ConvertFrom-Json
-if ($report.Schema -ne 1 -or $report.Product -ne 'NetLaneRustPreview' -or $report.PublicReleaseReady -or $report.Signed) {
-    throw 'Este verificador aceita somente a prévia Rust sem assinatura.'
+if ($report.Schema -ne 1 -or $report.Product -ne 'NetLaneRustPreview' -or $report.PublicReleaseReady) {
+    throw 'Este verificador aceita somente a prévia Rust.'
 }
+$signed = [bool]$report.Signed
+if ($signed -and ($report.Signing.CertificateThumbprint -notmatch '^[A-F0-9]{40}$')) { throw 'Build assinado sem thumbprint registrado.' }
 if ($report.Installer -notmatch '^NetLane-Rust-\d+\.\d+\.\d+-preview-win-x64-setup\.exe$') { throw 'Nome de instalador inválido.' }
 if ($report.PSObject.Properties['CompilerInputCharset'] -and $report.CompilerInputCharset -cne 'UTF8') {
     throw 'Charset da compilacao Rust deve ser UTF8.'
@@ -106,11 +108,19 @@ foreach ($package in $licenses.Packages) {
     }
 }
 $signature = Get-AuthenticodeSignature -LiteralPath $setup
-if ($signature.Status -ne 'NotSigned') { throw 'Assinatura inesperada; este build não autoriza assinatura.' }
+# Signed build: setup, extracted uninstaller and both own executables carry the recorded
+# certificate and an RFC 3161 timestamp. Unsigned build: none may carry a signature.
+$ownBinaries = @($setup,(Get-PackageFile $extracted 'Uninstall.exe'),(Get-PackageFile $extracted 'netlane.exe'),(Get-PackageFile $extracted 'netlane-agent.exe'))
+foreach ($binary in $ownBinaries) {
+    $current = Get-AuthenticodeSignature -LiteralPath $binary
+    if ($signed) {
+        if ($current.Status -ne 'Valid' -or $current.SignerCertificate.Thumbprint -ne $report.Signing.CertificateThumbprint -or $null -eq $current.TimeStamperCertificate) { throw "Assinatura ausente/inválida: $binary" }
+    } elseif ($current.Status -ne 'NotSigned') { throw "Assinatura inesperada em build sem assinatura: $binary" }
+}
 $result = [ordered]@{
     Passed=$true; VerifiedPayloadFiles=$expected.Count; PackagingSourcesVerified=$true; X64Executables=2
     InstallerSha256=$report.Sha256; ManifestSha256=$report.ManifestSha256
-    InstallerPerMachine=$true; UiAsInvoker=$true; SignatureStatus=$signature.Status.ToString()
+    InstallerPerMachine=$true; UiAsInvoker=$true; SignatureStatus=$signature.Status.ToString(); SignedBinaries=$(if ($signed) { $ownBinaries.Count } else { 0 })
     LicensePackages=$licenses.Packages.Count; LicenseIssues=@($licenses.Issues).Count
     VisualCppX64Minimum=$report.Prerequisites.VisualCppX64Minimum
     InstallerExecuted=$false; RuntimeQaVerified=$false; PublicReleaseReady=$false
