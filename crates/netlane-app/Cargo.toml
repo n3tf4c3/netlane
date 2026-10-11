@@ -10,7 +10,9 @@ name = "netlane"
 path = "src/main.rs"
 
 [features]
-gui-test = ["gpui/test-support", "gpui_platform/test-support", "netlane-windows/desktop-test"]
+# Portable build: never launches the elevated agent (routing, default connection).
+portable = []
+gui-test =["gpui/test-support", "gpui_platform/test-support", "netlane-windows/desktop-test"]
 
 [dependencies]
 anyhow.workspace = true
