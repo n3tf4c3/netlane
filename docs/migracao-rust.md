@@ -70,12 +70,19 @@ cargo build --workspace --release --locked
 a rede nem o perfil instalado. Alterações de regras ficam em memória; aparência
 fica em `%TEMP%\NetLane-Rust-Demo`. Não inicie uma sessão para validar a prévia.
 
-Para criar uma pasta com os dois executáveis, documentação, avisos e atalho de
-demonstração, sem instalar:
+Para criar a prévia portátil, com documentação, avisos e atalho de demonstração,
+sem instalar:
 
 ```powershell
 .\scripts\build-rust-preview.ps1
 ```
+
+A prévia portátil leva só `netlane.exe`, compilado com a feature `portable`: o
+painel nunca resolve nem eleva `netlane-agent.exe`, mesmo que alguém coloque um
+na pasta. Uma pasta portátil (Downloads, pendrive) é gravável pelo usuário, e um
+auxiliar elevado ali poderia ser trocado ou receber uma DLL plantada. Observação,
+captura, análise e leitura da conexão padrão continuam; roteamento por aplicativo
+e troca da conexão padrão exigem a versão instalada.
 
 Uma abertura normal usa `%LOCALAPPDATA%\NetLane-Rust` e começa em observação.
 `--profile C:\PastaAbsoluta` permite um perfil próprio. Não aponte uma prévia
@@ -363,7 +370,7 @@ comum e o NSIS e verificam fontes, manifesto e extração sem executar o setup.
 Inclui avisos de recursos e inventário Cargo transitivo, com lacunas explícitas.
 Instalação, upgrade/reparo, remoção, autorun/logon, runtime MSVC, revisão final de
 licenças e assinatura continuam gates separados. A prévia portátil permanece
-sem marcador instalado. Não abrir o payload extraído como produto instalado.
+sem marcador instalado e sem agente elevado. Não abrir o payload extraído como produto instalado.
 O [registro de QA estático](qa-empacotamento-rust-2026-10-10.md) preserva o
 primeiro pacote de 708 arquivos e as atualizações para 709 e 710 arquivos,
 com oito recusas do verificador e nenhum texto de licença ausente no inventário

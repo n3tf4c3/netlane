@@ -29,6 +29,8 @@ jobs:
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
       - run: cargo test --workspace --locked
+      - name: Portable UI never resolves the elevated agent
+        run: cargo test -p netlane-app --locked --features portable portable_build
 
   advisories:
     runs-on: ubuntu-latest

@@ -196,7 +196,7 @@ impl Workspace {
                         ws.default_valid = true;
                         ws.default_revision = revision;
                         ws.update_default(snapshot, journal);
-                        ws.default_status = if ws.default_journal.is_some() { "Configuração anterior disponível para restauração." } else { "Selecione uma conexão e clique em Aplicar. O Windows solicitará autorização." }.into();
+                        ws.default_status = if PORTABLE && !ws.demo { PORTABLE_NOTICE } else if ws.default_journal.is_some() { "Configuração anterior disponível para restauração." } else { "Selecione uma conexão e clique em Aplicar. O Windows solicitará autorização." }.into();
                     }
                     Err(e) => { ws.default_snapshot = None; ws.default_status = format!("Não foi possível ler prioridade/recuperação: {e:#}"); }
                 }
@@ -225,9 +225,7 @@ impl Workspace {
             && (self.demo || self.default_agent().is_some_and(|p| p.is_file()))
     }
     fn default_agent(&self) -> Option<PathBuf> {
-        std::env::current_exe()
-            .ok()
-            .map(|p| p.with_file_name("netlane-agent.exe"))
+        elevated_agent()
     }
     fn ask_default(&mut self, restore: bool, cx: &mut Context<Self>) {
         if if restore {
@@ -515,6 +513,16 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn portable_build_never_resolves_the_elevated_agent() {
+        // Both the routing controller and the default-connection command use this path.
+        let agent = elevated_agent();
+        if PORTABLE {
+            assert!(agent.is_none());
+        } else {
+            assert!(agent.is_some_and(|p| p.ends_with("netlane-agent.exe")));
+        }
+    }
     #[test]
     fn journal_is_durable_before_authorization_and_cancelled_uac_needs_no_restore_launch() {
         let directory = tempfile::tempdir().unwrap();

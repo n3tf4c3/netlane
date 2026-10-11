@@ -29,6 +29,21 @@ mod default_connection_view;
 #[path = "quality_view.rs"]
 mod quality_view;
 
+/// Portable builds may run from any user-writable folder (Downloads, USB). They never
+/// launch the elevated agent, so a planted or replaced executable cannot ride the UAC
+/// prompt. Observation, capture and analysis remain available.
+pub(crate) const PORTABLE: bool = cfg!(feature = "portable");
+pub(crate) const PORTABLE_NOTICE: &str = "Versão portátil: roteamento por aplicativo e troca da conexão padrão exigem a versão instalada. Observação, captura e análise continuam disponíveis.";
+/// The only place that resolves the elevated agent; None in portable builds.
+pub(crate) fn elevated_agent() -> Option<PathBuf> {
+    if PORTABLE {
+        return None;
+    }
+    std::env::current_exe()
+        .ok()
+        .map(|p| p.with_file_name("netlane-agent.exe"))
+}
+
 actions!(workspace, [SelectTheme, SaveRules]);
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
@@ -520,9 +535,7 @@ impl Workspace {
         let controller = if is_demo {
             None
         } else {
-            std::env::current_exe()
-                .ok()
-                .map(|p| netlane_agent::Controller::new(p.with_file_name("netlane-agent.exe")))
+            elevated_agent().map(netlane_agent::Controller::new)
         };
         let packet_dialog = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let capture_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -1103,9 +1116,16 @@ impl Workspace {
             .map(|c| c.state())
             .unwrap_or_else(|| netlane_agent::SessionState {
                 cleanup_confirmed: true,
-                detail: "Demonstração com dados fictícios. Roteamento indisponível.".to_owned(),
+                detail: self.unavailable_session().to_owned(),
                 ..Default::default()
             })
+    }
+    fn unavailable_session(&self) -> &'static str {
+        if self.demo {
+            "Demonstração com dados fictícios. Roteamento indisponível."
+        } else {
+            PORTABLE_NOTICE
+        }
     }
     fn desktop_blocked(&self) -> bool {
         self.closing
@@ -1131,6 +1151,8 @@ impl Workspace {
                 "Limpeza não confirmada"
             } else if self.demo {
                 "Demonstração · sessão indisponível"
+            } else if PORTABLE {
+                "Versão portátil · sem roteamento"
             } else {
                 "Sessão parada"
             }
@@ -1139,7 +1161,7 @@ impl Workspace {
             total_rules: self.policies.len(),
             dirty: self.dirty,
             can_start: !blocked
-                && !self.demo
+                && self.controller.is_some()
                 && !self.dirty
                 && !state.running
                 && state.cleanup_confirmed,
@@ -1968,7 +1990,7 @@ impl Workspace {
             .as_ref()
             .map(|c| c.state())
             .unwrap_or_else(|| netlane_agent::SessionState {
-                detail: "Demonstração com dados fictícios. Roteamento indisponível.".to_owned(),
+                detail: self.unavailable_session().to_owned(),
                 ..Default::default()
             });
         let mut details = div().flex().flex_col().gap(px(8.));
@@ -1982,8 +2004,8 @@ impl Workspace {
         }
         div().flex().flex_col().gap(px(18.)).child(self.heading("Controle da sessão","O painel observa a rede sem elevação. O agente solicita UAC ao iniciar.",cx))
             .child(div().p(px(20.)).bg(t.panel).border_1().border_color(t.border).rounded(px(6.)).flex().flex_col().gap(px(14.)).child(div().font_weight(FontWeight::SEMIBOLD).child(state.detail))
-                .child(self.button("flags",if self.allow_flags{"✓ Autorizar routepolicies temporário (IPv4/IPv6)"}else{"Autorizar routepolicies temporário (IPv4/IPv6)"},cx).when(state.running||state.busy,|d|d.text_color(t.text_disabled)).on_click(cx.listener(|ws,_,_,cx|{if ws.controller.as_ref().is_none_or(|c|!c.state().running&&!c.state().busy){ws.allow_flags = !ws.allow_flags;}cx.notify();})))
-                .child(div().flex().gap(px(8.)).when(!self.demo&&!state.running&&!state.busy&&state.cleanup_confirmed,|d|d.child(self.button("start","Iniciar sessão",cx).on_click(cx.listener(|ws,_,_,cx|ws.start_session(cx)))))
+                .when(!PORTABLE,|d|d.child(self.button("flags",if self.allow_flags{"✓ Autorizar routepolicies temporário (IPv4/IPv6)"}else{"Autorizar routepolicies temporário (IPv4/IPv6)"},cx).when(state.running||state.busy,|d|d.text_color(t.text_disabled)).on_click(cx.listener(|ws,_,_,cx|{if ws.controller.as_ref().is_none_or(|c|!c.state().running&&!c.state().busy){ws.allow_flags = !ws.allow_flags;}cx.notify();}))))
+                .child(div().flex().gap(px(8.)).when(self.controller.is_some()&&!state.running&&!state.busy&&state.cleanup_confirmed,|d|d.child(self.button("start","Iniciar sessão",cx).on_click(cx.listener(|ws,_,_,cx|ws.start_session(cx)))))
                     .when(!self.demo&&state.running,|d|d.child(self.button("stop","Parar com segurança",cx).on_click(cx.listener(|ws,_,_,cx|ws.stop_session(cx)))))))
             .child(details).child(div().text_color(t.text_muted).child(format!("Arquivo de regras: {}",self.policy_file.path.display())))
             .child(div().text_color(t.text_muted).child("Uma política aceita pelo Windows ainda precisa de prova de tráfego. A sessão encerra e restaura suas opções temporárias ao sair do painel."))
