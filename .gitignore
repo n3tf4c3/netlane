@@ -1,6 +1,11 @@
 [Bb]in/
 [Oo]bj/
 
+# This is Cargo executable source, not a .NET build directory.
+!crates/netlane-capture/src/bin/
+crates/netlane-capture/src/bin/*
+!crates/netlane-capture/src/bin/netlane-qa.rs
+
 .vs/
 *.user
 *.suo

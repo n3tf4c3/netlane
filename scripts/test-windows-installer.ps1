@@ -16,6 +16,22 @@ $report = Get-Content -LiteralPath (Join-Path $build 'build-report.json') -Raw -
 if ($report.Installer -ne [IO.Path]::GetFileName($report.Installer)) { throw 'Nome de instalador inválido.' }
 $setup = Join-Path $build $report.Installer
 if ((Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash -ne $report.Sha256) { throw 'Hash do instalador não confere.' }
+$packagingSourcesVerified = $false
+# Older reports did not retain their compiler inputs. Never substitute today's
+# checkout as evidence of the source used to build an older installer.
+if ($report.PSObject.Properties.Match('PackagingSources').Count -gt 0) {
+    $requiredSources = @('source/NetLane.nsi', 'source/ProcessGuard.nsh', 'build-defines.nsh', 'install-files.nsh', 'uninstall-files.nsh', 'validate-payload.nsh')
+    $sources = @($report.PackagingSources)
+    if ($sources.Count -ne $requiredSources.Count -or @($sources.Path | Sort-Object -Unique).Count -ne $sources.Count) {
+        throw 'Inventário de fontes do instalador inválido.'
+    }
+    foreach ($entry in $sources) {
+        if ($entry.Path -notin $requiredSources -or (Get-FileHash -LiteralPath (Join-Path $build $entry.Path) -Algorithm SHA256).Hash -ne $entry.Sha256) {
+            throw "Fonte do instalador diferente da compilação: $($entry.Path)"
+        }
+    }
+    $packagingSourcesVerified = $true
+}
 $extracted = Join-Path $build ('archive-check-' + [guid]::NewGuid().ToString('N').Substring(0, 8))
 & $archiveTool x $setup ('-o' + $extracted) -y -bso0 -bsp0
 if ($LASTEXITCODE -ne 0) { throw 'Falha na extração estática; o instalador não foi executado.' }
@@ -67,13 +83,18 @@ $uninstallerBytes = [IO.File]::ReadAllBytes((Join-Path $extracted 'Uninstall.exe
 if ([Text.Encoding]::UTF8.GetString($uninstallerBytes) -notmatch 'requestedExecutionLevel\s+level="requireAdministrator"') {
     throw 'Desinstalador não possui manifesto de elevação.'
 }
-$source = Get-Content -LiteralPath (Join-Path $repository 'packaging\windows\NetLane.nsi') -Raw -Encoding UTF8
 $deletions = Get-Content -LiteralPath (Join-Path $build 'uninstall-files.nsh') -Raw -Encoding UTF8
-if ($source -match '(?im)^\s*(Exec|ExecWait|ExecShell|RMDir\s+/r)\b' -or $deletions -match '(?i)RMDir\s+/r|\*|\$LOCALAPPDATA|\$APPDATA') {
+if ($deletions -match '(?i)RMDir\s+/r|\*|\$LOCALAPPDATA|\$APPDATA') {
     throw 'A definição contém execução externa ou remoção ampla inesperada.'
 }
-if (-not $source.Contains('RequestExecutionLevel admin') -or -not $source.Contains('RequireNetLaneClosed "un."')) {
-    throw 'Pré-condições obrigatórias do instalador ausentes.'
+if ($packagingSourcesVerified) {
+    $source = Get-Content -LiteralPath (Join-Path $build 'source\NetLane.nsi') -Raw -Encoding UTF8
+    if ($source -match '(?im)^\s*(Exec|ExecWait|ExecShell|RMDir\s+/r)\b') {
+        throw 'A fonte compilada contém execução externa ou remoção ampla inesperada.'
+    }
+    if (-not $source.Contains('RequestExecutionLevel admin') -or -not $source.Contains('RequireNetLaneClosed "un."')) {
+        throw 'Pré-condições obrigatórias do instalador ausentes.'
+    }
 }
 $defaults = Get-Content -LiteralPath (Join-Path $extracted 'service\appsettings.json') -Raw -Encoding UTF8 | ConvertFrom-Json
 if (@($defaults.NetLane.Routing.Policies).Count) { throw 'O instalador inclui regras no appsettings.' }
@@ -83,13 +104,30 @@ if ([version]$report.Version -ge [version]'0.3.1' -and (Get-Content -LiteralPath
 if (@(Get-ChildItem -LiteralPath $extracted -Recurse -File | Where-Object { $_.Name -like 'default-connection.json*' }).Count -ne 0) {
     throw 'Configuração pessoal da conexão padrão encontrada no pacote.'
 }
+$signedFilesVerified = 0
+if ($report.Signed) {
+    $thumbprint = $report.Signing.CertificateThumbprint
+    if ($thumbprint -notmatch '^[A-Fa-f0-9]{40}$' -or $manifest.Signing.CertificateThumbprint -ne $thumbprint) { throw 'Identidade de assinatura ausente ou diferente no manifesto.' }
+    $ownedNames = @('NetLane.UI.exe', 'NetLane.UI.dll', 'NetLane.Service.exe', 'NetLane.Service.dll', 'NetLane.Core.dll', 'NetLane.Network.dll')
+    $owned = @(Get-ChildItem -LiteralPath $extracted -Recurse -File | Where-Object { $_.Name -in $ownedNames })
+    if ($owned.Count -ne 8) { throw 'Quantidade inesperada de binários próprios.' }
+    foreach ($path in (@($setup, (Join-Path $extracted 'Uninstall.exe')) + @($owned | ForEach-Object FullName))) {
+        $signature = Get-AuthenticodeSignature -LiteralPath $path
+        if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $thumbprint -or $null -eq $signature.TimeStamperCertificate) {
+            throw "Assinatura/timestamp não confirmado: $path"
+        }
+        $signedFilesVerified++
+    }
+}
 $result = [ordered]@{
     Passed = $true; InstallerSha256 = $report.Sha256; VerifiedPayloadFiles = $expected.Count
     X64Executables = 2; UiAsInvoker = $true; InstallerRequiresAdministrator = $true
     NoLocalRules = $true; EmptyDefaultPolicies = $true
+    PackagingSourcesVerified = $packagingSourcesVerified
     UiApplicationIcon = $uiIcon
     InstallerExecuted = $false; RuntimeGuardVerified = $false; InstallationVerified = $false
     SignatureStatus = (Get-AuthenticodeSignature -LiteralPath $setup).Status.ToString()
+    SignedFilesVerified = $signedFilesVerified
 }
 $json = $result | ConvertTo-Json
 [IO.File]::WriteAllText((Join-Path $extracted 'verification.json'), $json, (New-Object System.Text.UTF8Encoding($false)))

@@ -24,6 +24,32 @@ fn fixture() -> Context {
     }
 }
 #[test]
+fn saturated_selection_can_be_replaced_without_changing_prior_snapshot() {
+    let mut previous = fixture();
+    previous.total_packets = 20;
+    previous.inspected_packets = 20;
+    previous.omitted_packets = 0;
+    previous.packets = (1..=16)
+        .map(|number| PacketEvidence {
+            number,
+            ..fixture().packets.remove(0)
+        })
+        .collect();
+    let original = previous.clone();
+    let mut next = previous.clone();
+    next.investigation_id = "next".into();
+    next.packets = vec![PacketEvidence {
+        number: 17,
+        ..fixture().packets.remove(0)
+    }];
+    assert!(next.clone().select(Some(&previous), false).is_err());
+    let replaced = next.select(Some(&previous), true).unwrap();
+    assert_eq!(replaced.packets.len(), 1);
+    assert_eq!(replaced.packets[0].number, 17);
+    assert_eq!(replaced.investigation_id, previous.investigation_id);
+    assert_eq!(previous, original);
+}
+#[test]
 fn context_has_traceable_selected_metadata_and_no_raw_bytes_or_paths() {
     let c = fixture();
     let prompt = c.prompt("falha de rede", "O que foi observado?").unwrap();

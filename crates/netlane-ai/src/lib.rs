@@ -2,7 +2,9 @@
 #![forbid(unsafe_code)]
 pub mod agent;
 pub mod bridge;
+pub mod bundle;
 pub mod codex;
+pub mod investigation;
 pub mod report;
 pub use agent::{AcpError, AgentHandle, Command, Event, ModelChoice, ModelOption};
 mod context {
@@ -55,6 +57,26 @@ fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
 }
 impl Context {
+    /// Adjust the next turn's selection without mutating earlier snapshots.
+    pub fn select(mut self, previous: Option<&Self>, replace: bool) -> Result<Self> {
+        if let Some(previous) = previous.filter(|prior| prior.sha256 == self.sha256) {
+            self.investigation_id = previous.investigation_id.clone();
+            if !replace {
+                for packet in &previous.packets {
+                    if !self.packets.iter().any(|p| p.number == packet.number) {
+                        self.packets.push(packet.clone());
+                    }
+                }
+            }
+        }
+        ensure!(
+            self.packets.len() <= MAX_PACKETS,
+            "O contexto já tem 16 pacotes. Remova anexos no chat ou use Somente este pacote para substituir a seleção."
+        );
+        self.packets.sort_by_key(|p| p.number);
+        self.validate()?;
+        Ok(self)
+    }
     pub fn validate(&self) -> Result<()> {
         ensure!(
             valid_id(&self.investigation_id),

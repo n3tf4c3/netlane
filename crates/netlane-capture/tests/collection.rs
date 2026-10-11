@@ -66,6 +66,261 @@ fn options() -> Options {
         ..Options::default()
     }
 }
+
+#[test]
+fn borrowed_batches_preserve_every_byte_and_timestamp_across_rotation() {
+    struct Borrowed {
+        index: u32,
+    }
+    impl Source for Borrowed {
+        fn link_type(&self) -> u16 {
+            1
+        }
+        fn stats(&mut self) -> Option<DriverStats> {
+            None
+        }
+        fn poll(&mut self) -> anyhow::Result<Poll> {
+            panic!("must use the bulk adapter")
+        }
+        fn poll_batch(&mut self, batch: &mut PacketBatch) -> anyhow::Result<BatchPoll> {
+            while self.index < 600 && batch.has_room() {
+                let size = if self.index.is_multiple_of(3) {
+                    9000
+                } else {
+                    128
+                };
+                batch.push(
+                    1_700_000_000,
+                    self.index,
+                    size + 17,
+                    &vec![self.index as u8; size as usize],
+                )?;
+                self.index += 1;
+            }
+            Ok(if self.index == 600 {
+                BatchPoll::End
+            } else {
+                BatchPoll::Ready
+            })
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let directory = temp.path().join("borrowed");
+    let mut config = options();
+    config.snaplen = 9000;
+    config.segment_bytes = 256 * 1024;
+    config.total_bytes = 4 * 1024 * 1024;
+    let (tx, rx) = mpsc::sync_channel(2);
+    let consumer = std::thread::spawn(move || while rx.recv().is_ok() {});
+    let receipt = run(
+        directory.clone(),
+        config.clone(),
+        || Ok(Borrowed { index: 0 }),
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Progress::default()),
+        tx,
+    )
+    .unwrap();
+    consumer.join().unwrap();
+    assert_eq!(receipt.written, 600);
+    assert_eq!(receipt.queue_dropped + receipt.unwritten, 0);
+    assert!(receipt.source_closed && !receipt.reason.starts_with("erro:"));
+    let mut index = 0u32;
+    for (number, segment) in receipt.segments.iter().enumerate() {
+        assert_eq!(segment.file, format!("segment-{:04}.pcap", number + 1));
+        assert!(segment.bytes <= config.segment_bytes);
+        let dump =
+            netlane_capture::load(&directory.join(&segment.file), &AtomicBool::new(false)).unwrap();
+        assert_eq!(dump.sha256, segment.sha256);
+        for packet in dump.packets {
+            let size = if index.is_multiple_of(3) { 9000 } else { 128 };
+            assert_eq!(packet.bytes, vec![index as u8; size]);
+            assert_eq!(packet.original_len, size as u32 + 17);
+            assert_eq!(
+                packet.timestamp.unwrap().unix_nanos(),
+                1_700_000_000_000_000_000 + i128::from(index) * 1000
+            );
+            index += 1;
+        }
+    }
+    assert_eq!(index, 600);
+}
+
+struct InvalidRecord {
+    index: u32,
+}
+impl Source for InvalidRecord {
+    fn link_type(&self) -> u16 {
+        1
+    }
+    fn stats(&mut self) -> Option<DriverStats> {
+        None
+    }
+    fn poll(&mut self) -> anyhow::Result<Poll> {
+        self.index += 1;
+        if self.index > 2 {
+            return Ok(Poll::End);
+        }
+        Ok(Poll::Packet(Record {
+            seconds: 1_700_000_000,
+            micros: if self.index == 2 { 1_000_000 } else { 0 },
+            original_len: 128,
+            bytes: vec![0; 128],
+        }))
+    }
+}
+
+#[test]
+fn invalid_record_does_not_publish_buffered_packets_as_saved() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("invalid");
+    let progress = Arc::new(Progress::default());
+    let (tx, _) = mpsc::sync_channel(1);
+    let receipt = run(
+        dir.clone(),
+        options(),
+        || Ok(InvalidRecord { index: 0 }),
+        Arc::new(AtomicBool::new(false)),
+        progress.clone(),
+        tx,
+    )
+    .unwrap();
+    assert!(receipt.reason.contains("Registro inválido"));
+    assert_eq!(receipt.buffered, 1);
+    assert_eq!(receipt.written, 0);
+    assert_eq!(receipt.unwritten, 2);
+    assert_eq!(receipt.bytes, 0);
+    assert!(receipt.segments.is_empty());
+    assert!(receipt.source_closed && dir.join("segment-0001.pcap.part").exists());
+    assert_eq!(progress.written.load(Ordering::Relaxed), 0);
+}
+
+#[test]
+fn finalization_collision_preserves_previous_file_and_counts_only_published_segments() {
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("collision");
+    let target = dir.join("segment-0002.pcap");
+    let collision = target.clone();
+    let (tx, _) = mpsc::sync_channel(1);
+    let mut config = options();
+    config.segment_bytes = 184; // one 128-byte packet per segment
+    let receipt = run(
+        dir.clone(),
+        config,
+        move || {
+            std::fs::write(collision, b"existing evidence")?;
+            Ok(Fake {
+                remaining: 2,
+                index: 0,
+                slow: true,
+                closed: Arc::new(AtomicBool::new(false)),
+                fail: false,
+            })
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Progress::default()),
+        tx,
+    )
+    .unwrap();
+    assert!(receipt.reason.contains("destino já existe"));
+    assert_eq!(receipt.buffered, 2);
+    assert_eq!(receipt.written, 1);
+    assert_eq!(receipt.unwritten, 1);
+    assert_eq!(receipt.segments.len(), 1);
+    assert_eq!(receipt.bytes, receipt.segments[0].bytes);
+    assert_eq!(std::fs::read(target).unwrap(), b"existing evidence");
+    assert!(dir.join("segment-0002.pcap.part").exists());
+}
+
+#[cfg(windows)]
+#[test]
+fn flush_failure_never_claims_buffered_packets_are_saved() {
+    use std::{fs::File, os::windows::io::AsRawHandle, sync::Mutex};
+    use windows_sys::Win32::{
+        Storage::FileSystem::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY, LockFileEx},
+        System::IO::OVERLAPPED,
+    };
+    struct LockedSource {
+        directory: PathBuf,
+        lock: Arc<Mutex<Option<File>>>,
+        index: u32,
+    }
+    impl Source for LockedSource {
+        fn link_type(&self) -> u16 {
+            1
+        }
+        fn stats(&mut self) -> Option<DriverStats> {
+            None
+        }
+        fn poll(&mut self) -> anyhow::Result<Poll> {
+            let mut held = self.lock.lock().unwrap();
+            if held.is_none() {
+                let path = self.directory.join("segment-0001.pcap.part");
+                if !path.exists() {
+                    return Ok(Poll::Idle);
+                }
+                let file = File::options().read(true).write(true).open(path)?;
+                // SAFETY: a live temporary file handle and initialized OVERLAPPED; synchronous lock.
+                let locked = unsafe {
+                    LockFileEx(
+                        file.as_raw_handle(),
+                        LOCKFILE_EXCLUSIVE_LOCK | LOCKFILE_FAIL_IMMEDIATELY,
+                        0,
+                        u32::MAX,
+                        u32::MAX,
+                        &mut OVERLAPPED::default(),
+                    )
+                };
+                if locked == 0 {
+                    return Err(std::io::Error::last_os_error().into());
+                }
+                *held = Some(file);
+            }
+            if self.index == 2 {
+                return Ok(Poll::Idle);
+            }
+            self.index += 1;
+            Ok(Poll::Packet(Record {
+                seconds: 1_700_000_000,
+                micros: 0,
+                original_len: 128,
+                bytes: vec![0; 128],
+            }))
+        }
+    }
+    let temp = tempfile::tempdir().unwrap();
+    let dir = temp.path().join("locked");
+    let source_dir = dir.clone();
+    // External lock outlives the source, including asynchronous publication.
+    let lock = Arc::new(Mutex::new(None));
+    let source_lock = lock.clone();
+    let mut config = options();
+    config.duration_seconds = 1;
+    let (tx, _) = mpsc::sync_channel(1);
+    let receipt = run(
+        dir.clone(),
+        config,
+        move || {
+            Ok(LockedSource {
+                directory: source_dir,
+                lock: source_lock,
+                index: 0,
+            })
+        },
+        Arc::new(AtomicBool::new(false)),
+        Arc::new(Progress::default()),
+        tx,
+    )
+    .unwrap();
+    assert!(receipt.reason.starts_with("erro:"));
+    assert_eq!(receipt.seen, 2);
+    assert_eq!(receipt.buffered, 2);
+    assert_eq!(receipt.written, 0);
+    assert_eq!(receipt.unwritten, 2);
+    assert_eq!(receipt.bytes, 0);
+    assert!(receipt.source_closed && receipt.segments.is_empty());
+    assert!(dir.join("segment-0001.pcap.part").exists());
+}
 #[test]
 fn rotating_capture_files_are_complete_hashed_and_analyzed_without_overwriting() {
     let temp = tempfile::tempdir().unwrap();

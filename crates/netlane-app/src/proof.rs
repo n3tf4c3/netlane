@@ -63,7 +63,67 @@ pub fn packets(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App
             this.update(cx,|ws,cx|{ws.proof_long_dump(cx);ws.proof_analyze_dump(cx);ws.proof_reports(&directory.join("reports"),cx);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(550)).await;
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("16-report-snapshot.png")).unwrap();}).unwrap();
+            cx.update(|w,_|w.resize(size(px(1540.),px(1000.)))).unwrap();
+            this.update(cx,|ws,cx|ws.proof_interactive_chat(&directory.join("notebook"),cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("17-interactive-chat.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|ws.proof_notebook_tab(cx)).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("18-investigation-notes.png")).unwrap();}).unwrap();
+            cx.update(|w,_|w.resize(size(px(1000.),px(640.)))).unwrap();
+            this.update(cx,|ws,cx|{ws.page=Page::Codex;Themes::set_active(cx,"One Light");cx.notify();}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("19-notebook-minimum.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{Themes::set_active(cx,"NetLane Dark");ws.proof_codex_recovery(&directory.join("recovered-notebook"),cx);}).unwrap();
+            cx.update(|w,_|w.resize(size(px(1320.),px(920.)))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("20-codex-recovery.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|ws.proof_open_resume(&directory.join("recovered-notebook"),cx)).unwrap();
+            cx.update(|w,_|w.resize(size(px(1320.),px(1000.)))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            this.update(cx,|ws,_|assert!(matches!(ws.page,Page::Codex))).unwrap();
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("21-reopened-investigation.png")).unwrap();}).unwrap();
+            this.update(cx,|ws,cx|{ws.proof_resume_send(&directory.join("reopened-notebook"),cx);Themes::set_active(cx,"One Light");}).unwrap();
+            cx.update(|w,_|w.resize(size(px(1000.),px(920.)))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            this.update(cx,|ws,_|assert!(matches!(ws.page,Page::Codex))).unwrap();
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("22-note-state-history.png")).unwrap();}).unwrap();
+            std::fs::write(directory.join("resume-verified.txt"),"Three-file notebook reopened after receipt and semantic validation. Unsaved notebook and edited note block replacement; invalid import preserves current history. Opening and preparing bounded local resume excerpts send nothing. Review is required before explicit synthetic follow-up in a new conversation. Original turn contexts remain immutable; user state history is bounded and saved with UTC registration. No native picker, provider, account, real capture or network started.\n").unwrap();
+            std::fs::write(directory.join("recovery-verified.txt"),"Synthetic logout and disconnect start distinct conversation ids, retain immutable turns and notes, and reject stale deltas. A full 16-packet selection rejects a seventeenth attachment, allows explicit replacement and removal, and preserves history. Pending model confirmation blocks sending and retains the question. No provider or network started.\n").unwrap();
+            std::fs::write(directory.join("interactive-verified.txt"),"Synthetic follow-up turns retain immutable questions and contexts. New evidence conversations preserve the notebook. User annotation keeps the originating turn, starts unconfirmed, restores its context for discussion and requires review before sending. Markdown/JSON notebook and file hashes exported. Split packet/chat layout, notes tab and compact light layout rendered. No real inference or capture.\n").unwrap();
             std::fs::write(directory.join("verified.txt"),"Synthetic packet selection, search, empty result, compact viewport, dark/light branding and reviewed Codex context passed. Virtualized samples, full 10000-packet statistics, baseline comparison and simulated conversation with validated references passed. Synthetic rotating collection wrote 300 records, closed its source and analyzed completed PCAP segments. Derived PCAP/PCAPNG selection/filter exports and no-overwrite receipts passed. Local and assisted Markdown/HTML reports passed; changed question cannot replace the immutable last-turn snapshot, and local report requires current review. Clipboard was not changed. No inference, real capture, network, routing or installed profile accessed.\n").unwrap();
+            this.update(cx, |ws, cx| { Themes::set_active(cx, "NetLane Dark"); ws.proof_recover_packet(&directory.join("anchor-fixtures"), cx); }).unwrap();
+            cx.update(|w, _| w.resize(size(px(1320.), px(1100.)))).unwrap();
+            for _ in 0..40 {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+                if this.update(cx, |ws, cx| ws.proof_recovered_packet(cx)).unwrap() { break; }
+            }
+            this.update(cx, |ws, cx| assert!(ws.proof_recovered_packet(cx))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w, cx| { w.refresh(); w.draw(cx).clear(cx); w.render_to_image().unwrap().save(directory.join("23-recovered-packet.png")).unwrap(); }).unwrap();
+            std::fs::write(directory.join("anchor-verified.txt"), "Production background reader recovered an unsampled packet from a generated closed PCAP; full SHA-256 verified, preview limited to 2048 bytes, distributed samples unchanged. No network, real capture, account, inference or installed data accessed.\n").unwrap();
+            this.update(cx, |ws, cx| ws.proof_bundle_save(&directory, cx)).unwrap();
+            for _ in 0..50 {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+                if this.update(cx, |ws, cx| ws.proof_bundle_ready(false, cx)).unwrap() { break; }
+            }
+            this.update(cx, |ws, cx| assert!(ws.proof_bundle_ready(false, cx))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w, cx| { w.refresh(); w.draw(cx).clear(cx); w.render_to_image().unwrap().save(directory.join("24-investigation-package-saved.png")).unwrap(); }).unwrap();
+            // Move only owned synthetic directories within this proof's artifact tree.
+            std::fs::rename(directory.join("anchor-fixtures"), directory.join("anchor-fixtures-moved")).unwrap();
+            let moved = directory.join("moved-package");
+            std::fs::rename(directory.join("complete-package"), &moved).unwrap();
+            this.update(cx, |ws, cx| ws.proof_bundle_open(&moved, cx)).unwrap();
+            for _ in 0..50 {
+                cx.background_executor().timer(Duration::from_millis(100)).await;
+                if this.update(cx, |ws, cx| ws.proof_bundle_ready(true, cx)).unwrap() { break; }
+            }
+            this.update(cx, |ws, cx| ws.proof_bundle_check(&moved, cx)).unwrap();
+            cx.update(|w, _| w.resize(size(px(1540.), px(1100.)))).unwrap();
+            cx.background_executor().timer(Duration::from_millis(550)).await;
+            cx.update(|w, cx| { w.refresh(); w.draw(cx).clear(cx); w.render_to_image().unwrap().save(directory.join("25-investigation-package-reopened.png")).unwrap(); }).unwrap();
+            std::fs::write(directory.join("bundle-verified.txt"), "Production background workers saved and reopened a moved plaintext package with full PCAP bytes, baseline, immutable synthetic turn and annotation, report receipts, source provenance and an unsent question. Originals unavailable at their old paths. Unsampled packet restored with bounded preview; pending edits and simulated active collection block replacement. Reopening requires review and creates a new provider conversation; no capture, account, network, inference, clipboard or native picker used.\n").unwrap();
             this.update_in(cx,|ws,w,cx|ws.request_close(w,cx)).unwrap();
         }).detach();
     }).unwrap();

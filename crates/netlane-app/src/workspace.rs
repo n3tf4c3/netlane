@@ -1,5 +1,5 @@
 use crate::{
-    codex_view::{CodexView, ContextPrepared},
+    codex_view::{CodexView, ContextPrepared, NotebookOpened},
     demo,
     desktop::Desktop,
     executable_icons::ExecutableIcons,
@@ -118,6 +118,7 @@ pub struct Workspace {
     file_dialog_open: bool,
     packets: Entity<PacketView>,
     codex: Entity<CodexView>,
+    chat_open: bool,
     packet_dialog: std::sync::Arc<std::sync::atomic::AtomicBool>,
     capture_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
     hide_pending: bool,
@@ -307,6 +308,46 @@ impl Workspace {
         self.packets.read(cx).proof_scan_valid()
     }
     #[cfg(feature = "gui-test")]
+    pub fn proof_recover_packet(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        self.page = Page::Packets;
+        self.packets
+            .update(cx, |p, cx| p.proof_recover(directory, cx));
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_recovered_packet(&self, cx: &App) -> bool {
+        self.packets.read(cx).proof_recovered()
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_bundle_save(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        self.codex.update(cx, |c, cx| c.proof_bundle_reset(cx));
+        self.packets.update(cx, |p, cx| {
+            p.proof_bundle_prepare(&directory.join("anchor-fixtures"), cx)
+        });
+        self.codex.update(cx, |c, cx| {
+            c.proof_bundle_save(&directory.join("complete-package"), cx)
+        });
+        self.page = Page::Codex;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_bundle_ready(&self, opened: bool, cx: &App) -> bool {
+        self.codex.read(cx).proof_bundle_ready(opened)
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_bundle_open(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        self.codex.update(cx, |c, cx| c.proof_bundle_open(path, cx));
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_bundle_check(&mut self, path: &std::path::Path, cx: &mut Context<Self>) {
+        self.codex.read(cx).proof_bundle_check(path, cx);
+        assert!(self.packets.read(cx).proof_bundle_restored(path));
+        self.page = Page::Packets;
+        self.chat_open = true;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
     pub fn proof_analyze_dump(&mut self, cx: &mut Context<Self>) {
         self.packets.update(cx, |panel, cx| panel.prepare_codex(cx));
         self.codex.update(cx, |panel, cx| panel.proof_analysis(cx));
@@ -327,6 +368,60 @@ impl Workspace {
     pub fn proof_reports(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
         std::fs::create_dir(directory).unwrap();
         self.codex.update(cx, |p, cx| p.proof_report(directory, cx));
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_interactive_chat(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        self.packets.update(cx, |p, cx| p.proof_focus_packets(cx));
+        self.codex
+            .update(cx, |p, cx| p.proof_interactive(directory, cx));
+        self.chat_open = true;
+        self.page = Page::Packets;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_notebook_tab(&mut self, cx: &mut Context<Self>) {
+        self.codex.update(cx, |p, cx| p.proof_notebook_tab(cx));
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_codex_recovery(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        self.codex
+            .update(cx, |panel, cx| panel.proof_recovery(directory, cx));
+        self.page = Page::Codex;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_open_resume(&mut self, source: &std::path::Path, cx: &mut Context<Self>) {
+        self.codex
+            .update(cx, |panel, cx| panel.proof_open_resume(source, cx));
+        self.page = Page::Codex;
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn proof_resume_send(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
+        self.codex
+            .update(cx, |panel, cx| panel.proof_resume_send(directory, cx));
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn qa_collection_start(
+        &mut self,
+        parent: PathBuf,
+        options: netlane_capture::collection::Options,
+        cx: &mut Context<Self>,
+    ) {
+        self.page = Page::Packets;
+        self.packets
+            .update(cx, |p, cx| p.qa_collection_start(parent, options, cx));
+        cx.notify();
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn qa_collection_stop(&mut self, cx: &mut Context<Self>) {
+        self.packets.update(cx, |p, cx| p.qa_collection_stop(cx));
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn qa_collection_state(&self, cx: &App) -> serde_json::Value {
+        self.packets.read(cx).qa_collection_state(cx)
     }
     #[cfg(feature = "gui-test")]
     pub fn proof_collection_start(&mut self, cx: &mut Context<Self>) {
@@ -431,9 +526,27 @@ impl Workspace {
         };
         let packet_dialog = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         let capture_active = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let codex =
-            cx.new(|cx| CodexView::new(is_demo, profile.clone(), packet_dialog.clone(), cx));
-        let codex_subscription = cx.subscribe(&codex, |ws, _, _: &ContextPrepared, cx| {
+        let codex = cx.new(|cx| {
+            CodexView::new(
+                is_demo,
+                profile.clone(),
+                packet_dialog.clone(),
+                capture_active.clone(),
+                cx,
+            )
+        });
+        let codex_subscription =
+            cx.subscribe_in(&codex, window, |ws, _, _: &ContextPrepared, window, cx| {
+                ws.chat_open = true;
+                ws.page = if window.viewport_size().width >= px(1280.) {
+                    Page::Packets
+                } else {
+                    Page::Codex
+                };
+                cx.notify();
+            });
+        let notebook_subscription = cx.subscribe(&codex, |ws, _, _: &NotebookOpened, cx| {
+            ws.chat_open = true;
             ws.page = Page::Codex;
             cx.notify();
         });
@@ -484,7 +597,12 @@ impl Workspace {
             allow_flags: false,
             theme_picker: None,
             theme_subscription: None,
-            _subscriptions: vec![subscription, add_subscription, codex_subscription],
+            _subscriptions: vec![
+                subscription,
+                add_subscription,
+                codex_subscription,
+                notebook_subscription,
+            ],
             focus: cx.focus_handle(),
             connection_page: 0,
             closing: false,
@@ -496,6 +614,7 @@ impl Workspace {
             file_dialog_open: false,
             packets,
             codex,
+            chat_open: false,
             packet_dialog,
             capture_active,
             hide_pending: false,
@@ -891,6 +1010,11 @@ impl Workspace {
             || self.default_busy
             || self.default_confirmation.is_some()
         {
+            return;
+        }
+        if !self.codex.update(cx, |panel, cx| panel.allow_close(cx)) {
+            self.page = Page::Codex;
+            cx.notify();
             return;
         }
         match exit_decision(self.dirty, &self.session_state()) {
@@ -1925,7 +2049,81 @@ impl Render for Workspace {
         }
         let content = match self.page {
             Page::Overview => self.overview(cx),
-            Page::Packets => div().child(self.packets.clone()),
+            Page::Packets => {
+                let split = self.chat_open && window.viewport_size().width >= px(1280.);
+                let height = (f32::from(window.viewport_size().height) - 150.).max(360.);
+                div()
+                    .flex()
+                    .flex_col()
+                    .gap(px(8.))
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(8.))
+                            .child(
+                                self.button(
+                                    "packet-chat-toggle",
+                                    if self.chat_open {
+                                        "Ocultar chat"
+                                    } else {
+                                        "Conversar com Codex"
+                                    },
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    |ws, _, _, cx| {
+                                        ws.chat_open = !ws.chat_open;
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .when(self.chat_open, |d| {
+                                d.child(
+                                    self.button(
+                                        "packet-chat-focus",
+                                        "Abrir chat em tela inteira",
+                                        cx,
+                                    )
+                                    .on_click(cx.listener(
+                                        |ws, _, _, cx| {
+                                            ws.page = Page::Codex;
+                                            cx.notify();
+                                        },
+                                    )),
+                                )
+                            }),
+                    )
+                    .child(if split {
+                        div()
+                            .flex()
+                            .gap(px(16.))
+                            .h(px(height))
+                            .min_w_0()
+                            .child(
+                                div()
+                                    .id("packet-analysis-scroll")
+                                    .flex_1()
+                                    .min_w_0()
+                                    .h_full()
+                                    .overflow_y_scroll()
+                                    .child(self.packets.clone()),
+                            )
+                            .child(
+                                div()
+                                    .id("packet-chat-scroll")
+                                    .w(px(440.))
+                                    .flex_none()
+                                    .h_full()
+                                    .overflow_y_scroll()
+                                    .pl(px(12.))
+                                    .border_l_1()
+                                    .border_color(t.border)
+                                    .child(self.codex.clone()),
+                            )
+                    } else {
+                        div().child(self.packets.clone())
+                    })
+            }
             Page::Codex => div().child(self.codex.clone()),
             Page::Connections => self.connections(cx),
             Page::Rules => self.rules(cx),

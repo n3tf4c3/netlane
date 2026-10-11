@@ -84,6 +84,35 @@ fn external_change_is_not_overwritten_and_last_rule_removal_keeps_backup() {
     assert!(path.with_extension("json.bak").exists());
 }
 #[test]
+fn oversized_serialization_preserves_readable_rules_revision_and_backup() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rules.json");
+    let mut policy = RoutingPolicy::new("C:\\app.exe");
+    policy.additional_data.insert(
+        "futureSetting".into(),
+        serde_json::json!(vec![0u8; 600_000]),
+    );
+    let compact = serde_json::to_vec(&[policy]).unwrap();
+    assert!(compact.len() as u64 <= netlane_core::persistence::MAX_JSON_BYTES);
+    std::fs::write(&path, &compact).unwrap();
+    let backup = path.with_extension("json.bak");
+    std::fs::write(&backup, b"previous backup").unwrap();
+    let file = PolicyFile::new(&path);
+    let loaded = file.load().unwrap();
+    assert!(
+        serde_json::to_vec_pretty(&loaded.policies).unwrap().len() as u64
+            > netlane_core::persistence::MAX_JSON_BYTES
+    );
+    assert!(
+        file.save(&loaded.policies, loaded.revision.as_deref())
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).unwrap(), compact);
+    assert_eq!(file.load().unwrap().revision, loaded.revision);
+    assert_eq!(std::fs::read(backup).unwrap(), b"previous backup");
+}
+
+#[test]
 fn explicit_interface_never_falls_back() {
     let adapters = vec![Adapter {
         id: "aa6f3b88-072a-45b6-b0cb-8afe9567e62f".into(),

@@ -35,6 +35,7 @@ pub struct CollectionView {
     options: Option<Options>,
     disk_index: usize,
     duration_index: usize,
+    high_volume: bool,
     importing: bool,
 }
 impl EventEmitter<SegmentReady> for CollectionView {}
@@ -53,7 +54,7 @@ impl CollectionView {
     ) -> Self {
         Self {demo,profile,dialog,active,devices:vec![],selected:None,parent:None,filter:cx.new(|cx|TextInput::new("","Filtro BPF opcional: tcp or udp",cx)),
             status:"Escolha interface, destino e limites antes de iniciar. Npcap instalado é necessário para coleta real.".into(),listing:false,
-            stop:Arc::new(AtomicBool::new(false)),progress:Arc::new(Progress::default()),events:None,receipt:None,options:None,disk_index:1,duration_index:2,importing:false}
+            stop:Arc::new(AtomicBool::new(false)),progress:Arc::new(Progress::default()),events:None,receipt:None,options:None,disk_index:1,duration_index:2,high_volume:false,importing:false}
     }
     pub fn running(&self) -> bool {
         self.active.load(Ordering::Relaxed)
@@ -150,6 +151,8 @@ impl CollectionView {
             filter: self.filter.read(cx).text().to_string(),
             total_bytes: [1, 4, 16, 64][self.disk_index] * 1024 * 1024 * 1024,
             duration_seconds: [1, 8, 24, 72][self.duration_index] * 3600,
+            snaplen: if self.high_volume { 65535 } else { 2048 },
+            segment_bytes: if self.high_volume { 128 } else { 64 } * 1024 * 1024,
             ..Options::default()
         };
         if self.demo {
@@ -161,6 +164,9 @@ impl CollectionView {
             cx.notify();
             return;
         }
+        self.begin(parent, options, cx);
+    }
+    fn begin(&mut self, parent: PathBuf, options: Options, cx: &mut Context<Self>) {
         let directory = parent.join(format!("NetLane-{}", uuid::Uuid::new_v4()));
         self.progress = Arc::new(Progress::default());
         self.stop = Arc::new(AtomicBool::new(false));
@@ -209,7 +215,7 @@ impl CollectionView {
             if let Some(scan) = latest {
                 let options = self.options.as_ref().unwrap();
                 let note = format!(
-                    "Origem deste arquivo: segmento de coleta {}. Interface {:?}; filtro BPF {:?}; snaplen {}. Totais da coleta no momento da entrega: {} lidos, {} gravados, {} descartados na fila; {} segmentos sem análise automática, {} falhas de análise. Estatísticas do driver no fechamento: {:?}. Esses totais são da coleta; os agregados do dump e as referências pertencem somente ao segmento com o SHA informado. Zero perdas do driver não comprova ausência de perdas.",
+                    "Origem deste arquivo: segmento de coleta {}. Interface {:?}; filtro BPF {:?}; snaplen {}. Totais da coleta no momento da entrega: {} lidos, {} gravados, {} descartados na fila; {} segmentos sem análise automática, {} falhas de análise. Totais de 64 bits do driver amostrados até esta entrega (aproximados durante a coleta): {:?}. Esses totais são da coleta; os agregados do dump e as referências pertencem somente ao segmento com o SHA informado. Zero perdas do driver não comprova ausência de perdas.",
                     if self.demo {
                         "fictícia"
                     } else {
@@ -223,7 +229,7 @@ impl CollectionView {
                     self.progress.queue_dropped.load(Ordering::Relaxed),
                     self.progress.analysis_skipped.load(Ordering::Relaxed),
                     self.progress.analysis_failed.load(Ordering::Relaxed),
-                    self.receipt.as_ref().and_then(|r| r.driver_stats)
+                    self.progress.driver_totals()
                 );
                 cx.emit(SegmentReady(RefCell::new(Some((scan, note)))));
             }
@@ -267,6 +273,20 @@ impl CollectionView {
             .cursor_pointer()
             .hover(|d| d.bg(t.selected))
             .child(label.to_string())
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn qa_start(&mut self, parent: PathBuf, options: Options, cx: &mut Context<Self>) {
+        assert!(!self.demo && !self.running() && !self.importing);
+        options.validate().expect("bounded loopback QA options");
+        self.begin(parent, options, cx);
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn qa_stop(&mut self, cx: &mut Context<Self>) {
+        self.stop(cx);
+    }
+    #[cfg(feature = "gui-test")]
+    pub fn qa_state(&self) -> serde_json::Value {
+        serde_json::json!({"running":self.running(),"status":self.status,"receipt":self.receipt})
     }
     #[cfg(feature = "gui-test")]
     pub fn proof_start(&mut self, cx: &mut Context<Self>) {
@@ -336,8 +356,11 @@ impl Render for CollectionView {
             )
             .child(self.status.clone());
         if running {
-            root=root.child(format!("{} pacotes lidos · {} gravados · {:.1} MiB · {} segmentos · {} descartados na fila · {} análises puladas · {} falhas de análise",
-            p.seen.load(Ordering::Relaxed),p.written.load(Ordering::Relaxed),p.bytes.load(Ordering::Relaxed) as f64/1048576.,p.segments.load(Ordering::Relaxed),p.queue_dropped.load(Ordering::Relaxed),p.analysis_skipped.load(Ordering::Relaxed),p.analysis_failed.load(Ordering::Relaxed)))
+            if let Some(driver) = p.driver_totals() {
+                root = root.child(format!("Driver · {} descartados no buffer · {} descartados na interface · {} amostras (aproximado)", driver.dropped, driver.interface_dropped, driver.samples));
+            }
+            root=root.child(format!("{} pacotes lidos · {} recebidos pelo gravador · {} confirmados em segmentos · {:.1} MiB do orçamento · {} segmentos · {} descartados na fila · {} análises puladas · {} falhas de análise",
+            p.seen.load(Ordering::Relaxed),p.buffered.load(Ordering::Relaxed),p.written.load(Ordering::Relaxed),p.bytes.load(Ordering::Relaxed) as f64/1048576.,p.segments.load(Ordering::Relaxed),p.queue_dropped.load(Ordering::Relaxed),p.analysis_skipped.load(Ordering::Relaxed),p.analysis_failed.load(Ordering::Relaxed)))
             .child(Self::button("collection-stop","Parar e fechar coleta",cx).on_click(cx.listener(|this,_,_,cx|this.stop(cx))));
         } else {
             root = root.child(
@@ -380,6 +403,21 @@ impl Render for CollectionView {
                         )
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.duration_index = (this.duration_index + 1) % 4;
+                            cx.notify();
+                        })),
+                    )
+                    .child(
+                        Self::button(
+                            "collection-volume",
+                            if self.high_volume {
+                                "Perfil: alto volume"
+                            } else {
+                                "Perfil: diagnóstico"
+                            },
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.high_volume = !this.high_volume;
                             cx.notify();
                         })),
                     )
@@ -445,10 +483,23 @@ impl Render for CollectionView {
                 receipt.display_skipped
             ));
         }
-        let rotation = if self.demo {
-            "Demonstração: segmentos de 4 KiB · até 128 bytes por pacote · fonte fictícia de 300 pacotes."
+        let rotation = if let Some(options) = self.options.as_ref().filter(|_| self.running()) {
+            let size = if options.segment_bytes < 1024 * 1024 {
+                format!("{} bytes", options.segment_bytes)
+            } else {
+                format!("{} MiB", options.segment_bytes / (1024 * 1024))
+            };
+            format!(
+                "Rotação a cada {} s ou {} · até {} bytes por pacote · máximo 4096 segmentos.",
+                options.segment_seconds, size, options.snaplen
+            )
+        } else if self.demo {
+            "Demonstração: segmentos de 4 KiB · até 128 bytes por pacote · fonte fictícia de 300 pacotes.".into()
+        } else if self.high_volume {
+            "Alto volume: rotação a cada 60 s ou 128 MiB · até 65535 bytes por pacote, incluindo quadros jumbo · máximo 4096 segmentos. A capacidade depende do driver e do armazenamento.".into()
         } else {
             "Rotação a cada 60 s ou 64 MiB · até 2048 bytes por pacote · máximo 4096 segmentos."
+                .into()
         };
         root.child(div().text_size(px(12.)).text_color(t.text_muted).child(format!("{rotation} Ao atingir disco/duração, a coleta para; arquivos anteriores são preservados. A tabela mostra a prévia recebida mais recentemente. IA recebe contexto somente pelo envio revisado.")))
     }

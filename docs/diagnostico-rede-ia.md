@@ -9,8 +9,10 @@ O monitor de conexões, a qualidade por interface e a seleção de saída por
 aplicativo continuam como ferramentas. Esta ampliação usa Rust/GPUI 0.4.0;
 a instalação .NET 0.3.4 e seus dados permanecem independentes. A captura Windows
 e a escrita rotativa têm implementação inicial. Exportação derivada de amostras
-e rascunhos Markdown/HTML locais estão implementados; investigação persistente,
-cópia integral do original e PDF ainda faltam.
+e rascunhos Markdown/HTML locais estão implementados. O caderno da conversa pode
+ser salvo em Markdown/JSON. A investigação também pode ser salva e reaberta com
+cópias integrais dos dumps, baseline e relatórios; armazenamento protegido e PDF
+ainda faltam.
 
 ## Primeira implementação
 
@@ -31,7 +33,8 @@ e [PCAPNG](https://www.ietf.org/archive/id/draft-ietf-opsawg-pcapng-06.html).
 A API original de leitura continua compatível: até 128 MiB/um milhão de registros,
 com prefixo retido de até 50 mil pacotes ou 32 MiB. A interface atual usa a nova
 análise incremental descrita abaixo. Os dados ficam em memória e são descartados
-ao limpar ou sair; não representam ainda uma investigação salva.
+ao limpar ou sair, salvo quando o operador salva explicitamente o caderno ou
+a investigação com capturas.
 
 ## Dumps longos e referência de captura
 
@@ -67,8 +70,18 @@ abrir outra coleta, o painel compara:
 
 São heurísticas explícitas, limitadas a 12 achados, não um detector treinado nem
 veredito de invasão. Filtro, ponto de coleta e duração podem diferir. Achados
-levam SHA-256 e números dos pacotes originais, inclusive fora da amostra visível;
-a abertura direta desses pacotes por posição ainda falta. O baseline é escolhido
+levam SHA-256 e números dos pacotes originais, inclusive fora da amostra visível.
+**Abrir #N** no achado ou **Abrir por número** recupera o pacote do dump fechado.
+O leitor percorre e confere o SHA-256 do arquivo inteiro em segundo plano, com
+progresso e cancelamento; em dumps grandes essa conferência pode demorar. Arquivo
+ausente, alterado ou incompleto é recusado sem substituir a evidência carregada.
+As 512 amostras distribuídas permanecem intactas; somente uma prévia adicional
+de até 2048 bytes fica nos detalhes e é substituída na próxima recuperação.
+O pacote pode ser selecionado para exportação ou **Preparar para Codex**, com
+revisão e envio explícito de metadados, sem payload automático. Busca e exportação
+sem seleção continuam percorrendo somente as amostras distribuídas. O número
+se refere ao arquivo/segmento atual, e uma troca de segmento invalida a leitura.
+O baseline é escolhido
 pelo usuário e pode ser removido; não há aprendizagem ou captura automática.
 
 ## Coleta Windows com rotação
@@ -79,14 +92,16 @@ selecionada explicitamente; **Iniciar coleta nesta interface** cria uma pasta no
 Não há captura automática, instalação de driver ou elevação do aplicativo.
 O runtime existente é carregado somente de `System32\Npcap\wpcap.dll`.
 
-A coleta não usa modo promíscuo, retém até 2048 bytes por pacote e escreve PCAP
-2.4 com horário em microssegundos. Rotação a cada 60 segundos com dados ou
-64 MiB, até 4096 segmentos. Ao atingir duração/disco/segmentos, para sem apagar
+A coleta não usa modo promíscuo e escreve PCAP 2.4 com horário em microssegundos.
+O perfil diagnóstico grava até 2048 bytes por pacote e segmentos de 64 MiB;
+alto volume permite até 65535 bytes e 128 MiB. Rotação também ocorre a cada
+60 segundos com dados, até 4096 segmentos. Ao atingir duração/disco/segmentos, para sem apagar
 arquivos anteriores. Um `.pcap.part` só recebe nome `.pcap` depois de flush,
 sincronização e fechamento. Erro de escrita preserva o parcial sem analisá-lo.
 
-Leitura Npcap não bloqueante, escrita e análise ficam em workers separados. Fila
-para 128 pacotes; se encher, descarta com contador. Fila de dois segmentos para
+Leitura Npcap não bloqueante, escrita e análise ficam em workers separados.
+Fila de 32 lotes, cada um com até 256 pacotes ou aproximadamente 256 KiB; se
+encher, descarta com contador. Fila de dois segmentos para
 análise; se encher, conserva o arquivo e contabiliza análise pulada. A GUI recebe
 prévias limitadas, coalescendo resultados para mostrar a mais recente recebida.
 Totais da coleta aparecem no painel; totais/achados da tabela pertencem ao segmento
@@ -97,10 +112,16 @@ explícito; não há inferência automática periódica.
 **Parar e fechar coleta** aguarda fechamento da fonte, segmento e análises
 pendentes. Sair é bloqueado durante esse trabalho; minimizar não exige parar.
 Manifestos `capture-start.json` e `capture-final.json` registram opções, período,
-causa, hashes, pacotes gravados, descartes da fila e não gravados ao encerrar,
+causa, hashes, pacotes recebidos pelo gravador (`buffered`), confirmados em
+segmentos publicados (`written`), descartes da fila e não gravados ao encerrar,
 estatísticas opcionais do driver e análises não realizadas. Zero no driver não
 comprova ausência de perdas. A coleta pode conter payload sensível e fica somente
 no destino escolhido; não é anexada automaticamente à IA.
+
+Pacotes em `.part` entram em `unwritten` se a finalização falhar. `written` e
+`bytes` do recibo final conciliam somente os segmentos publicados. Durante a
+coleta, o painel distingue confirmação de gravação e uso lógico do orçamento,
+que também inclui o segmento em andamento.
 
 Em demonstração, a fonte é fictícia (300 pacotes), segmentos de 4 KiB/128 bytes,
 salvos somente no perfil próprio de demonstração. A prova executa essa pipeline
@@ -118,6 +139,11 @@ resumo do arquivo inteiro, referência e achados. Informar problema/pergunta
 (até 4 KiB cada) e usar **Revisar contexto**, limitado a 32 KiB. Editar evidências
 ou pergunta exige nova revisão. **Copiar para Codex** continua disponível.
 
+No chat, **Remover #N** retira um anexo do próximo envio. Nos detalhes do pacote,
+**Somente este pacote** substitui explicitamente a seleção. Assim é possível
+continuar depois do limite de 16, mantendo os contextos antigos no caderno.
+Alterar anexos é bloqueado durante uma resposta e exige revisar o próximo envio.
+
 O contexto não anexa arquivo bruto, bytes, caminho, credenciais nem configurações
 pessoais. IPs/portas e texto informado ficam visíveis; pseudonimização ainda falta.
 Segmentos coletados incluem uma fotografia das opções e perdas conhecidas da
@@ -125,7 +151,8 @@ coleta na entrega da prévia. Esses totais ficam distintos dos agregados do segm
 A resposta valida referências `[[packet:SHA256:NUMERO]]` contra a seleção ou
 âncoras explícitas dos achados do dump atual. Validação de referência não valida
 a conclusão da IA. Trocar a captura inicia outra conversa; **Nova análise**
-limpa o contexto. Não há persistência de respostas nesta etapa.
+limpa o contexto. O caderno conserva os turnos e pode ser salvo explicitamente,
+conforme a seção de investigação interativa abaixo.
 
 ## Conversa integrada com Codex
 
@@ -145,11 +172,20 @@ arquivos, plugins e busca também são desabilitados. Pedidos de ferramenta são
 recusados e itens de execução encerram a ponte. O processo pessoal não é utilizado.
 
 Comandos têm fila de oito e eventos de 64. Mensagens têm limite de 256 KiB,
-respostas de 128 KiB; o visor mostra os últimos 16 KiB e permite copiar o texto
-completo. O turno tem prazo de 180 segundos. Cancelamento aguarda encerramento
+respostas de 128 KiB. O histórico mostra quatro turnos por página, até 4 KiB por
+resposta, com cópia completa; durante a resposta mostra os últimos 16 KiB.
+O turno tem prazo de 180 segundos. Cancelamento aguarda encerramento
 confirmado; após dez segundos sem confirmação a ponte fecha o processo criado.
 Deltas de outra thread/turno e deltas após cancelamento não entram na resposta.
 O catálogo de três modelos não comprova disponibilidade para a conta.
+
+Trocar modelo aguarda a confirmação da ponte antes de liberar outro envio. O
+modelo/esforço de cada turno ficam vinculados ao pedido e ao relatório, inclusive
+enquanto a criação da thread está pendente. Sair da conta ou perder a conexão
+encerra a conversa efêmera do provedor; ao reconectar, o próximo envio recebe
+outro identificador de conversa. Histórico, notas e último relatório continuam
+locais. O histórico anterior não é reenviado automaticamente: revise e envie
+explicitamente o contexto necessário à nova conversa.
 
 A verificação independente **Verificar conexão** continua disponível somente
 para metadados, em outro perfil. Não faz login nem envia contexto. O probe
@@ -159,15 +195,148 @@ essa prova não substitui a validação da ponte de conversa.
 Referências: [App Server](https://learn.chatgpt.com/docs/app-server) e
 [configuração](https://learn.chatgpt.com/docs/config-file/config-reference).
 
+## Investigação interativa
+
+O fluxo principal é analisar junto com a IA: perguntar sobre o que aparece na
+captura, confrontar explicações, identificar o que falta observar e registrar
+possíveis problemas. **Preparar análise para Codex** abre o chat ao lado dos
+pacotes em janelas a partir de 1280 px. A tabela e o chat têm rolagem independente.
+Em janelas menores o chat abre na página **Codex**; a seleção e o histórico são
+mantidos ao voltar a **Pacotes**. Também há abertura do chat em tela inteira.
+
+Perguntas e respostas ficam em um histórico de até 24 turnos por caderno, sem
+substituir o turno anterior. Cada turno conserva pergunta, problema, modelo,
+estado da resposta e a cópia das evidências do envio. Na mesma captura, perguntas
+sucessivas usam a mesma conversa do provedor. Ao trocar o hash da captura, uma
+nova conversa do provedor começa; os turnos anteriores continuam visíveis no
+caderno, identificados por captura e conversa. O histórico de outra captura não
+é enviado silenciosamente à nova conversa.
+
+**Explorar hipóteses** e **Próxima verificação** preparam perguntas editáveis.
+**Revisar contexto** mostra o texto completo antes de **Enviar ao Codex**.
+O campo limpa depois de um envio aceito para receber a próxima pergunta.
+Enter revisa o contexto; com a revisão atual válida, Enter envia. As respostas
+chegam progressivamente e podem ser interrompidas.
+A rolagem acompanha a resposta enquanto o leitor está no fim do chat. Ao subir
+para ler mensagens anteriores, a posição é preservada; **Última resposta** volta
+ao fim.
+
+**Anotar resposta** leva até 4 KiB da resposta para um campo editável, mantendo
+o turno e as evidências de origem. Anotações próprias conservam a seleção indicada
+ao começar a escrever. Um rascunho precisa ser registrado ou limpo antes de anotar
+outra resposta ou salvar o caderno. **Registrar anotação** começa sempre em
+**Em investigação**; somente
+ações do usuário podem marcar **Confirmada** ou **Descartada**. Até 32 anotações
+de 4 KiB. **Discutir no chat** restaura o contexto da anotação no chat e prepara
+uma pergunta para confirmar/refutar a hipótese. O arquivo aberto na tabela não
+é trocado e a pergunta ainda precisa ser revisada/enviada.
+
+**Salvar caderno** grava `investigation.md`, `investigation.json` e um recibo com
+hashes em uma pasta nova. O JSON conserva todos os contextos e textos; o Markdown
+mostra conversa, origens e estados. Respostas parciais ou com referências inválidas
+permanecem identificadas como tal no registro, enquanto o relatório técnico da
+resposta continua recusando referências inválidas. O caderno é salvo em texto
+aberto, sem bytes dos pacotes ou dados de autenticação; revise os endereços e
+textos antes de compartilhar.
+
+**Abrir caderno** seleciona manualmente uma pasta local com os três arquivos.
+A leitura ocorre em segundo plano, com limite de 24 MiB por arquivo, 24 turnos,
+32 anotações e 32 registros de estado por anotação. O importador confere nomes
+fixos, tamanhos, hashes e consistência dos contextos; recusa links/junções,
+arquivos alterados e formatos incompatíveis. Hashes conferem a consistência do
+conjunto, sem autenticar o autor ou confirmar um diagnóstico. Referências da
+resposta são recalculadas, mesmo quando o JSON as declara válidas.
+
+Conversa e notas não salvas ou uma anotação em edição bloqueiam a substituição.
+Falha de leitura preserva o caderno atual. Se a investigação mudar durante a
+leitura, a abertura é cancelada. O caderno aberto restaura os contextos e a
+conversa local; o arquivo PCAP/PCAPNG da tabela não é aberto ou trocado. O próximo
+envio começa uma nova conversa do provedor, sem login ou envio automático.
+
+**Preparar resumo para retomar** coloca no campo de pergunta trechos dos dois
+últimos turnos e das três últimas anotações da mesma captura. É um resumo local
+editável de até 4 KiB, com a pergunta atual limitada a 512 bytes; não envia o
+histórico inteiro ou acrescenta pacotes históricos à seleção atual. Respostas
+com referências inválidas são omitidas do resumo e continuam sinalizadas no
+caderno. Edite e use **Revisar contexto** antes do envio explícito.
+
+Novos turnos e alterações de estado recebem horário de registro em UTC pelo
+relógio do Windows, separado do horário dos pacotes. A anotação conserva até
+32 estados, com os três últimos visíveis e o histórico completo na exportação.
+Cadernos antigos continuam abrindo sem inventar datas ou transições anteriores;
+a primeira alteração registra o estado observado e o novo estado. Estados
+importados são decisões registradas pelo autor e exigem revisão humana.
+
+O limite do caderno pede salvar/iniciar outro sem descartar turnos automaticamente.
+**Nova investigação** exige confirmação quando há conversa ou anotação. **Sair**
+aguarda o turno e pede salvar ou descartar explicitamente o caderno pendente.
+Fechar pelo X continua recolhendo para a bandeja. A coleta e a análise dos dumps
+continuam nos workers existentes; o chat não inicia captura, sondas ou envio
+periódico. Coletas reais longas e a conversa com uma conta continuam gates de QA.
+
+## Investigação com capturas integrais
+
+**Salvar investigação com capturas** pede uma pasta local e cria uma subpasta nova,
+sem sobrescrever investigações anteriores. `bundle.json` contém o contexto atual,
+problema e próxima pergunta editáveis, hashes, formatos e totais. `captures/`
+contém cópias integrais dos PCAP/PCAPNG referenciados no chat e nas anotações,
+incluindo baselines; `notebook/` conserva os três arquivos do caderno;
+`reports/turn-NNNN/` guarda Markdown, HTML, contexto e recibo de cada turno com
+referências válidas. Uma resposta com referências inválidas permanece no histórico,
+mas não gera um relatório válido. Nada é enviado à IA por essa operação.
+
+O catálogo vincula dumps ao preparar suas evidências na tela Pacotes. Registre ao
+menos uma anotação ou turno antes de salvar a investigação. Uma fonte
+referenciada ausente, alterada ou cujo formato/totais divergem bloqueia a conclusão;
+o pacote não omite evidências silenciosamente. O limite é 128 dumps e 64 GiB no
+conjunto. A cópia usa buffers limitados em segundo plano, confere o SHA completo
+durante a leitura e relê a cópia gravada. Há progresso e cancelamento. `bundle.json`
+é publicado por último; falha ou cancelamento conserva a pasta parcial sem anunciar
+uma investigação completa. Somente dumps fechados são incluídos: salvar durante
+uma coleta não exporta automaticamente todos os segmentos da sessão.
+
+**Abrir investigação com capturas** verifica caderno, relatórios, hashes e todos
+os dumps antes de substituir o trabalho atual. A pasta pode ser movida e reaberta
+sem os originais. A tabela recebe o dump do contexto atual, baseline e primeiro
+pacote selecionado; se estiver fora das 512 amostras, recupera uma prévia adicional
+de até 2048 bytes. Os demais pacotes selecionados conservam suas referências no
+contexto e podem ser recuperados por número. **Reabrir dump da seleção** restaura
+o dump de outro contexto do histórico ou da anotação. Essa abertura exige parar
+a coleta, salvar o trabalho pendente ou descartá-lo explicitamente. O problema e
+pergunta salvos são restaurados; a próxima conversa do provedor é nova e exige
+revisar o contexto antes do envio. O formato antigo de **Salvar/Abrir caderno**
+continua disponível e não inclui dumps.
+
+O pacote contém bytes completos, endereços, textos de usuário/IA e observações de
+origem em **texto aberto**. Os caminhos locais dos originais ficam fora do manifesto;
+o perfil e as credenciais de login no Codex não são incluídos. Os próprios dumps
+podem conter credenciais e outros dados sensíveis. Hashes demonstram consistência,
+não autenticidade ou anonimização. Revise o conteúdo antes de compartilhar.
+Criptografia, pseudonimização, seleção de conteúdo para compartilhamento e PDF
+continuam pendentes. Links, junções e caminhos remotos não são aceitos.
+
 ## Validação deste incremento
 
 Testes usam dados gerados e servidores fictícios: dump de cerca de 138 MiB/
 70 mil pacotes, SHA completo, totais após coalescer janelas, amostragem distribuída,
 limites, cancelamento, baseline, referências esparsas, respostas atrasadas e
-recusa de ferramentas. A prova GPUI produz 16 cenas com tabela, claro/escuro,
+recusa de ferramentas. A prova GPUI atual produz 25 cenas com tabela, claro/escuro,
 janela mínima, comparação de dez mil pacotes e conversa **simulada**. Também grava
 e reabre 11 segmentos de uma coleta fictícia de 300 pacotes, com fonte encerrada,
 e exercita exportações/relatórios com contexto imutável e recusa de sobrescrita.
+O incremento interativo acrescenta perguntas sucessivas, anotação ligada ao
+turno, discussão da hipótese, exportação do caderno e proteção para sair/iniciar
+outra investigação. Evidência visual: `artifacts/interactive-investigation-gui-20261010-02/`.
+As três cenas novas cobrem chat dividido com pacotes, anotações e janela compacta.
+As cenas seguintes cobrem reconexão, reabertura com resumo revisável, histórico
+de estados em janela compacta e recuperação por número fora da amostra, usando
+o worker real sobre um dump local fictício. A prova confere os hashes de três exportações,
+proteção de trabalho pendente e envio somente após revisão. O seletor nativo
+de pastas permanece um caso manual de QA. As cenas 24/25 usam os workers da
+aplicação para salvar e reabrir um pacote movido, com os originais indisponíveis,
+baseline, conversa/anotação fictícias, rascunho de pergunta e pacote fora da amostra.
+Os testes do pacote incluem PCAP/PCAPNG, cópia integral, cancelamento, alteração ou
+ausência de arquivos, limites, manifesto hostil e junção Windows.
 
 A prova nativa do Codex 0.162.0 confirma perfil restrito, catálogo próprio,
 thread efêmera e encerramento do filho em perfil novo, **sem login ou inferência**.
@@ -183,7 +352,10 @@ Release comum/GPUI test. A prévia daquele avanço está em
 `artifacts/rust-preview-diagnostics-20261010/`; não é um
 instalador ou versão assinada. Os 14 arquivos preexistentes protegidos e o ZIP da
 marca foram conferidos por hash. D1/D2/D3/D4 estão em progresso;
-D4b, armazenamento reabrível, cópia integral do original e PDF continuam pendentes.
+D4b, armazenamento protegido e PDF continuam pendentes.
+O D5 tem reabertura manual do caderno, retomada por resumo local e pacote com
+cópias integrais dos dumps implementados;
+isso não conclui os demais gates de armazenamento e compartilhamento.
 
 ## Exportação e relatórios locais
 
@@ -231,8 +403,8 @@ de resposta assistida separado dos agregados locais. O JSON preserva a cópia do
 que não carrega scripts, links ou recursos externos. A gravação e conferência
 ocorrem em segundo plano; não anexam bytes do pacote ou credenciais do perfil.
 Endereços e textos do usuário/IA são exportados em texto aberto: revise antes
-de compartilhar. Persistência protegida/reabertura da investigação, pacote com
-original e PDF continuam etapas posteriores.
+de compartilhar. Persistência protegida e PDF continuam etapas posteriores;
+a investigação com cópias integrais é descrita acima.
 
 As novas provas incluem redução de bytes, interfaces/relógios distintos,
 horário ausente, recusa de sobrescrita, hashes, HTML hostil e referências falsas.
@@ -241,7 +413,7 @@ Essas provas não abriram Npcap, conta real, rede ou perfil instalado.
 
 O avanço de exportação/relatórios passou por **117 testes** de workspace,
 Clippy comum/com todas as features, formatação e builds Release comum/GUI.
-Prova atual: `artifacts/diagnostics-exports-gui-20261010-final/`, com 16 cenas,
+Prova daquela etapa: `artifacts/diagnostics-exports-gui-20261010-final/`, com 16 cenas,
 exports/relatórios fictícios, recibo e renderização do HTML em navegador com
 perfil isolado. O layout da GUI e do HTML foi conferido visualmente. Prévia
 comum: `artifacts/rust-preview-reports-20261010/`. Esses artefatos ficam locais;

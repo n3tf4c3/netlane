@@ -40,6 +40,60 @@ public sealed class DefaultConnectionTests
     }
 
     [Fact]
+    public async Task ExternalEditBetweenWritesIsPreservedAndStopsTheNextWrite()
+    {
+        var settings = new FakeConnectionSettings(Initial());
+        settings.AfterWrite = metric =>
+        {
+            if (settings.Writes.Count == 1)
+                settings.Snapshot = settings.Snapshot with { Interfaces = settings.Snapshot.Interfaces.Select(i => i.Id == Wifi ? i with { AutomaticMetric = false, Metric = 77, SavedMetric = 77 } : i).ToArray() };
+        };
+        var result = await new ConnectionPriorityTransaction(settings).ApplyAsync(new(Initial(), ConnectionPriority.Plan(Initial(), Wifi), Wifi), TestContext.Current.CancellationToken);
+        Assert.False(result.Success);
+        Assert.DoesNotContain(settings.Writes, w => w.Id == Wifi);
+        Assert.Equal(77u, settings.Snapshot.Interfaces.Single(i => i.Id == Wifi).Metric);
+        Assert.True(settings.Snapshot.Interfaces.Single(i => i.Id == Cable).AutomaticMetric);
+        Assert.Contains("externa", result.Detail);
+    }
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task RollbackNeverOverwritesExternalMetricOrChangedIdentity(bool identityChanged)
+    {
+        var settings = new FakeConnectionSettings(Initial()) { FailAt = 2 };
+        settings.AfterWrite = metric =>
+        {
+            if (settings.Writes.Count == 2)
+                settings.Snapshot = settings.Snapshot with { Interfaces = settings.Snapshot.Interfaces.Select(i => i.Id == Cable ? identityChanged
+                    ? i with { Index = 91 } : i with { Metric = 77, SavedMetric = 77 } : i).ToArray() };
+        };
+        var result = await new ConnectionPriorityTransaction(settings).ApplyAsync(new(Initial(), ConnectionPriority.Plan(Initial(), Wifi), Wifi), TestContext.Current.CancellationToken);
+        Assert.False(result.Success);
+        Assert.False(result.RollbackConfirmed);
+        Assert.Single(settings.Writes, w => w.Id == Cable);
+        var actual = settings.Snapshot.Interfaces.Single(i => i.Id == Cable);
+        Assert.Equal(identityChanged ? 91u : 21u, actual.Index);
+        if (!identityChanged) Assert.Equal(77u, actual.Metric);
+        Assert.Contains("Restauração incompleta", result.Detail);
+    }
+
+    [Fact]
+    public async Task RollbackRestoresSplitActiveAndPersistentStoresFromPartialWriter()
+    {
+        var settings = new FakeConnectionSettings(Initial()) { FailAt = 1 };
+        settings.AfterWrite = metric =>
+        {
+            if (settings.Writes.Count == 1)
+                settings.Snapshot = settings.Snapshot with { Interfaces = settings.Snapshot.Interfaces.Select(i => i.Id == Cable ? i with { SavedMetric = null } : i).ToArray() };
+        };
+        var result = await new ConnectionPriorityTransaction(settings).ApplyAsync(new(Initial(), ConnectionPriority.Plan(Initial(), Wifi), Wifi), TestContext.Current.CancellationToken);
+        Assert.False(result.Success);
+        Assert.True(result.RollbackConfirmed);
+        Assert.All(result.Snapshot.Interfaces, i => Assert.True(i.AutomaticMetric));
+    }
+
+    [Fact]
     public void TemporaryManualWindowsOverrideIsPreservedInsteadOfMakingItPersistent()
     {
         var before = Initial() with { Interfaces = Initial().Interfaces.Select(i => i.Id == Wifi ? i with { AutomaticMetric = false, Metric = 10, SavedMetric = null } : i).ToArray() };
@@ -170,13 +224,15 @@ public sealed class DefaultConnectionTests
         public ConnectionSnapshot Snapshot { get; set; } = initial;
         public List<ConnectionMetric> Writes { get; } = [];
         public int? FailAt { get; init; }
+        public Action<ConnectionMetric>? AfterWrite { get; set; }
         public Task<ConnectionSnapshot> ReadAsync(CancellationToken token = default) => Task.FromResult(Snapshot);
         public Task WriteAsync(ConnectionMetric metric, CancellationToken token = default)
         {
             Writes.Add(metric);
             // Simulate a writer failing after touching the interface, not before.
             var interfaces = Snapshot.Interfaces.Select(i => i.Id == metric.Id ? i with { AutomaticMetric = metric.AutomaticMetric, Metric = metric.AutomaticMetric ? i.Kind == "Cabo" ? 25u : 35u : metric.Metric, SavedMetric = metric.AutomaticMetric ? null : metric.Metric } : i).ToArray();
-            Snapshot = new(interfaces, Snapshot.Routes.Select(r => r with { InterfaceMetric = interfaces.Single(i => i.Index == r.Index).Metric }).ToArray());
+            Snapshot = new(interfaces, Snapshot.Routes.Select(r => r with { InterfaceMetric = interfaces.SingleOrDefault(i => i.Index == r.Index)?.Metric ?? r.InterfaceMetric }).ToArray());
+            AfterWrite?.Invoke(metric);
             if (Writes.Count == FailAt) throw new IOException("Falha sintética após gravação parcial.");
             return Task.CompletedTask;
         }

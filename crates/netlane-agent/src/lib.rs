@@ -184,14 +184,14 @@ async fn control_session(
         drop(pipe);
         connected
     };
-    let exit_deadline = time::Instant::now() + Duration::from_secs(20);
-    while session::running(&process) && time::Instant::now() < exit_deadline {
-        time::sleep(Duration::from_millis(50)).await;
+    if let Err(error) = &result {
+        set_state(state, |s| {
+            s.detail = format!("{error:#}. Aguardando a saída do agente.")
+        });
     }
-    set_state(state, |s| {
-        s.running = session::running(&process);
-        s.busy = false;
-    });
+    // Keep ownership of both the process handle and the lease until actual exit.
+    // A deadline changes the diagnostic, never abandons a still-running child.
+    wait_for_agent_exit(|| session::running(&process), commands, state).await;
     result?;
     let status = state.lock().unwrap_or_else(|e| e.into_inner());
     ensure!(
@@ -199,6 +199,40 @@ async fn control_session(
         "Limpeza ou saída do agente não confirmada."
     );
     Ok(())
+}
+
+async fn wait_for_agent_exit(
+    running: impl Fn() -> bool,
+    commands: &mut mpsc::UnboundedReceiver<Command>,
+    state: &Arc<Mutex<SessionState>>,
+) {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let mut warned = false;
+    let mut commands_open = true;
+    while running() {
+        set_state(state, |s| {
+            s.running = true;
+            s.busy = true;
+        });
+        if !warned && tokio::time::Instant::now() >= deadline {
+            warned = true;
+            set_state(state, |s| {
+                s.detail = "O agente ainda está encerrando. O controlador mantém a sessão sob acompanhamento; limpeza ainda precisa de confirmação.".into()
+            });
+        }
+        tokio::select! {
+            _ = tokio::time::sleep(Duration::from_millis(50)) => {},
+            command = commands.recv(), if commands_open => match command {
+                Some(Command::Stop) => set_state(state, |s| s.detail = "Parada recebida. O canal foi encerrado; aguardando a saída do agente, sem forçar término ou presumir limpeza.".into()),
+                Some(Command::Start { .. }) => set_state(state, |s| s.detail = "A nova sessão precisa aguardar a saída e a limpeza confirmada da anterior.".into()),
+                None => commands_open = false,
+            }
+        }
+    }
+    set_state(state, |s| {
+        s.running = false;
+        s.busy = false;
+    });
 }
 async fn exchange<S>(
     pipe: S,
@@ -402,6 +436,40 @@ pub async fn run_session(name: &str, owner_pid: u32, owner_start: u64) -> Result
 mod tests {
     use super::*;
     use tokio::io::DuplexStream;
+
+    #[tokio::test(start_paused = true)]
+    async fn late_exit_is_supervised_after_deadline_and_accepts_stop_without_claiming_cleanup() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let alive = Arc::new(AtomicBool::new(true));
+        let running = alive.clone();
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let state = Arc::new(Mutex::new(SessionState {
+            running: true,
+            cleanup_confirmed: false,
+            ..Default::default()
+        }));
+        let shared = state.clone();
+        let watcher = tokio::spawn(async move {
+            wait_for_agent_exit(|| running.load(Ordering::Relaxed), &mut receiver, &shared).await;
+        });
+        tokio::task::yield_now().await;
+        tokio::time::advance(Duration::from_secs(21)).await;
+        tokio::task::yield_now().await;
+        assert!(!watcher.is_finished());
+        {
+            let status = state.lock().unwrap();
+            assert!(status.running && status.busy);
+        }
+        sender.send(Command::Stop).unwrap();
+        tokio::task::yield_now().await;
+        assert!(state.lock().unwrap().detail.contains("Parada recebida"));
+        drop(sender);
+        alive.store(false, Ordering::Relaxed);
+        tokio::time::advance(Duration::from_millis(100)).await;
+        watcher.await.unwrap();
+        let status = state.lock().unwrap();
+        assert!(!status.running && !status.busy && !status.cleanup_confirmed);
+    }
 
     async fn exchange_fixture(response: Message) -> (Result<()>, SessionState) {
         let (client, mut agent) = tokio::io::duplex(4096);

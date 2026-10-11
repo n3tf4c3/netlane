@@ -1,8 +1,11 @@
 ﻿[CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)][string]$NsisCompilerPath,
-    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.3.4',
-    [string]$OutputDirectory
+    [ValidatePattern('^\d+\.\d+\.\d+$')][string]$Version = '0.3.5',
+    [string]$OutputDirectory,
+    [string]$CertificateThumbprint,
+    [string]$SignToolPath,
+    [ValidatePattern('^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9./_-]*)?$')][string]$TimestampServer = 'http://time.certum.pl'
 )
 
 # Build only: never execute an installer, start NetLane, or modify network settings.
@@ -11,6 +14,17 @@ Set-StrictMode -Version Latest
 $repository = Split-Path -Parent $PSScriptRoot
 $packaging = Join-Path $repository 'packaging\windows'
 $compiler = (Resolve-Path -LiteralPath $NsisCompilerPath).Path
+$signing = -not [string]::IsNullOrWhiteSpace($CertificateThumbprint)
+$signingScript = Join-Path $PSScriptRoot 'sign-windows-artifacts.ps1'
+$signingMetadata = $null
+if ($signing) {
+    if ($CertificateThumbprint -notmatch '^[A-Fa-f0-9]{40}$' -or -not $SignToolPath) { throw 'Informe thumbprint de 40 dígitos hexadecimais e SignToolPath.' }
+    $CertificateThumbprint = $CertificateThumbprint.ToUpperInvariant()
+    $SignToolPath = (Resolve-Path -LiteralPath $SignToolPath).Path
+    $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$CertificateThumbprint"
+    if (-not $certificate.HasPrivateKey -or $certificate.NotAfter -le (Get-Date)) { throw 'Certificado indisponível ou expirado.' }
+    $signingMetadata = [ordered]@{ CertificateThumbprint = $CertificateThumbprint; Publisher = $certificate.Subject; FileDigest = 'SHA256'; TimestampDigest = 'SHA256'; TimestampServer = $TimestampServer }
+} elseif ($SignToolPath) { throw 'SignToolPath exige CertificateThumbprint; não há seleção automática de certificado.' }
 $compilerVersion = (& $compiler /VERSION | Out-String).Trim()
 if ($LASTEXITCODE -ne 0 -or $compilerVersion -ne 'v3.12') { throw 'Use o compilador portátil NSIS 3.12.' }
 if (([version]$Version).Major -gt 65535 -or ([version]$Version).Minor -gt 65535 -or ([version]$Version).Build -gt 65535) {
@@ -26,6 +40,11 @@ if (-not $output.StartsWith($artifacts, [StringComparison]::OrdinalIgnoreCase) -
 }
 $payload = Join-Path $output 'payload'
 New-Item -ItemType Directory -Path $payload -Force | Out-Null
+$sourceSnapshot = Join-Path $output 'source'
+New-Item -ItemType Directory -Path $sourceSnapshot | Out-Null
+foreach ($name in @('NetLane.nsi', 'ProcessGuard.nsh')) {
+    Copy-Item -LiteralPath (Join-Path $packaging $name) -Destination $sourceSnapshot
+}
 $utf8 = New-Object System.Text.UTF8Encoding($false)
 
 function Write-GeneratedText([string]$Path, [string]$Content) {
@@ -86,7 +105,7 @@ foreach ($required in @('NetLane.UI.exe', 'NetLane.UI.runtimeconfig.json', 'core
 $defaults = Get-Content -LiteralPath (Join-Path $payload 'service\appsettings.json') -Raw | ConvertFrom-Json
 if (@($defaults.NetLane.Routing.Policies).Count -ne 0) { throw 'O pacote não pode incluir regras de exemplo ou locais no appsettings.' }
 foreach ($file in Get-PayloadFiles) {
-    if ($file.Name -match '(?i)(^netlane-rules\.|^interface-selection\.|^default-connection\.json|\.pdb$|\.runtime\.(json|lock)$|\.log$|\.bak$|\.trx$|Probe|Review|RoutingCheck)') {
+    if ($file.Name -match '(?i)(^netlane-rules\.|^interface-selection\.|^quality-settings\.|^default-connection\.json|\.pdb$|\.runtime\.(json|lock)$|\.log$|\.bak$|\.trx$|Probe|Review|RoutingCheck)') {
         throw "Arquivo privado ou de ensaio proibido no pacote: $($file.Name)"
     }
 }
@@ -124,16 +143,33 @@ foreach ($frameworkName in $frameworks.Keys) {
     }
 }
 
+# Sign only first-party files before computing the inventory. Microsoft/runtime
+# and other third-party binaries retain their original signatures and content.
+if ($signing) {
+    $ownedNames = @('NetLane.UI.exe', 'NetLane.UI.dll', 'NetLane.Service.exe', 'NetLane.Service.dll', 'NetLane.Core.dll', 'NetLane.Network.dll')
+    $ownedFiles = @(Get-PayloadFiles | Where-Object { $_.Name -in $ownedNames } | ForEach-Object FullName)
+    if ($ownedFiles.Count -ne 8) { throw 'O payload deve conter exatamente oito binários próprios esperados.' }
+    & $signingScript -FilePath $ownedFiles -CertificateThumbprint $CertificateThumbprint -SignToolPath $SignToolPath -TimestampServer $TimestampServer
+    if (-not $?) { throw 'Falha na assinatura do payload.' }
+}
+
 $inventory = @(foreach ($file in Get-PayloadFiles) {
     [ordered]@{ Path = $file.FullName.Substring($payload.Length + 1).Replace('\', '/'); Bytes = $file.Length; Sha256 = (Get-FileHash -LiteralPath $file.FullName -Algorithm SHA256).Hash }
 })
 Write-GeneratedText (Join-Path $payload 'package-manifest.json') ([ordered]@{
     Product = 'NetLane'; Version = $Version; Channel = 'local-preview'; Runtime = 'win-x64'; SelfContained = $true
     GitRevision = $revision; WorktreeDirty = $dirty; Frameworks = $frameworks; Files = $inventory
+    Signing = $signingMetadata
 } | ConvertTo-Json -Depth 8)
 
 # Compile an exact payload list, not a recursive wildcard. The uninstaller never
 # reads a deletion list from disk and never recursively removes directories.
+$retiredPayloadFiles = @(
+    'notices\System.Text.Encodings.Web-8.0.0-LICENSE.TXT'
+    'notices\System.Text.Encodings.Web-8.0.0-THIRD-PARTY-NOTICES.TXT'
+    'notices\System.Text.Json-8.0.0-LICENSE.TXT'
+    'notices\System.Text.Json-8.0.0-THIRD-PARTY-NOTICES.TXT'
+)
 $installLines = New-Object 'System.Collections.Generic.List[string]'
 $uninstallLines = New-Object 'System.Collections.Generic.List[string]'
 $directories = @{}
@@ -162,6 +198,18 @@ foreach ($file in Get-PayloadFiles) {
     $uninstallLines.Add('IfErrors uninstall_failed')
     while ($directory) { $directories[$directory] = $true; $directory = Split-Path -Parent $directory }
 }
+foreach ($relative in $retiredPayloadFiles) {
+    if (Test-Path -LiteralPath (Join-Path $payload $relative)) { throw "Arquivo retirado ainda presente no payload: $relative" }
+    $fileChecks.Add('!insertmacro CheckPayloadFile "' + (Nsis-Literal $relative) + '"')
+    # Remove only these known notices from older packages, after copying the new
+    # payload. Never use a previous manifest on disk as an elevated deletion list.
+    $installLines.Add('ClearErrors')
+    $installLines.Add('Delete "$INSTDIR\' + (Nsis-Literal $relative) + '"')
+    $installLines.Add('IfErrors install_failed')
+    $uninstallLines.Add('ClearErrors')
+    $uninstallLines.Add('Delete "$INSTDIR\' + (Nsis-Literal $relative) + '"')
+    $uninstallLines.Add('IfErrors uninstall_failed')
+}
 foreach ($directory in ($directories.Keys | Sort-Object { $_.Length } -Descending)) {
     $uninstallLines.Add('RMDir "$INSTDIR\' + (Nsis-Literal $directory) + '"')
 }
@@ -180,8 +228,23 @@ $defines = @(
     '!define VALIDATE_PAYLOAD "' + (Nsis-Literal (Join-Path $output 'validate-payload.nsh')) + '"'
     '!define PAYLOAD_KIB ' + [math]::Ceiling($totalBytes / 1024)
 )
+if ($signing) {
+    $powershell = Join-Path $PSHOME 'powershell.exe'
+    foreach ($commandPath in @($powershell, $signingScript, $SignToolPath)) {
+        if ($commandPath.IndexOfAny([char[]]@([char]39, [char]34, [char]37, [char]13, [char]10)) -ge 0) { throw 'Caminho incompatível com o comando de assinatura NSIS.' }
+    }
+    $uninstallerCommand = '"' + $powershell + '" -NoProfile -NonInteractive -File "' + $signingScript + '" -CertificateThumbprint ' + $CertificateThumbprint + ' -SignToolPath "' + $SignToolPath + '" -TimestampServer ' + $TimestampServer + ' -FilePath "%1"'
+    $defines += "!define SIGN_UNINSTALLER_COMMAND '" + $uninstallerCommand.Replace('$', '$$') + "'"
+}
 Write-GeneratedText (Join-Path $output 'build-defines.nsh') ($defines -join "`r`n")
-Invoke-Checked $compiler @('/V2', '/WX', '/INPUTCHARSET', 'UTF8', ('/DBUILD_DEFINES=' + (Join-Path $output 'build-defines.nsh')), (Join-Path $packaging 'NetLane.nsi'))
+$packagingSources = @(foreach ($relative in @('source/NetLane.nsi', 'source/ProcessGuard.nsh', 'build-defines.nsh', 'install-files.nsh', 'uninstall-files.nsh', 'validate-payload.nsh')) {
+    [ordered]@{ Path = $relative; Sha256 = (Get-FileHash -LiteralPath (Join-Path $output $relative) -Algorithm SHA256).Hash }
+})
+Invoke-Checked $compiler @('/V2', '/WX', '/INPUTCHARSET', 'UTF8', ('/DBUILD_DEFINES=' + (Join-Path $output 'build-defines.nsh')), (Join-Path $sourceSnapshot 'NetLane.nsi'))
+if ($signing) {
+    & $signingScript -FilePath $setup -CertificateThumbprint $CertificateThumbprint -SignToolPath $SignToolPath -TimestampServer $TimestampServer
+    if (-not $?) { throw 'Falha na assinatura do instalador.' }
+}
 $setupHash = (Get-FileHash -LiteralPath $setup -Algorithm SHA256).Hash
 Write-GeneratedText ($setup + '.sha256') ($setupHash + '  ' + [IO.Path]::GetFileName($setup) + "`r`n")
 Write-GeneratedText (Join-Path $output 'build-report.json') ([ordered]@{
@@ -191,6 +254,9 @@ Write-GeneratedText (Join-Path $output 'build-report.json') ([ordered]@{
     PayloadFiles = @(Get-PayloadFiles).Count; Frameworks = $frameworks; InstallerExecuted = $false
     RuntimeGuardVerified = $false; InstallationVerified = $false
     Signed = ((Get-AuthenticodeSignature -LiteralPath $setup).Status -eq 'Valid')
+    Signing = $signingMetadata
+    PackagingSources = $packagingSources
+    RetiredPayloadFiles = $retiredPayloadFiles
 } | ConvertTo-Json -Depth 5)
 Write-Host "Instalador gerado, NÃO executado: $setup"
 Write-Host "SHA-256: $setupHash"
