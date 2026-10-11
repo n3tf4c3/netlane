@@ -3,7 +3,9 @@ param(
     [int]$Seconds = 5,
     [long]$PacketsPerSecond = 833333,
     [int]$PacketBytes = 1500,
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    # Synthetic segments are removed once hashes/counters are verified; receipts stay.
+    [switch]$KeepSegments
 )
 # Offline synthetic source only; production capture writer, SHA, sync and analysis.
 $ErrorActionPreference = 'Stop'
@@ -74,11 +76,24 @@ try {
     $metrics | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'resources.json') -Encoding UTF8
     if ($process.ExitCode -ne 0) { throw ('Benchmark falhou: ' + $stderr.Result) }
     $measurement = Get-Content -LiteralPath (Join-Path $capture 'throughput.json') -Raw | ConvertFrom-Json
+    # The benchmark rereads every segment against its SHA-256 before writing throughput.json.
+    # Only then are the synthetic PCAPs disposable; capture-final.json keeps their hashes.
+    $segments = @(Get-ChildItem -LiteralPath $capture -Filter '*.pcap' -File)
+    $retention = [ordered]@{
+        KeepSegments=[bool]$KeepSegments; HashesVerified=($measurement.hashes_verified -eq $true)
+        Files=$segments.Count; Bytes=[long]($segments | Measure-Object Length -Sum).Sum; Removed=$false
+    }
+    if (-not $KeepSegments -and $retention.HashesVerified) {
+        $segments | Remove-Item -Force
+        $retention.Removed = $true
+    }
+    $retention | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $output 'segments.json') -Encoding UTF8
     [pscustomobject]@{
         RequestedGbps=$measurement.requested_payload_gbps; PublishedGbps=$measurement.published_payload_gbps
         ObservedPps=$measurement.observed_pps; PublishedPps=$measurement.published_pps
         QueueDropped=$measurement.receipt.queue_dropped; Unwritten=$measurement.receipt.unwritten
         SourceBacklog=$measurement.source_backlog_not_polled; Sustained=$measurement.requested_rate_sustained
         PeakPrivateMiB=$metrics.PeakPrivateMiB; NicCapacityProven=$false
+        SegmentsRemoved=$retention.Removed; SegmentBytes=$retention.Bytes
     } | ConvertTo-Json -Compress
 } finally { Pop-Location }
