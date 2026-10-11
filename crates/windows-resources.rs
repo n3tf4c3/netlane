@@ -10,6 +10,11 @@ fn main() {
     let [major,minor,patch]=numbers[..] else { panic!("Three-part version required"); };
     let agent=std::env::var("CARGO_PKG_NAME").as_deref()==Ok("netlane-agent");
     let (description,filename)=if agent {("NetLane Routing Agent","netlane-agent.exe")}else{("NetLane","netlane.exe")};
+    // The elevated agent may sit in a user-writable folder: resolve static imports
+    // from System32 only (LOAD_LIBRARY_SEARCH_SYSTEM32), never beside the executable.
+    if agent && std::env::var("CARGO_CFG_TARGET_ENV").as_deref()==Ok("msvc") {
+        println!("cargo:rustc-link-arg-bins=/DEPENDENTLOADFLAG:0x800");
+    }
     let resource=format!(r#"#include <winver.h>
 1 ICON "{icon}"
 VS_VERSION_INFO VERSIONINFO

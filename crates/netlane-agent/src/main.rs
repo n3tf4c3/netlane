@@ -5,6 +5,8 @@ fn main() {
     }
 }
 fn run() -> anyhow::Result<()> {
+    #[cfg(windows)]
+    netlane_windows::session::harden_dll_search()?;
     let args: Vec<_> = std::env::args().skip(1).collect();
     if args.len() == 2 && args[0] == "--validate" {
         let file = netlane_core::persistence::PolicyFile::new(&args[1]);
