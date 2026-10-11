@@ -19,7 +19,7 @@ tokio.workspace = true
 sha2.workspace = true
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { workspace = true, features = ["Win32_Graphics_Gdi", "Win32_System_SystemInformation"] }
+windows-sys = { workspace = true, features = ["Win32_Graphics_Gdi", "Win32_System_SystemInformation", "Win32_System_Com"] }
 socket2 = "0.6.5"
 native-tls = "0.2.18"
 httparse = "1.10.1"

@@ -443,7 +443,7 @@ pub async fn run_session(name: &str, owner_pid: u32, owner_start: u64) -> Result
         // The rules arrive over the authenticated channel; the path only identifies the session.
         ensure!(is_local_path(&policy_path), "Caminho remoto/dispositivo recusado.");
         validate_policies(&policies)?;
-        global_lease = Some(session::create_pipe("NetLane.RoutingSession.v1")?);
+        global_lease = Some(session::acquire_lease(session::ROUTING_LEASE, "NetLane.RoutingSession.v1")?);
         flags.enable(allow_temporary_route_policies)?;
         engine = Some(RoutingEngine::new(NativePolicySession::open()?));
         let mut tick = time::interval(Duration::from_secs(10));

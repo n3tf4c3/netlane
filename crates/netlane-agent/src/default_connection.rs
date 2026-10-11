@@ -156,7 +156,10 @@ pub async fn run(name: &str, owner_pid: u32, owner_start: u64) -> Result<()> {
     let pipe = session::connect_pipe(name)?;
     session::verify_server(&pipe, owner_pid)?;
     // Same lease as the .NET implementation, excluding concurrent changes by either version.
-    let _lease = session::create_pipe("NetLane.DefaultConnection.v1")?;
+    let _lease = session::acquire_lease(
+        session::DEFAULT_CONNECTION_LEASE,
+        "NetLane.DefaultConnection.v1",
+    )?;
     let began = std::time::Instant::now();
     serve(pipe, &mut WindowsSettings, || {
         session::running(&owner) && began.elapsed() < Duration::from_secs(80)

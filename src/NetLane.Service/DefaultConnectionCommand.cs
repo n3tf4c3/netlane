@@ -34,7 +34,7 @@ internal static class DefaultConnectionCommand
             if (message.Kind != "ChangeConnection" || message.ConnectionRequest is null) throw new InvalidDataException("Solicitação de conexão inválida.");
             request = message.ConnectionRequest;
             // Independent lease: app-specific WFP routing can continue during a default-priority change.
-            lease = SessionPipe.CreateServer("NetLane.DefaultConnection.v1");
+            lease = SessionPipe.AcquireDefaultConnectionLease();
             result = await new ConnectionPriorityTransaction(settings).ApplyAsync(request, operation.Token);
             await protocol.SendAsync(new("ConnectionResult", ConnectionResult: result), operation.Token);
             var ack = await protocol.ReceiveAsync(operation.Token);

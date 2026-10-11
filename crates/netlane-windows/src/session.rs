@@ -137,6 +137,76 @@ pub fn create_pipe(name: &str) -> Result<NamedPipeServer> {
     }
     Ok(result?)
 }
+/// Machine-wide exclusion between NetLane sessions, shared with the .NET version.
+/// The lock lives in `Common Files\NetLane`, where only administrators can create
+/// files: a user process can neither create it before the agent nor open it while a
+/// session holds it (no sharing). Delete-on-close removes it even after a crash.
+pub struct Lease {
+    _lock: std::fs::File,
+    _legacy: Option<NamedPipeServer>,
+}
+pub const ROUTING_LEASE: &str = "routing-session.v2.lock";
+pub const DEFAULT_CONNECTION_LEASE: &str = "default-connection.v2.lock";
+pub fn acquire_lease(name: &str, legacy_pipe: &str) -> Result<Lease> {
+    ensure!(
+        name == ROUTING_LEASE
+            || name == DEFAULT_CONNECTION_LEASE
+            || (name.starts_with("lease-test-") && name.ends_with(".v2.lock")),
+        "Nome de exclusão inválido."
+    );
+    let directory = common_program_files()?.join("NetLane");
+    std::fs::create_dir_all(&directory)
+        .map_err(|e| anyhow::anyhow!("A exclusão de sessões exige o agente elevado ({e})."))?;
+    let lock = netlane_core::persistence::exclusive_file(&directory.join(name)).map_err(|_| {
+        anyhow::anyhow!(
+            "Já existe uma sessão NetLane equivalente em andamento, ou o agente não está elevado."
+        )
+    })?;
+    Ok(Lease {
+        _lock: lock,
+        // Older NetLane versions only know the v1 pipe. Hold it when free so they cannot
+        // start concurrently; a squatted pipe no longer blocks this session.
+        _legacy: create_pipe(legacy_pipe).ok(),
+    })
+}
+/// 64-bit Common Files from the shell, never from environment variables.
+fn common_program_files() -> Result<std::path::PathBuf> {
+    use std::os::windows::ffi::OsStringExt;
+    use windows_sys::Win32::{
+        System::Com::CoTaskMemFree,
+        UI::Shell::{FOLDERID_ProgramFilesCommonX64, SHGetKnownFolderPath},
+    };
+    let mut path = ptr::null_mut();
+    // SAFETY: Known GUID and output pointer; the shell allocates the string, freed below.
+    let status = unsafe {
+        SHGetKnownFolderPath(
+            &FOLDERID_ProgramFilesCommonX64,
+            0,
+            ptr::null_mut(),
+            &mut path,
+        )
+    };
+    let result = (|| {
+        ensure!(
+            status == 0 && !path.is_null(),
+            "Pasta Common Files indisponível."
+        );
+        // SAFETY: Successful call returns a nul-terminated UTF-16 string.
+        let wide = unsafe {
+            let mut len = 0;
+            while *path.add(len) != 0 {
+                len += 1;
+            }
+            std::slice::from_raw_parts(path, len).to_vec()
+        };
+        Ok(std::path::PathBuf::from(std::ffi::OsString::from_wide(
+            &wide,
+        )))
+    })();
+    // SAFETY: Free the shell allocation exactly once, also after a failed call (null is allowed).
+    unsafe { CoTaskMemFree(path.cast()) };
+    result
+}
 pub fn connect_pipe(name: &str) -> Result<NamedPipeClient> {
     ensure!(valid_name(name), "Nome de canal inválido.");
     // SECURITY_ANONYMOUS prevents an unelevated server impersonating the elevated client.
@@ -345,6 +415,25 @@ mod tests {
         create_pipe(&name).unwrap();
     }
 
+    #[tokio::test]
+    async fn session_lease_cannot_be_squatted_without_elevation_and_excludes_a_second_session() {
+        // Test-only names; never the product leases.
+        let name = format!("lease-test-{}.v2.lock", uuid::Uuid::new_v4().simple());
+        let legacy = format!("{PREFIX}{}", uuid::Uuid::new_v4().simple());
+        assert!(common_program_files().unwrap().is_absolute());
+        if require_elevation().is_err() {
+            // A filtered or standard token cannot create files under Common Files, so a
+            // user process cannot occupy the lease before the elevated agent.
+            assert!(acquire_lease(&name, &legacy).is_err());
+            return;
+        }
+        let first = acquire_lease(&name, &legacy).unwrap();
+        assert!(acquire_lease(&name, &legacy).is_err());
+        drop(first);
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        drop(acquire_lease(&name, &legacy).unwrap());
+        assert!(acquire_lease("..\\outside.v2.lock", &legacy).is_err());
+    }
     #[test]
     fn owner_requires_pid_and_creation_time_and_disallows_other_pipe_names() {
         let start = current_start().unwrap();
