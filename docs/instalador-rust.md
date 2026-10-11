@@ -9,21 +9,29 @@ baseline e snapshot. Assinatura e distribuição pública continuam pendentes.
 
 | Item | Contrato do pacote |
 | --- | --- |
-| Destino | `%LOCALAPPDATA%\Programs\NetLane Rust`, fixo, por usuário |
+| Destino | `%ProgramFiles%\NetLane Rust`, fixo, para todos os usuários (gravável só por administradores) |
 | Executáveis | `netlane.exe` e `netlane-agent.exe`, x64, build Release comum |
-| Elevação | instalação/painel sem UAC; somente ações manuais do agente solicitam UAC |
-| Perfil | `%LOCALAPPDATA%\NetLane-Rust`; instalador não lê, importa ou remove o perfil |
+| Elevação | instalação e remoção pedem administrador (`requireAdministrator`; código 9 sem token administrativo); o painel roda sem UAC e só as ações manuais do agente solicitam UAC |
+| Perfil | `%LOCALAPPDATA%\NetLane-Rust` de cada usuário; instalador não lê, importa ou remove perfis |
 | Identidade | `netlane-rust-installed.layout` com `1` e `rust-package-version.txt` |
-| Menu Iniciar | `NetLane Rust.lnk`, no menu do usuário |
-| Registro | HKCU Uninstall `NetLaneRustPreview`; produto .NET preservado |
-| Inicialização | opção manual `NetLaneRust` em HKCU Run, desligada em instalação limpa |
-| Upgrade | mesma pasta e versão igual/mais recente; perfil e autorun preservados |
-| Remoção | lista compilada de arquivos; remove apenas o comando Rust esperado do usuário |
+| Menu Iniciar | `NetLane Rust.lnk`, no menu de todos os usuários |
+| Registro | HKLM Uninstall `NetLaneRustPreview`; produto .NET preservado |
+| Inicialização | opção manual `NetLaneRust` em HKCU Run de cada usuário, desligada em instalação limpa |
+| Upgrade | mesma pasta e versão igual/mais recente; perfis e autorun preservados |
+| Prévia per-user anterior | instalação recusada (código 4) enquanto existir `%LOCALAPPDATA%\Programs\NetLane Rust` ou o registro HKCU; remova-a antes, o perfil é preservado |
+| Remoção | lista compilada de arquivos; remove apenas o comando Rust esperado do usuário que executa a remoção |
+
+O agente elevado fica numa pasta que só administradores alteram: um processo
+do usuário não consegue trocar `netlane-agent.exe` nem plantar DLL ao lado dele
+antes do próximo UAC. A versão portátil não leva o agente (ver
+[migração](migracao-rust.md)).
 
 O instalador não abre o painel, não inicia agente, não altera rede e não grava
 Run. A remoção preserva entradas Run de outros caminhos, o valor legado NetLane,
-outros usuários, perfil/backup e arquivos desconhecidos. Nunca faz exclusão
-recursiva nem usa o manifesto instalado como instruções de remoção.
+perfil/backup e arquivos desconhecidos. Entradas Run de outros usuários não são
+lidas (os perfis deles não estão carregados); um comando de inicialização para
+arquivo ausente é ignorado pelo Windows. Nunca faz exclusão recursiva nem usa o
+manifesto instalado como instruções de remoção.
 
 As guardas recusam processos Rust ou .NET em qualquer sessão, enumeração
 incompleta, downgrade, desinstalador de outra pasta/versão, links/junções nos
@@ -132,11 +140,18 @@ Mensagens do assistente e cancelamento ainda precisam de conferência visual.
 O host e o .NET instalado foram preservados; a sessão foi descartada depois
 de salvar a prova da remoção. Isso não constitui aprovação de entrega pública.
 
+Essas rodadas usaram o layout **per-user** anterior. O pacote passou a ser por
+máquina em 2026-10-11 (achado 1 da auditoria); a mudança tem apenas compilação,
+extração estática e as oito recusas negativas aprovadas. Instalação, upgrade,
+remoção, recusa da prévia per-user (código 4), recusa sem administrador
+(código 9) e o UAC da instalação precisam de nova rodada no Sandbox/VM.
+
 ## Gates runtime do laboratório
 
 | Cenário | Prova necessária |
 | --- | --- |
-| Cancelamento e instalação limpa | estado preservado ao cancelar; hashes, atalho, registro, UI sem UAC e perfil vazio após instalar |
+| Cancelamento e instalação limpa | estado preservado ao cancelar; UAC da instalação; hashes, atalho comum, registro HKLM, ACL herdada de Arquivos de Programas, UI sem UAC e perfil vazio após instalar |
+| Migração da prévia per-user | instalação recusada com código 4 e nada alterado; após remover a prévia per-user, instalação por máquina preserva o perfil |
 | Runtime Visual C++ x64 | ausência/versão antiga recusadas sem cópia; runtime compatível permite abrir UI/agente |
 | Upgrade/reparo/downgrade | perfil fictício e arquivos desconhecidos preservados; downgrade recusado; falha parcial reparável |
 | Guardas | UI/bandeja/agente/outro usuário; links, arquivos em uso e tipos incompatíveis; nenhuma terminação forçada |

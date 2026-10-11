@@ -33,7 +33,7 @@ $manifestFile = Get-PackageFile $payload 'package-manifest.json'
 if ((Get-FileHash -LiteralPath $manifestFile).Hash -ne $report.ManifestSha256) { throw 'Manifesto alterado.' }
 $manifest = Get-Content -Raw -Encoding UTF8 $manifestFile | ConvertFrom-Json
 if ($manifest.Schema -ne 1 -or $manifest.Product -ne $report.Product -or $manifest.Version -ne $report.Version -or
-    $manifest.Runtime -ne 'win-x64' -or $manifest.Implementation -ne 'rust' -or $manifest.InstallScope -ne 'current-user' -or $manifest.PublicReleaseReady) {
+    $manifest.Runtime -ne 'win-x64' -or $manifest.Implementation -ne 'rust' -or $manifest.InstallScope -ne 'per-machine' -or $manifest.PublicReleaseReady) {
     throw 'Metadados do pacote não conferem.'
 }
 $expected = @{'package-manifest.json'=[ordered]@{Sha256=$report.ManifestSha256;Bytes=(Get-Item -LiteralPath $manifestFile).Length}}
@@ -84,9 +84,12 @@ $pe = Get-PeSummary (Get-PackageFile $extracted 'netlane.exe')
 if ((@($pe.Imports | Sort-Object) -join ',') -ne (@($manifest.Prerequisites.ImportedDlls | Sort-Object) -join ',') -or
     $manifest.Prerequisites.VisualCppX64Minimum -ne $report.Prerequisites.VisualCppX64Minimum -or
     $manifest.Prerequisites.RuntimeBundled -or $manifest.Prerequisites.RuntimeInstalled) { throw 'Pré-requisitos CRT inconsistentes.' }
+# Per-machine package: setup/uninstaller elevate so the agent lands in an admin-only folder.
 foreach ($path in @($setup,(Get-PackageFile $extracted 'Uninstall.exe'))) {
-    if ((Read-Pe $path 0x14c) -notmatch 'requestedExecutionLevel\s+level="asInvoker"') { throw 'Instalador/desinstalador não é por usuário.' }
+    if ((Read-Pe $path 0x14c) -notmatch 'requestedExecutionLevel\s+level="requireAdministrator"') { throw 'Instalador/desinstalador não pede administrador.' }
 }
+$nsisSource = Get-Content -Raw -Encoding UTF8 (Get-PackageFile $build 'source/NetLaneRust.nsi')
+if ($nsisSource -notmatch '(?m)^!define PRODUCT_DIR "\$PROGRAMFILES64\\NetLane Rust"\r?$') { throw 'Destino do pacote não é Arquivos de Programas.' }
 if ((Get-Content -Raw -LiteralPath (Get-PackageFile $extracted 'netlane-rust-installed.layout')) -cne '1' -or
     (Get-Content -Raw -LiteralPath (Get-PackageFile $extracted 'rust-package-version.txt')) -cne $report.Version) { throw 'Marcador/versão diferentes.' }
 $licenses = Get-Content -Raw -Encoding UTF8 (Get-PackageFile $extracted 'licenses/cargo-licenses.json') | ConvertFrom-Json
@@ -107,7 +110,7 @@ if ($signature.Status -ne 'NotSigned') { throw 'Assinatura inesperada; este buil
 $result = [ordered]@{
     Passed=$true; VerifiedPayloadFiles=$expected.Count; PackagingSourcesVerified=$true; X64Executables=2
     InstallerSha256=$report.Sha256; ManifestSha256=$report.ManifestSha256
-    InstallerPerUser=$true; UiAsInvoker=$true; SignatureStatus=$signature.Status.ToString()
+    InstallerPerMachine=$true; UiAsInvoker=$true; SignatureStatus=$signature.Status.ToString()
     LicensePackages=$licenses.Packages.Count; LicenseIssues=@($licenses.Issues).Count
     VisualCppX64Minimum=$report.Prerequisites.VisualCppX64Minimum
     InstallerExecuted=$false; RuntimeQaVerified=$false; PublicReleaseReady=$false

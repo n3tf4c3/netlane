@@ -71,7 +71,7 @@ Copy-Item -LiteralPath (Join-Path $root 'docs/instalador-rust.md') -Destination 
 [IO.File]::WriteAllText((Join-Path $payload 'rust-package-version.txt'), $version, [Text.Encoding]::ASCII)
 $manifest = [ordered]@{
     Schema=1; Product='NetLaneRustPreview'; Version=$version; Runtime='win-x64'; Implementation='rust'
-    InstallScope='current-user'; GitCommit=$revision; Files=(Get-FileInventory $payload)
+    InstallScope='per-machine'; GitCommit=$revision; Files=(Get-FileInventory $payload)
     Prerequisites=$prerequisites
     PublicReleaseReady=$false; LicenseReview=$licenseReview
 }

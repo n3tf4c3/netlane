@@ -66,14 +66,16 @@ function Get-RunHashes {
 }
 function Get-ProductState {
     $local = [Environment]::GetFolderPath('LocalApplicationData')
-    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'NetLane Rust.lnk'
+    # Per-machine package: Program Files, all-users Start menu, HKLM registration.
+    $shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'NetLane Rust.lnk'
     $registration = $null
-    $regPath = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
+    $regPath = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
     if (Test-Path -LiteralPath $regPath) { $registration = Get-ItemProperty -LiteralPath $regPath | Select-Object DisplayName,DisplayVersion,InstallLocation,UninstallString }
     $shortcutHash = $null
     if (Test-Path -LiteralPath $shortcut) { $shortcutHash = (Get-FileHash -LiteralPath $shortcut).Hash }
     return [ordered]@{
-        Program=(Get-TreeState (Join-Path $local 'Programs\NetLane Rust'))
+        Program=(Get-TreeState (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NetLane Rust'))
+        LegacyUserProgram=(Get-TreeState (Join-Path $local 'Programs\NetLane Rust'))
         Profile=(Get-TreeState (Join-Path $local 'NetLane-Rust'))
         LegacyProgram=(Get-TreeState (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NetLane'))
         LegacyProfile=(Get-TreeState (Join-Path $local 'NetLane'))
