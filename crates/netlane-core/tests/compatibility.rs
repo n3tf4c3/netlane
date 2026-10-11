@@ -153,6 +153,23 @@ fn explicit_disabled_companion_wins_and_arbitrary_children_are_not_inherited() {
     );
 }
 #[test]
+fn connections_show_ipv6_udp_and_read_snapshots_without_protocol() {
+    let old: netlane_core::Connection = serde_json::from_str(
+        r#"{"pid":1,"name":"a.exe","executable":null,"local_address":"192.0.2.1","local_port":5000,"remote_address":"203.0.113.1","remote_port":443,"interface":null}"#,
+    )
+    .unwrap();
+    assert_eq!(old.protocol, "");
+    assert_eq!(old.remote_endpoint().as_deref(), Some("203.0.113.1:443"));
+    let udp = netlane_core::Connection {
+        protocol: "UDP".into(),
+        local_address: "2001:db8::1".into(),
+        local_port: 27015,
+        ..Default::default()
+    };
+    assert_eq!(udp.local_endpoint(), "[2001:db8::1]:27015");
+    assert_eq!(udp.remote_endpoint(), None);
+}
+#[test]
 fn missing_counter_reset_and_long_gap_do_not_invent_traffic() {
     let mut tracker = TrafficTracker::default();
     let mut adapter = Adapter {

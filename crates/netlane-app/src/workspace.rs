@@ -1527,9 +1527,10 @@ impl Workspace {
             .iter()
             .filter(|c| {
                 format!(
-                    "{} {} {} {} {}",
+                    "{} {} {} {} {} {}",
                     c.name,
                     c.pid,
+                    c.protocol,
                     c.local_address,
                     c.remote_address,
                     c.interface.as_deref().unwrap_or("")
@@ -1624,7 +1625,7 @@ impl Workspace {
                     div()
                         .w(gpui::relative(0.25))
                         .flex_none()
-                        .child("Destino TCP/IPv4"),
+                        .child("Protocolo · destino"),
                 ),
         );
         for (i, c) in rows.iter().skip(page * 50).take(50).enumerate() {
@@ -1692,17 +1693,19 @@ impl Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(3.))
-                            .child(
-                                c.interface
-                                    .clone()
-                                    .unwrap_or_else(|| "Interface não identificada".to_owned()),
-                            )
+                            .child(c.interface.clone().unwrap_or_else(|| {
+                                if c.local_address == "0.0.0.0" || c.local_address == "::" {
+                                    "Todas as interfaces".to_owned()
+                                } else {
+                                    "Interface não identificada".to_owned()
+                                }
+                            }))
                             .child(
                                 div()
                                     .font_family(MONO_FONT)
                                     .text_size(px(12.))
                                     .text_color(t.text_muted)
-                                    .child(format!("{}:{}", c.local_address, c.local_port)),
+                                    .child(c.local_endpoint()),
                             ),
                     )
                     .child(
@@ -1713,7 +1716,10 @@ impl Workspace {
                             .font_family(MONO_FONT)
                             .text_size(px(12.))
                             .text_color(t.text_muted)
-                            .child(format!("{}:{}", c.remote_address, c.remote_port)),
+                            .child(match c.remote_endpoint() {
+                                Some(remote) => format!("{} {remote}", c.protocol),
+                                None => format!("{} · sem destino fixo", c.protocol),
+                            }),
                     ),
             );
         }
@@ -1722,13 +1728,13 @@ impl Workspace {
                 div()
                     .p(px(28.))
                     .text_color(t.text_muted)
-                    .child("Nenhuma conexão TCP/IPv4 estabelecida nesta leitura."),
+                    .child("Nenhuma conexão TCP estabelecida ou porta UDP nesta leitura."),
             );
         }
         div().flex().flex_col().gap(px(16.)).child(self.heading("Conexões dos aplicativos","Compare a regra escolhida com a saída observada nas conexões atuais.",cx)).child(self.filter.clone())
             .child(list)
             .child(div().flex().gap(px(12.)).items_center().child(self.button("previous","Anterior",cx).on_click(cx.listener(move|ws,_,_,cx|{ws.connection_page=page.saturating_sub(1);cx.notify();})))
-                .child(format!("{} conexões · página {}",rows.len(),page+1)).child(self.button("next","Próxima",cx).on_click(cx.listener(move|ws,_,_,cx|{let query=ws.filter.read(cx).text().to_lowercase();let count=ws.snapshot.connections.iter().filter(|c|format!("{} {} {} {} {}",c.name,c.pid,c.local_address,c.remote_address,c.interface.as_deref().unwrap_or("")).to_lowercase().contains(&query)).count();if (page+1)*50<count{ws.connection_page=page+1;}cx.notify();}))))
+                .child(format!("{} conexões · página {}",rows.len(),page+1)).child(self.button("next","Próxima",cx).on_click(cx.listener(move|ws,_,_,cx|{let query=ws.filter.read(cx).text().to_lowercase();let count=ws.snapshot.connections.iter().filter(|c|format!("{} {} {} {} {} {}",c.name,c.pid,c.protocol,c.local_address,c.remote_address,c.interface.as_deref().unwrap_or("")).to_lowercase().contains(&query)).count();if (page+1)*50<count{ws.connection_page=page+1;}cx.notify();}))))
             .child(div().text_color(t.text_muted).child("A saída observada não comprova que a política causou o roteamento. Conexões antigas podem manter a saída anterior."))
     }
     fn rules(&self, cx: &mut Context<Self>) -> gpui::Div {
