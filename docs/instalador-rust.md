@@ -146,8 +146,11 @@ extração estática e as oito recusas negativas aprovadas. Instalação, upgrad
 remoção, recusa da prévia per-user (código 4), recusa sem administrador
 (código 9) e o UAC da instalação precisam de nova rodada no Sandbox/VM. A
 [rodada de 2026-10-11](qa-sandbox-rust-permachine-2026-10-11.md) foi bloqueada
-pelo Smart App Control antes de executar o instalador sem assinatura; o QA
-runtime depende da assinatura ou da VM de laboratório autorizada.
+pelo Smart App Control antes de executar o instalador sem assinatura. A
+[rodada na VM de laboratório](qa-laboratorio-rust-permachine-2026-10-11.md) aprovou
+recusas por runtime antigo (código 8), prévia per-user (4) e falta de
+administrador (9), instalação limpa com pasta e agente não graváveis por usuários
+comuns, smoke do agente, reinstalação e remoção.
 
 ## Gates runtime do laboratório
 
