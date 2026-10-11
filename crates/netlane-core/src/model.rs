@@ -233,11 +233,32 @@ pub struct Connection {
     pub pid: u32,
     pub name: String,
     pub executable: Option<String>,
+    /// "TCP" (established) or "UDP" (bound socket, possibly without a fixed destination).
+    #[serde(default)]
+    pub protocol: String,
     pub local_address: String,
     pub local_port: u16,
+    /// Empty with port 0 for UDP sockets that do not fix a destination.
     pub remote_address: String,
     pub remote_port: u16,
     pub interface: Option<String>,
+}
+impl Connection {
+    /// `address:port`, with IPv6 between brackets.
+    pub fn endpoint(address: &str, port: u16) -> String {
+        if address.contains(':') {
+            format!("[{address}]:{port}")
+        } else {
+            format!("{address}:{port}")
+        }
+    }
+    pub fn local_endpoint(&self) -> String {
+        Self::endpoint(&self.local_address, self.local_port)
+    }
+    /// None for UDP sockets without a fixed destination.
+    pub fn remote_endpoint(&self) -> Option<String> {
+        (self.remote_port != 0).then(|| Self::endpoint(&self.remote_address, self.remote_port))
+    }
 }
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NetworkSnapshot {

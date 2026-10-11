@@ -20,8 +20,8 @@ mod native {
     use anyhow::{Result, bail};
     use netlane_core::{Adapter, Connection, NetworkSnapshot, file_name};
     use std::{
-        ffi::CStr,
-        net::{Ipv4Addr, Ipv6Addr},
+        ffi::{CStr, c_void},
+        net::{IpAddr, Ipv4Addr, Ipv6Addr},
         ptr,
     };
     use windows_sys::Win32::{
@@ -187,24 +187,11 @@ mod native {
             }
         }
     }
-    fn connections(adapters: &[Adapter]) -> Result<Vec<Connection>> {
-        let captured = (std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)?
-            .as_nanos()
-            / 100) as u64
-            + 116_444_736_000_000_000;
+    /// Copies every row of a GetExtended{Tcp,Udp}Table snapshot. All four owner-PID
+    /// tables start with a DWORD count followed by 4-byte aligned rows of type T.
+    fn read_table<T: Copy>(read: impl Fn(*mut c_void, &mut u32) -> u32) -> Result<Vec<T>> {
         let mut bytes = 0;
-        // SAFETY: The first call only queries the required length using a null buffer.
-        let status = unsafe {
-            GetExtendedTcpTable(
-                ptr::null_mut(),
-                &mut bytes,
-                0,
-                AF_INET as u32,
-                TCP_TABLE_OWNER_PID_ALL,
-                0,
-            )
-        };
+        let status = read(ptr::null_mut(), &mut bytes);
         if status != 122 && status != 0 {
             check(status)?;
         }
@@ -213,88 +200,164 @@ mod native {
                 bail!("Tabela de conexões muito grande.");
             }
             let mut storage = vec![0u64; (bytes as usize).div_ceil(8).max(1)];
-            // SAFETY: Storage is sufficiently aligned and large; table class/family determine the row layout below.
-            let status = unsafe {
-                GetExtendedTcpTable(
-                    storage.as_mut_ptr().cast(),
-                    &mut bytes,
-                    0,
-                    AF_INET as u32,
-                    TCP_TABLE_OWNER_PID_ALL,
-                    0,
-                )
-            };
+            let status = read(storage.as_mut_ptr().cast(), &mut bytes);
             if status == 122 {
                 continue;
             }
             check(status)?;
             let data = storage.as_ptr().cast::<u8>();
-            // SAFETY: Success initializes the row count; rows are bounded against the returned buffer length before reading.
+            // SAFETY: Success initializes the leading DWORD row count inside the allocation.
             let count = unsafe { ptr::read_unaligned(data.cast::<u32>()) as usize };
-            let row_size = std::mem::size_of::<MIB_TCPROW_OWNER_PID>();
-            if count.saturating_mul(row_size).saturating_add(4) > bytes as usize {
-                bail!("Tabela TCP inconsistente.");
+            let size = std::mem::size_of::<T>();
+            if count.saturating_mul(size).saturating_add(4) > storage.len() * 8 {
+                bail!("Tabela de conexões inconsistente.");
             }
-            let mut identities = std::collections::HashMap::new();
-            let mut result = Vec::new();
-            for i in 0..count {
-                // SAFETY: Row range was checked and read_unaligned handles the DWORD table header.
-                let row = unsafe {
-                    ptr::read_unaligned(data.add(4 + i * row_size).cast::<MIB_TCPROW_OWNER_PID>())
-                };
-                if row.dwState != 5 || row.dwOwningPid == 0 {
-                    continue;
-                }
-                let local = Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes());
-                let remote = Ipv4Addr::from(row.dwRemoteAddr.to_ne_bytes());
-                let local_port = u16::from_be(row.dwLocalPort as u16);
-                let remote_port = u16::from_be(row.dwRemotePort as u16);
-                if local.is_unspecified()
-                    || local.is_loopback()
-                    || local.is_broadcast()
-                    || remote.is_unspecified()
-                    || remote.is_loopback()
-                    || remote.is_broadcast()
-                    || local_port == 0
-                    || remote_port == 0
-                {
-                    continue;
-                }
-                let local_address = local.to_string();
-                let (name, executable) = identities
-                    .entry(row.dwOwningPid)
-                    .or_insert_with(|| identity(row.dwOwningPid, captured))
-                    .clone();
-                let matching: Vec<_> = adapters
-                    .iter()
-                    .filter(|a| a.connected && a.addresses.contains(&local_address))
-                    .collect();
-                let interface = if matching.len() == 1 {
-                    Some(matching[0].name.clone())
-                } else {
-                    None
-                };
-                result.push(Connection {
-                    pid: row.dwOwningPid,
-                    name,
-                    executable,
-                    local_address,
-                    local_port,
-                    remote_address: remote.to_string(),
-                    remote_port,
-                    interface,
-                });
-            }
-            result.sort_by_key(|c| {
-                (
-                    c.name.to_lowercase(),
-                    c.pid,
-                    c.remote_address.clone(),
-                    c.remote_port,
-                )
-            });
-            return Ok(result);
+            return Ok((0..count)
+                .map(|i| {
+                    // SAFETY: Row range was checked against the allocation; T is a plain Win32 row.
+                    unsafe { ptr::read_unaligned(data.add(4 + i * size).cast::<T>()) }
+                })
+                .collect());
         }
         bail!("As conexões mudaram durante a coleta; tente novamente.")
+    }
+    fn tcp_table<T: Copy>(family: u16) -> Result<Vec<T>> {
+        read_table(|buffer, bytes| {
+            // SAFETY: Buffer is null (size query) or an aligned allocation of `bytes`; T matches family/class.
+            unsafe {
+                GetExtendedTcpTable(
+                    buffer,
+                    bytes,
+                    0,
+                    u32::from(family),
+                    TCP_TABLE_OWNER_PID_ALL,
+                    0,
+                )
+            }
+        })
+    }
+    fn udp_table<T: Copy>(family: u16) -> Result<Vec<T>> {
+        read_table(|buffer, bytes| {
+            // SAFETY: Buffer is null (size query) or an aligned allocation of `bytes`; T matches family/class.
+            unsafe {
+                GetExtendedUdpTable(buffer, bytes, 0, u32::from(family), UDP_TABLE_OWNER_PID, 0)
+            }
+        })
+    }
+    fn port(raw: u32) -> u16 {
+        u16::from_be(raw as u16)
+    }
+    fn reachable(address: IpAddr) -> bool {
+        !address.is_loopback() && !matches!(address, IpAddr::V4(v4) if v4.is_broadcast())
+    }
+    /// Established TCP and bound UDP sockets, IPv4 and IPv6 (the .NET reference also lists UDP).
+    fn connections(adapters: &[Adapter]) -> Result<Vec<Connection>> {
+        let captured = (std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_nanos()
+            / 100) as u64
+            + 116_444_736_000_000_000;
+        // (protocol, pid, local, local port, remote endpoint of an established TCP row)
+        type Row = (&'static str, u32, IpAddr, u16, Option<(IpAddr, u16)>);
+        let mut rows: Vec<Row> = Vec::new();
+        for r in tcp_table::<MIB_TCPROW_OWNER_PID>(AF_INET)? {
+            rows.push((
+                "TCP",
+                r.dwOwningPid,
+                Ipv4Addr::from(r.dwLocalAddr.to_ne_bytes()).into(),
+                port(r.dwLocalPort),
+                (r.dwState == 5).then_some((
+                    Ipv4Addr::from(r.dwRemoteAddr.to_ne_bytes()).into(),
+                    port(r.dwRemotePort),
+                )),
+            ));
+        }
+        for r in tcp_table::<MIB_TCP6ROW_OWNER_PID>(AF_INET6)? {
+            rows.push((
+                "TCP",
+                r.dwOwningPid,
+                Ipv6Addr::from(r.ucLocalAddr).into(),
+                port(r.dwLocalPort),
+                (r.dwState == 5)
+                    .then_some((Ipv6Addr::from(r.ucRemoteAddr).into(), port(r.dwRemotePort))),
+            ));
+        }
+        for r in udp_table::<MIB_UDPROW_OWNER_PID>(AF_INET)? {
+            rows.push((
+                "UDP",
+                r.dwOwningPid,
+                Ipv4Addr::from(r.dwLocalAddr.to_ne_bytes()).into(),
+                port(r.dwLocalPort),
+                None,
+            ));
+        }
+        for r in udp_table::<MIB_UDP6ROW_OWNER_PID>(AF_INET6)? {
+            rows.push((
+                "UDP",
+                r.dwOwningPid,
+                Ipv6Addr::from(r.ucLocalAddr).into(),
+                port(r.dwLocalPort),
+                None,
+            ));
+        }
+        let mut identities = std::collections::HashMap::new();
+        let mut result = Vec::new();
+        for (protocol, pid, local, local_port, remote) in rows {
+            let tcp = protocol == "TCP";
+            // TCP: established with both endpoints known. UDP: any bound local port; an
+            // unconnected socket (e.g. Steam) has no destination and may listen on all interfaces.
+            let keep = pid != 0
+                && local_port != 0
+                && reachable(local)
+                && if tcp {
+                    remote.is_some_and(|(address, port)| {
+                        port != 0 && reachable(address) && !address.is_unspecified()
+                    }) && !local.is_unspecified()
+                } else {
+                    true
+                };
+            if !keep {
+                continue;
+            }
+            let local_address = local.to_string();
+            let (name, executable) = identities
+                .entry(pid)
+                .or_insert_with(|| identity(pid, captured))
+                .clone();
+            let matching: Vec<_> = adapters
+                .iter()
+                .filter(|a| a.connected && a.addresses.contains(&local_address))
+                .collect();
+            let interface = if matching.len() == 1 {
+                Some(matching[0].name.clone())
+            } else {
+                None
+            };
+            let (remote_address, remote_port) = remote
+                .filter(|_| tcp)
+                .map_or((String::new(), 0), |(a, p)| (a.to_string(), p));
+            result.push(Connection {
+                pid,
+                name,
+                executable,
+                protocol: protocol.to_owned(),
+                local_address,
+                local_port,
+                remote_address,
+                remote_port,
+                interface,
+            });
+        }
+        result.sort_by_key(|c| {
+            (
+                c.name.to_lowercase(),
+                c.pid,
+                c.protocol.clone(),
+                c.remote_address.clone(),
+                c.remote_port,
+                c.local_port,
+            )
+        });
+        Ok(result)
     }
 }

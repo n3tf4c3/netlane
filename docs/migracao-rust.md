@@ -48,7 +48,9 @@ e relatórios Markdown/HTML locais têm implementação inicial. Investigação
 reabrível, PDF e QA real da captura Npcap com rotação permanecem pendentes.
 
 O painel coleta a cada dois segundos, sem elevação e sem enviar sondagens de
-rede. As conexões observadas são TCP/IPv4 estabelecidas; saída observada não
+rede. As conexões observadas são TCP estabelecidas e portas UDP abertas, em
+IPv4 e IPv6 (a referência .NET lista TCP e UDP IPv4); UDP sem destino fixo
+aparece sem endereço remoto. Saída observada não
 prova causalidade do roteamento e não é contagem de bytes por aplicativo.
 Os totais por interface incluem todos os aplicativos e somente intervalos
 medidos. Falha, reset de contador e pausa longa invalidam a taxa daquele trecho.
