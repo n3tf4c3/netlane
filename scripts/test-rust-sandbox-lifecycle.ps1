@@ -18,10 +18,11 @@ if ($baseline.RoundId -ne $plan.RoundId -or $baseline.Identity.Computer -ne $env
 if ((Get-FileHash -LiteralPath $PSCommandPath).Hash -ne $plan.LifecycleSha256) { throw 'Runner diferente do plano.' }
 $installed = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'install.json') -Encoding UTF8 | ConvertFrom-Json
 if ($installed.Verdict -ne 'InstalledPendingVerification' -or $installed.ExitCode -ne 0) { throw 'Primeira instalacao nao concluida; nao repetir pacote bloqueado.' }
-$root = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\NetLane Rust'
+# Per-machine package: Program Files, all-users Start menu, HKLM registration; profile per user.
+$root = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NetLane Rust'
 $profile = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'NetLane-Rust'
-$shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'NetLane Rust.lnk'
-$registry = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
+$shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'NetLane Rust.lnk'
+$registry = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
 $manifestPath = Join-Path $inputRoot 'package-manifest.json'
 if ((Get-FileHash -LiteralPath $manifestPath).Hash -ne $plan.Package.ManifestSha256) { throw 'Manifesto diferente do plano.' }
 $manifest = Get-Content -Raw -LiteralPath $manifestPath -Encoding UTF8 | ConvertFrom-Json

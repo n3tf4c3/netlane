@@ -1,8 +1,10 @@
 Unicode true
 ManifestDPIAware true
-; Per-user installation: HKCU startup and uninstall belong to the same user.
-; Elevation remains an explicit action of the routing agent inside the panel.
-RequestExecutionLevel user
+; Per-machine installation: the elevated routing agent must live where only
+; administrators can write (a user-writable copy could be replaced or receive a
+; planted DLL before the next UAC prompt). The panel itself still runs asInvoker;
+; profiles and the optional startup entry stay per user (HKCU).
+RequestExecutionLevel admin
 SetCompressor /SOLID zlib
 SetOverwrite on
 !include "MUI2.nsh"
@@ -14,7 +16,9 @@ SetOverwrite on
 !include "RustProcessGuard.nsh"
 !include "${BUILD_DEFINES}"
 !define PRODUCT_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview"
-!define PRODUCT_DIR "$LOCALAPPDATA\Programs\NetLane Rust"
+!define PRODUCT_DIR "$PROGRAMFILES64\NetLane Rust"
+; Layout of the earlier per-user preview, which must be removed before this one.
+!define LEGACY_USER_DIR "$LOCALAPPDATA\Programs\NetLane Rust"
 Name "NetLane Rust (prévia local)"
 OutFile "${SETUP_OUTPUT}"
 InstallDir "${PRODUCT_DIR}"
@@ -24,7 +28,7 @@ VIAddVersionKey /LANG=1046 "FileDescription" "Prévia local Rust do NetLane"
 VIAddVersionKey /LANG=1046 "FileVersion" "${PRODUCT_VERSION}.0"
 VIAddVersionKey /LANG=1046 "LegalCopyright" "NetLane contributors"
 !define MUI_WELCOMEPAGE_TITLE "NetLane Rust — prévia local"
-!define MUI_WELCOMEPAGE_TEXT "Instalação para este usuário, em uma pasta própria.$\r$\n$\r$\nFeche o NetLane e aguarde a limpeza do agente antes de continuar.$\r$\n$\r$\nAs regras ficam no perfil NetLane-Rust. A versão anterior permanece disponível. O painel começa em observação; a seleção de saída e as medições são ações manuais."
+!define MUI_WELCOMEPAGE_TEXT "Instalação para todos os usuários, em Arquivos de Programas. Requer autorização de administrador para que o agente de roteamento fique em uma pasta protegida.$\r$\n$\r$\nFeche o NetLane e aguarde a limpeza do agente antes de continuar.$\r$\n$\r$\nAs regras ficam no perfil NetLane-Rust de cada usuário. A versão anterior permanece disponível. O painel começa em observação, sem elevação; a seleção de saída e as medições são ações manuais."
 !define MUI_FINISHPAGE_TEXT "Abra NetLane Rust pelo menu Iniciar quando desejar.$\r$\n$\r$\nA opção Abrir com o Windows começa desligada e pode ser alterada nas Configurações."
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_INSTFILES
@@ -128,15 +132,41 @@ FunctionEnd
 !insertmacro DefineDestinationCheck ""
 !insertmacro DefineDestinationCheck "un."
 
-!macro RequireSupportedUpgrade
+!macro RequireAdministrator
+  ; The manifest requests elevation; refuse a token that still is not an administrator.
+  System::Call 'shell32::IsUserAnAdmin() i.r0'
+  ${If} $0 == 0
+    MessageBox MB_OK|MB_ICONSTOP "A instalação para todos os usuários requer autorização de administrador. Nenhum arquivo foi alterado." /SD IDOK
+    SetErrorLevel 9
+    Abort
+  ${EndIf}
+!macroend
+!macro RefuseLegacyUserInstall
+  ; Earlier previews installed per user. Two copies would split autorun/uninstall and
+  ; keep an agent in a user-writable folder. HKCU is the elevating user's hive.
+  SetShellVarContext current
   ReadRegStr $0 HKCU "${PRODUCT_KEY}" "InstallLocation"
+  StrCpy $1 "${LEGACY_USER_DIR}"
+  SetShellVarContext all
+  ${If} $0 != ""
+    Goto legacy_found
+  ${EndIf}
+  IfFileExists "$1\netlane-rust-installed.layout" legacy_found legacy_absent
+legacy_found:
+  MessageBox MB_OK|MB_ICONSTOP "Há uma prévia Rust instalada só para este usuário. Remova-a em Configurações > Aplicativos (o perfil NetLane-Rust é preservado) e execute este instalador novamente." /SD IDOK
+  SetErrorLevel 4
+  Abort
+legacy_absent:
+!macroend
+!macro RequireSupportedUpgrade
+  ReadRegStr $0 HKLM "${PRODUCT_KEY}" "InstallLocation"
   ${If} $0 != ""
   ${AndIf} $0 != "${PRODUCT_DIR}"
     MessageBox MB_OK|MB_ICONSTOP "Registro de instalação de outro local. Operação recusada." /SD IDOK
     SetErrorLevel 4
     Abort
   ${EndIf}
-  ReadRegStr $0 HKCU "${PRODUCT_KEY}" "DisplayVersion"
+  ReadRegStr $0 HKLM "${PRODUCT_KEY}" "DisplayVersion"
   ${If} $0 != ""
     ${VersionCompare} $0 "${PRODUCT_VERSION}" $1
     ${If} $1 == 1
@@ -209,14 +239,17 @@ Function .onInit
     Abort
   ${EndIf}
   SetRegView 64
-  SetShellVarContext current
+  !insertmacro RequireAdministrator
+  SetShellVarContext all
   Call CheckRuntime
+  !insertmacro RefuseLegacyUserInstall
   Call CheckDestination
   !insertmacro RequireSupportedUpgrade
   !insertmacro RequireRustClosed ""
 FunctionEnd
 Section "NetLane Rust"
   Call CheckRuntime
+  !insertmacro RefuseLegacyUserInstall
   Call CheckDestination
   !insertmacro RequireSupportedUpgrade
   !insertmacro RequireRustClosed ""
@@ -226,14 +259,14 @@ Section "NetLane Rust"
   IfErrors install_failed
   CreateShortcut "$SMPROGRAMS\NetLane Rust.lnk" "$INSTDIR\netlane.exe" "" "$INSTDIR\netlane.exe" 0
   IfErrors install_failed
-  WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayName" "NetLane Rust (prévia local)"
-  WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
-  WriteRegStr HKCU "${PRODUCT_KEY}" "InstallLocation" "$INSTDIR"
-  WriteRegStr HKCU "${PRODUCT_KEY}" "DisplayIcon" "$INSTDIR\netlane.exe"
-  WriteRegStr HKCU "${PRODUCT_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
-  WriteRegDWORD HKCU "${PRODUCT_KEY}" "NoModify" 1
-  WriteRegDWORD HKCU "${PRODUCT_KEY}" "NoRepair" 1
-  WriteRegDWORD HKCU "${PRODUCT_KEY}" "EstimatedSize" ${PAYLOAD_KIB}
+  WriteRegStr HKLM "${PRODUCT_KEY}" "DisplayName" "NetLane Rust (prévia local)"
+  WriteRegStr HKLM "${PRODUCT_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
+  WriteRegStr HKLM "${PRODUCT_KEY}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "${PRODUCT_KEY}" "DisplayIcon" "$INSTDIR\netlane.exe"
+  WriteRegStr HKLM "${PRODUCT_KEY}" "UninstallString" '$\"$INSTDIR\Uninstall.exe$\"'
+  WriteRegDWORD HKLM "${PRODUCT_KEY}" "NoModify" 1
+  WriteRegDWORD HKLM "${PRODUCT_KEY}" "NoRepair" 1
+  WriteRegDWORD HKLM "${PRODUCT_KEY}" "EstimatedSize" ${PAYLOAD_KIB}
   IfErrors install_failed
   Goto install_done
 install_failed:
@@ -258,9 +291,10 @@ wrong_version:
 FunctionEnd
 Function un.onInit
   SetRegView 64
-  SetShellVarContext current
+  !insertmacro RequireAdministrator
+  SetShellVarContext all
   ${If} $INSTDIR != "${PRODUCT_DIR}"
-    MessageBox MB_OK|MB_ICONSTOP "Remoção recusada fora da pasta original deste usuário." /SD IDOK
+    MessageBox MB_OK|MB_ICONSTOP "Remoção recusada fora da pasta original da instalação." /SD IDOK
     SetErrorLevel 4
     Abort
   ${EndIf}
@@ -273,7 +307,9 @@ Section "Uninstall"
   Call un.CheckDestination
   Call un.CheckPackageVersion
   !insertmacro RequireRustClosed "un."
-  ; Only the exact command, same user and Rust value; preserve foreign/legacy Run entries.
+  ; Only the exact command and Rust value of the user running the removal; preserve
+  ; foreign/legacy Run entries. Other users' entries are not touched: their profiles
+  ; are not loaded here, and a startup command for a missing file is ignored by Windows.
   ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLaneRust"
   ${If} $0 == '$\"$INSTDIR\netlane.exe$\" --startup'
     ClearErrors
@@ -285,7 +321,7 @@ Section "Uninstall"
   ClearErrors
   Delete "$SMPROGRAMS\NetLane Rust.lnk"
   IfErrors uninstall_failed
-  DeleteRegKey HKCU "${PRODUCT_KEY}"
+  DeleteRegKey HKLM "${PRODUCT_KEY}"
   IfErrors uninstall_failed
   ; Retain repair identity until the other steps succeed. No profile access.
   Delete "$INSTDIR\Uninstall.exe"

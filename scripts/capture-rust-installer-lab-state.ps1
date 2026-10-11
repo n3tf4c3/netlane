@@ -118,10 +118,12 @@ if (-not $IdentifyOnly) {
         return ,$values
     }
     $local = [Environment]::GetFolderPath('LocalApplicationData')
-    $shortcut = Join-Path ([Environment]::GetFolderPath('Programs')) 'NetLane Rust.lnk'
+    # Per-machine package: Program Files, all-users Start menu, HKLM registration.
+    $shortcut = Join-Path ([Environment]::GetFolderPath('CommonPrograms')) 'NetLane Rust.lnk'
     Assert-RegularPath $shortcut
     $result.Snapshot = $plan.Target.Snapshot
-    $result.RustProgram = Get-TreeState (Join-Path $local 'Programs\NetLane Rust')
+    $result.RustProgram = Get-TreeState (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NetLane Rust')
+    $result.LegacyUserProgram = Get-TreeState (Join-Path $local 'Programs\NetLane Rust')
     $result.RustProfile = Get-TreeState (Join-Path $local 'NetLane-Rust')
     $result.LegacyProgram = Get-TreeState (Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NetLane')
     $result.LegacyProfile = Get-TreeState (Join-Path $local 'NetLane')
@@ -130,7 +132,8 @@ if (-not $IdentifyOnly) {
         if ((Get-Item -LiteralPath $shortcut -Force).PSIsContainer) { throw 'Atalho e uma pasta.' }
         $result.Shortcut.Sha256 = (Get-FileHash -LiteralPath $shortcut).Hash
     }
-    $result.RustRegistration = Get-Registration 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
+    $result.RustRegistration = Get-Registration 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
+    $result.LegacyUserRegistration = Get-Registration 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview'
     $result.LegacyRegistration = Get-Registration 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLane'
     $result.CurrentUserRun = Get-RunHashes
     $result.Processes = @(Get-CimInstance Win32_Process -Filter "Name='netlane.exe' OR Name='netlane-agent.exe' OR Name LIKE 'NetLane.%'" | Select-Object Name,ProcessId,SessionId,ExecutablePath,CreationDate)
