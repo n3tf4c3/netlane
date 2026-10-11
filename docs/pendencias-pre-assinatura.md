@@ -1,6 +1,6 @@
 # Pendências do NetLane antes da assinatura
 
-**Atualização de 2026-10-11:** os quatro casos iniciais (instalação limpa 0.3.4, upgrade para 0.3.5 com fixtures, downgrade recusado e remoção) foram **aprovados na VM de laboratório** — ver [rodada na VM](#rodada-na-vm-de-laboratório--2026-10-11). Os demais cenários da matriz continuam pendentes; a 0.3.5 segue sem assinatura até fechá-los. O SimplySign já assina normalmente (pacote Rust de 2026-10-11).
+**Atualização de 2026-10-11:** os quatro casos iniciais (instalação limpa 0.3.4, upgrade para 0.3.5 com fixtures, downgrade recusado e remoção) foram **aprovados na VM de laboratório** — ver [rodada na VM](#rodada-na-vm-de-laboratório--2026-10-11). Na mesma VM, a [matriz sem interface](#matriz-sem-interface-na-vm--2026-10-11) também passou: guarda de processo, arquivo em uso, destinos inválidos, falhas na remoção e falha de cópia com reparo. Faltam cancelamento, UI real na guarda de processo, autorun pela UI, logon real e UI instalada, que exigem desktop interativo; a 0.3.5 segue sem assinatura até fechá-los. O SimplySign já assina normalmente (pacote Rust de 2026-10-11).
 
 Atualizado em 2026-10-08. A orientação vigente é resolver as pendências antes de assinar a nova versão. **A 0.3.5 permanece sem assinatura e o QA completo do instalador permanece pendente.** A rodada autorizada no Windows Sandbox foi bloqueada pelo Controle de Aplicativo antes da execução do instalador 0.3.4: **0 de 4 casos concluídos**, sem tentativa da 0.3.5. O Sandbox foi encerrado e o estado do host foi conferido como preservado.
 
@@ -112,6 +112,44 @@ estados `lab-before` → `lab-after`). Continuam pendentes: cancelamento, proces
 e segunda checagem, arquivo em uso, destinos inválidos, falha de cópia e reparo,
 falha na remoção, autorun pela UI, logon real e UI instalada. A VM mantém, por
 desenho, as fixtures preservadas em `C:\Program Files\NetLane` e no perfil.
+
+## Matriz sem interface na VM — 2026-10-11
+
+Mesmo alvo (`DESKTOP-DC6M247`), agora pela conta administrativa `termiax` via OpenSSH.
+Por decisão do usuário, em vez de reverter ao `PC-OK` foram apagadas apenas as
+fixtures da rodada anterior (hashes em `C:\NetLaneDotnetQa\cleanup-20261011\removed-fixtures.json`
+no convidado). Roteiro novo `scripts/test-installer-lab-matrix.ps1`, com os mesmos
+pacotes 0.3.4/0.3.5 conferidos por hash. O desinstalador roda copiado para fora de
+`$INSTDIR` com `_?=`, o mesmo mecanismo do lançador NSIS, preservando o código real de saída.
+
+**Armadilha:** a sessão OpenSSH de administrador sai com `SeBackupPrivilege`,
+`SeRestorePrivilege` e `SeTakeOwnershipPrivilege` **ativados**, o que ignora ACEs de
+negação. A primeira execução (`run1-acl-bypassed`) removeu tudo com código 0 em vez de
+falhar. O roteiro agora desativa esses privilégios no próprio token, como num PowerShell
+elevado pelo UAC, e prova que a negação bloqueia uma exclusão antes de induzir falhas.
+
+| Caso | Resultado |
+| --- | --- |
+| Destino limpo é junção / pasta sem marcador | recusa **4**; arquivos externos e pasta intactos; sem registro |
+| `/D=` apontando outro destino | retorno 0 só em Program Files; destino alternativo não criado; 757 arquivos conferidos |
+| Processos (prova `NetLane.QaProbe.exe`, cópia do `PING.EXE`) | instalador e desinstalador recusam com **2**; processo sobrevive; estado igual |
+| Arquivo em uso (`NetLane.Core.dll` exclusivo) | instalador e desinstalador recusam com **7**; estado igual |
+| `notices` como junção, DLL virando pasta ou symlink, atalho virando pasta, menu Iniciar como junção | instalador e desinstalador recusam com **4**; arquivos externos e estado iguais |
+| Desinstalador movido | recusa **4**; nada removido |
+| Falha ao apagar o atalho | **7**; payload removido, mas marcador, `Uninstall.exe`, registro e perfil preservados; repetição retorna 0 e remove tudo |
+| Falha ao apagar o registro | **7**; marcador e `Uninstall.exe` preservados; repetição retorna 0 |
+| Falha de cópia (criação negada em `notices`), 0.3.4 → 0.3.5 | **7**; estado parcial com 749 arquivos 0.3.5, 5 da 0.3.4, 2 ausentes e registro ainda 0.3.4; repetição da 0.3.5 retorna 0, 757 arquivos conferidos e avisos antigos removidos |
+| Rede | adaptadores, bindings, métricas, rotas, DNS e flags iguais antes/depois |
+
+A VM terminou sem instalação, perfil, atalho, autorun ou ACE de negação. Evidências em
+`artifacts/dotnet-matrix-20261011` (pacote, recibos, estados e a execução anulada).
+
+Limites: a guarda de processo usou um executável de prova, não a UI real na bandeja ou em
+outra sessão. A segunda checagem dentro da Section não foi isolada; no modo silencioso ela
+repete a de `.onInit`. O reparo depende de executar de novo: a falha de cópia deixa
+binários de versões misturadas com registro 0.3.4, e **não há rollback automático**.
+Continuam pendentes: cancelamento na página inicial, guarda com UI real, autorun pela UI,
+logon real e UI instalada.
 
 ## Assinatura depois dos ensaios
 
