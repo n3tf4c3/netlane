@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [string]$PlanPath = 'C:\NetLaneRustQaInput\plan.json',
-    [ValidateSet('Preflight','Runtime','Install')][string]$Mode = 'Preflight',
+    [ValidateSet('Preflight','Runtime','Install','LegacyRefusal','AdminRefusal')][string]$Mode = 'Preflight',
     [ValidatePattern('^[a-z0-9-]{1,40}$')][string]$Label = 'preflight',
     [ValidatePattern('^[a-z0-9-]{1,40}$')][string]$BaselineLabel = 'preflight'
 )
@@ -83,6 +83,22 @@ function Get-ProductState {
         Processes=@(Get-Process | Where-Object { $_.ProcessName -match '^NetLane([.-]|$)' } | Select-Object Id,ProcessName,Path)
     }
 }
+# Allow rules that let non-administrators change the elevated agent or its folder.
+function Get-UserWritableRules([string]$Path) {
+    $sids = @('S-1-1-0','S-1-5-11','S-1-5-32-545','S-1-5-4')
+    $write = [Security.AccessControl.FileSystemRights]'WriteData, AppendData, WriteExtendedAttributes, WriteAttributes, Delete, DeleteSubdirectoriesAndFiles, ChangePermissions, TakeOwnership'
+    return ,@((Get-Acl -LiteralPath $Path).Access | Where-Object {
+        $_.AccessControlType -eq 'Allow' -and ($_.FileSystemRights -band $write) -and
+        $sids -contains $_.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    } | ForEach-Object { "$($_.IdentityReference) $($_.FileSystemRights)" })
+}
+function Wait-Setup($Process) {
+    if (-not $Process.WaitForExit(120000)) { throw 'Instalador ainda em execucao; nenhuma finalizacao forcada.' }
+    return $Process.ExitCode
+}
+function Assert-NothingInstalled($State) {
+    return -not $State.Program.Exists -and -not $State.Registration -and -not $State.ShortcutSha256 -and -not $State.Processes.Count
+}
 $setup = Join-Path $inputRoot $plan.Package.Installer
 if ($plan.Package.Installer -notmatch '^NetLane-Rust-[A-Za-z0-9.-]+-setup\.exe$' -or
     (Get-FileHash -LiteralPath $setup).Hash -ne $plan.Package.Sha256 -or
@@ -128,6 +144,48 @@ try {
                 $result.Verdict = 'RuntimeStillRunning'
             }
             $result.State = Get-ProductState
+        } elseif ($Mode -eq 'LegacyRefusal') {
+            # A fictitious marker of the earlier per-user preview must block the per-machine setup.
+            $legacy = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\NetLane Rust'
+            if (Test-Path -LiteralPath $legacy) { throw 'Fixture legada anterior.' }
+            $null = New-Item -ItemType Directory -Path $legacy
+            [IO.File]::WriteAllText((Join-Path $legacy 'netlane-rust-installed.layout'),'1',[Text.Encoding]::ASCII)
+            try {
+                $result.Before = Get-ProductState
+                $process = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru
+                $result.InstallerExecuted = $true
+                $result.ExitCode = Wait-Setup $process
+                $result.After = Get-ProductState
+            } finally { Remove-Item -LiteralPath $legacy -Recurse -Force }
+            $result.Verdict = if ($result.ExitCode -eq 4 -and (Assert-NothingInstalled $result.After)) { 'Passed' } else { 'Failed' }
+        } elseif ($Mode -eq 'AdminRefusal') {
+            # A standard user bypassing the manifest (RunAsInvoker) must still be refused by the
+            # setup itself (code 9). Temporary account and copy, removed afterwards.
+            $work = 'C:\NetLaneQaAdminRefusal'
+            if (Test-Path -LiteralPath $work) { throw 'Pasta anterior.' }
+            $null = New-Item -ItemType Directory -Path $work
+            $copy = Join-Path $work $plan.Package.Installer
+            Copy-Item -LiteralPath $setup -Destination $copy
+            if ((Get-FileHash -LiteralPath $copy).Hash -ne $plan.Package.Sha256) { throw 'Copia divergente.' }
+            $name = 'nlqa' + [guid]::NewGuid().ToString('N').Substring(0,8)
+            $password = ConvertTo-SecureString ([guid]::NewGuid().ToString('N') + 'Aa1!') -AsPlainText -Force
+            $null = New-LocalUser -Name $name -Password $password -AccountNeverExpires -PasswordNeverExpires
+            try {
+                Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $name
+                $credential = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
+                $result.Before = Get-ProductState
+                $env:__COMPAT_LAYER = 'RunAsInvoker'
+                try { $process = Start-Process -FilePath $copy -ArgumentList '/S' -Credential $credential -WorkingDirectory $work -LoadUserProfile -PassThru }
+                finally { Remove-Item Env:__COMPAT_LAYER }
+                $result.InstallerExecuted = $true
+                $result.StandardUser = $name
+                $result.ExitCode = Wait-Setup $process
+                $result.After = Get-ProductState
+            } finally {
+                Remove-LocalUser -Name $name
+                Remove-Item -LiteralPath $work -Recurse -Force
+            }
+            $result.Verdict = if ($result.ExitCode -eq 9 -and (Assert-NothingInstalled $result.After)) { 'Passed' } else { 'Failed' }
         } else {
         if (-not $baseline.Prerequisites.IcuPresent -or -not $baseline.Prerequisites.VisualCppX64 -or [version]$baseline.Prerequisites.VisualCppX64 -lt [version]$plan.Package.VisualCppX64Minimum) { throw 'Dependencias ausentes; nao tentar o instalador.' }
         Write-NewJson (Join-Path $outputRoot 'install-attempt.json') ([ordered]@{RoundId=$plan.RoundId;AtUtc=$result.StartedAtUtc;InstallerSha256=$plan.Package.Sha256})
@@ -145,6 +203,14 @@ try {
             $result.Error = $_.Exception.ToString()
         }
         $result.After = Get-ProductState
+        if ($result.Verdict -eq 'InstalledPendingVerification') {
+            $programRoot = Join-Path ([Environment]::GetFolderPath('ProgramFiles')) 'NetLane Rust'
+            $result.UserWritable = [ordered]@{
+                Folder=(Get-UserWritableRules $programRoot)
+                Agent=(Get-UserWritableRules (Join-Path $programRoot 'netlane-agent.exe'))
+            }
+            if ($result.UserWritable.Folder.Count -or $result.UserWritable.Agent.Count) { $result.Verdict = 'InstalledAclInvalid' }
+        }
         if ($result.Verdict -eq 'InstalledPendingVerification' -and $plan.Package.PSObject.Properties['ExpectedDisplayName']) {
             $result.RegistrationNameValid = $result.After.Registration.DisplayName -ceq $plan.Package.ExpectedDisplayName
             $result.RegistrationNameCodepoints = @($result.After.Registration.DisplayName.ToCharArray() | ForEach-Object { [int]$_ })
@@ -163,4 +229,4 @@ try {
     $receiptName = if ($Mode -eq 'Preflight') { $Label } else { $Mode.ToLowerInvariant() }
     Write-NewJson (Join-Path $outputRoot ($receiptName+'.json')) $result
 }
-if ($result.Verdict -notin @('Collected','RuntimeInstalled','InstalledPendingVerification')) { exit 1 }
+if ($result.Verdict -notin @('Collected','RuntimeInstalled','InstalledPendingVerification','Passed')) { exit 1 }

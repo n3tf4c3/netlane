@@ -1,6 +1,6 @@
 ﻿[CmdletBinding()]
 param(
-    [Parameter(Mandatory=$true)][ValidateSet('Demo','AfterDemo','Reinstall','Remove')][string]$Mode,
+    [Parameter(Mandatory=$true)][ValidateSet('Demo','AfterDemo','Smoke','Reinstall','Remove')][string]$Mode,
     [string]$PlanPath = 'C:\NetLaneRustQaInput\plan-lifecycle.json',
     [ValidatePattern('^(-v[0-9]+)?$')][string]$ReceiptSuffix = ''
 )
@@ -85,8 +85,22 @@ $result = [ordered]@{Schema=1;RoundId=$plan.RoundId;Mode=$Mode;RunnerSha256=$pla
 try {
     $result.Before = Get-Snapshot
     if ($Mode -ne 'AfterDemo' -and $result.Before.Processes.Count) { throw 'Produto ainda em uso.' }
-    if ($Mode -in @('Demo','Reinstall','Remove')) { Assert-Payload }
+    if ($Mode -in @('Demo','Smoke','Reinstall','Remove')) { Assert-Payload }
+    $demoSkipped = [bool]($plan.PSObject.Properties['DemoSkipped'] -and $plan.DemoSkipped)
     switch ($Mode) {
+        'Smoke' {
+            # Installed agent from the protected folder, read-only command: no session, UAC or WFP.
+            $fixture = Join-Path $inputRoot 'rules-fixture.json'
+            if ((Get-FileHash -LiteralPath $fixture).Hash -ne $plan.RulesFixtureSha256) { throw 'Fixture de regras diferente do plano.' }
+            $agent = Get-PayloadPath 'netlane-agent.exe'
+            $output = & $agent --validate $fixture | Out-String
+            $result.ExitCode = $LASTEXITCODE
+            $result.Output = $output.Trim()
+            $parsed = $output | ConvertFrom-Json
+            if ($result.ExitCode -ne 0 -or @($parsed).Count -ne 1 -or $parsed[0].applicationId -ne 'qa.exe') { throw 'Agente instalado nao validou a fixture.' }
+            if (Test-Path -LiteralPath $profile) { throw 'Validacao criou perfil padrao.' }
+            $result.Verdict = 'Passed'
+        }
         'Demo' {
             Write-NewJson (Join-Path $outputRoot 'demo-attempt.json') ([ordered]@{RoundId=$plan.RoundId;AtUtc=$result.StartedAtUtc;BinarySha256=(Get-FileHash -LiteralPath (Join-Path $root 'netlane.exe')).Hash;Arguments='--demo --profile C:\NetLaneRustQaDemo'})
             if (Test-Path -LiteralPath 'C:\NetLaneRustQaDemo') { throw 'Perfil demo anterior.' }
@@ -108,8 +122,14 @@ try {
             $result.DefaultProfileCreated = $false
         }
         'Reinstall' {
-            $afterDemo = Get-Content -Raw -LiteralPath (Join-Path $outputRoot ('afterdemo'+$ReceiptSuffix+'.json')) | ConvertFrom-Json
-            if ($afterDemo.Verdict -ne 'Passed' -or (Test-Path -LiteralPath $profile)) { throw 'Demo nao encerrou ou perfil inesperado.' }
+            if ($demoSkipped) {
+                # Demo needs a manual Exit click; the plan records it as skipped and requires Smoke.
+                $smoke = Get-Content -Raw -LiteralPath (Join-Path $outputRoot ('smoke'+$ReceiptSuffix+'.json')) | ConvertFrom-Json
+                if ($smoke.RoundId -ne $plan.RoundId -or $smoke.Verdict -ne 'Passed' -or (Test-Path -LiteralPath $profile)) { throw 'Smoke nao concluido ou perfil inesperado.' }
+            } else {
+                $afterDemo = Get-Content -Raw -LiteralPath (Join-Path $outputRoot ('afterdemo'+$ReceiptSuffix+'.json')) | ConvertFrom-Json
+                if ($afterDemo.Verdict -ne 'Passed' -or (Test-Path -LiteralPath $profile)) { throw 'Demo nao encerrou ou perfil inesperado.' }
+            }
             Assert-RegularPath $profile
             foreach ($path in @((Join-Path $root 'qa-unknown-preserve.txt'),(Join-Path $profile 'qa-preserve.txt'),(Join-Path $profile 'netlane-rules.json'))) { if (Test-Path -LiteralPath $path) { throw 'Fixture anterior.' } }
             $null = New-Item -ItemType Directory -Path $profile
