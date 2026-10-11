@@ -82,7 +82,9 @@ painel nunca resolve nem eleva `netlane-agent.exe`, mesmo que alguém coloque um
 na pasta. Uma pasta portátil (Downloads, pendrive) é gravável pelo usuário, e um
 auxiliar elevado ali poderia ser trocado ou receber uma DLL plantada. Observação,
 captura, análise e leitura da conexão padrão continuam; roteamento por aplicativo
-e troca da conexão padrão exigem a versão instalada.
+e troca da conexão padrão exigem a versão instalada. Com `-CertificateThumbprint`
+e `-SignToolPath`, o script assina o `netlane.exe` portátil (SimplySign) antes dos
+hashes e gera `<pasta>.zip` com `.sha256`.
 
 Uma abertura normal usa `%LOCALAPPDATA%\NetLane-Rust` e começa em observação.
 `--profile C:\PastaAbsoluta` permite um perfil próprio. Não aponte uma prévia
