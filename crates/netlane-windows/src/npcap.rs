@@ -250,6 +250,56 @@ fn enumerate_devices() -> Result<Vec<Device>> {
 fn local_device(name: &str) -> bool {
     name.starts_with("\\Device\\NPF_") && name.len() <= 512 && !name.chars().any(char::is_control)
 }
+/// Compiles on a live or dead handle; the error carries Npcap's own explanation.
+fn compile_filter(
+    compile: Compile,
+    error: GetError,
+    handle: *mut c_void,
+    filter: &str,
+) -> Result<Bpf> {
+    let text = CString::new(filter)?;
+    let mut bpf = Bpf {
+        len: 0,
+        instructions: null_mut(),
+    };
+    // SAFETY: valid handle and initialized output; unknown IPv4 netmask prevents
+    // guessing the interface's broadcast configuration.
+    let code = unsafe { compile(handle, &mut bpf, text.as_ptr(), 1, u32::MAX) };
+    // SAFETY: pcap_geterr returns the handle's NUL-terminated message, copied at once.
+    let detail = native_string(unsafe { error(handle) });
+    ensure!(code == 0, "Filtro BPF não aceito pelo Npcap: {detail}");
+    Ok(bpf)
+}
+type OpenDead = unsafe extern "C" fn(c_int, c_int) -> *mut c_void;
+/// Validates a BPF filter with `pcap_open_dead`: no interface, driver handle, packet
+/// or capture is involved. Lets the UI and QA check the Npcap message offline.
+pub fn check_filter(filter: &str, link: u16, snaplen: u32) -> Result<()> {
+    ensure!(
+        (64..=65535).contains(&snaplen)
+            && filter.len() <= 512
+            && !filter.chars().any(char::is_control),
+        "Filtro ou snaplen inválidos."
+    );
+    if filter.trim().is_empty() {
+        return Ok(());
+    }
+    let library = Library::load()?;
+    let open_dead = symbol!(library, "pcap_open_dead", OpenDead);
+    let close = symbol!(library, "pcap_close", Close);
+    let compile = symbol!(library, "pcap_compile", Compile);
+    let free = symbol!(library, "pcap_freecode", FreeCode);
+    let error = symbol!(library, "pcap_geterr", GetError);
+    // SAFETY: link/snaplen are bounded integers; a dead handle never touches a device.
+    let handle = unsafe { open_dead(c_int::from(link), snaplen as c_int) };
+    ensure!(!handle.is_null(), "Npcap não criou o validador de filtro.");
+    let result = compile_filter(compile, error, handle, filter).map(|mut bpf| {
+        // SAFETY: successful compilation owns this program; freed exactly once.
+        unsafe { free(&mut bpf) }
+    });
+    // SAFETY: dead handle owned here; closed before the library is released.
+    unsafe { close(handle) };
+    result
+}
 pub struct Capture {
     handle: *mut c_void,
     close: Close,
@@ -361,17 +411,9 @@ impl Capture {
         // Windows DLT_RAW=12 differs from the portable savefile LINKTYPE_RAW=101.
         capture.link = if kind == 12 { 101 } else { kind as u16 };
         if !filter.trim().is_empty() {
-            let text = CString::new(filter)?;
-            let mut bpf = Bpf {
-                len: 0,
-                instructions: null_mut(),
-            };
-            // SAFETY: active handle and initialized output; unknown IPv4
-            // netmask prevents guessing the interface's broadcast configuration.
-            let code = unsafe { compile(handle, &mut bpf, text.as_ptr(), 1, u32::MAX) };
+            let mut bpf = compile_filter(compile, error, handle, filter)?;
             // SAFETY: pcap_geterr returns the handle's NUL-terminated message, copied at once.
             let detail = || native_string(unsafe { error(handle) });
-            ensure!(code == 0, "Filtro BPF não aceito pelo Npcap: {}", detail());
             // SAFETY: successfully compiled BPF belongs to libpcap; free after set.
             let code = unsafe { set(handle, &mut bpf) };
             // SAFETY: successful compilation owns this code; set copied it.
@@ -581,6 +623,20 @@ mod tests {
         }
         assert!(context.error.is_some());
         assert_eq!(context.batch.len(), 1);
+    }
+    #[test]
+    fn invalid_filter_reports_npcap_reason_without_opening_a_device() {
+        // Dead handle only: no interface, driver handle or capture. Skipped without Npcap.
+        if Library::load().is_err() {
+            return;
+        }
+        check_filter("tcp port 443", 1, 65535).unwrap();
+        let message = check_filter("tcp port nope", 1, 65535)
+            .unwrap_err()
+            .to_string();
+        let prefix = "Filtro BPF não aceito pelo Npcap: ";
+        assert!(message.starts_with(prefix), "{message}");
+        assert!(message.len() > prefix.len() + 3, "{message}");
     }
     #[test]
     fn only_npcap_runtime_versions_are_ranked_for_compatible_mode() {
