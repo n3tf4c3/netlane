@@ -1,0 +1,11 @@
+# cargo deny check advisories — vulnerabilities fail; each exception below is
+# a reviewed "unmaintained" notice. Revisit when the GPUI revision changes or by 2027-04-01.
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, compile-time macro only; transitive via the pinned GPUI revision. Revisit on GPUI update." },
+    { id = "RUSTSEC-2026-0206", reason = "rustybuzz: unmaintained; text shaping of bundled fonts only, transitive via the pinned GPUI revision. Revisit on GPUI update." },
+    { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained; parses bundled fonts only, transitive via the pinned GPUI revision. Revisit on GPUI update." },
+]
