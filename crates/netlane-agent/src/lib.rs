@@ -1,7 +1,14 @@
 //! Session orchestration. A stopped process is not proof of successful cleanup.
 pub mod default_connection;
 use anyhow::{Result, ensure};
-use netlane_core::{persistence::PolicyFile, planning::PlannedRule};
+use netlane_core::{
+    Adapter, RoutingPolicy,
+    engine::{PolicySession, RoutingEngine},
+    is_local_path,
+    persistence::PolicyFile,
+    planning::{PlannedRule, expand_related, plan, retire_missing},
+    validate_policies,
+};
 use netlane_windows::protocol::{self, Message, VERSION};
 use std::{
     path::{Path, PathBuf},
@@ -12,16 +19,31 @@ use tokio::sync::mpsc;
 
 pub fn validate_start(path: &Path) -> Result<()> {
     ensure!(
-        path.is_absolute() && path.is_file(),
-        "Salve as regras em um arquivo local antes de iniciar."
-    );
-    let name = path.to_string_lossy();
-    ensure!(
-        !name.starts_with("\\\\"),
+        is_local_path(&path.to_string_lossy()),
         "Caminho remoto/dispositivo recusado."
+    );
+    ensure!(
+        path.is_file(),
+        "Salve as regras em um arquivo local antes de iniciar."
     );
     PolicyFile::new(path).load()?;
     Ok(())
+}
+/// One session cycle. Every error is recoverable: a rolled-back apply keeps the
+/// previously accepted policies and the next cycle retries. Only a poisoned engine
+/// (failed rollback) ends the session.
+pub fn apply_cycle<S: PolicySession>(
+    engine: &mut RoutingEngine<S>,
+    policies: &[RoutingPolicy],
+    adapters: Result<Vec<Adapter>>,
+    exists: impl Fn(&str) -> bool,
+) -> Result<Vec<PlannedRule>> {
+    let adapters = adapters?;
+    let expanded = expand_related(policies, &exists);
+    let mut rules = plan(&expanded, &adapters);
+    retire_missing(&mut rules, &exists);
+    engine.apply(&rules)?;
+    Ok(rules)
 }
 #[derive(Clone, Debug, Default)]
 pub struct SessionState {
@@ -34,8 +56,10 @@ pub struct SessionState {
 enum Command {
     Start {
         policy_path: PathBuf,
+        policies: Vec<RoutingPolicy>,
         allow_flags: bool,
     },
+    Update(Vec<RoutingPolicy>),
     Stop,
 }
 pub struct Controller {
@@ -67,8 +91,16 @@ impl Controller {
     pub fn state(&self) -> SessionState {
         self.state.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
-    pub fn start(&self, path: PathBuf, allow_flags: bool) -> Result<()> {
+    /// `policies` are the saved rules shown by the panel; the elevated agent applies
+    /// exactly these and never rereads the user-writable file.
+    pub fn start(
+        &self,
+        path: PathBuf,
+        policies: Vec<RoutingPolicy>,
+        allow_flags: bool,
+    ) -> Result<()> {
         validate_start(&path)?;
+        validate_policies(&policies)?;
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         ensure!(
             !state.running && !state.busy && state.cleanup_confirmed,
@@ -79,6 +111,7 @@ impl Controller {
             .sender
             .send(Command::Start {
                 policy_path: path,
+                policies,
                 allow_flags,
             })
             .map_err(|_| anyhow::anyhow!("Controlador encerrado."));
@@ -86,6 +119,17 @@ impl Controller {
             state.busy = false;
         }
         sent
+    }
+    /// Sends rules saved by the panel to the active session. Returns false without a session.
+    pub fn update(&self, policies: Vec<RoutingPolicy>) -> Result<bool> {
+        validate_policies(&policies)?;
+        if !self.state().running {
+            return Ok(false);
+        }
+        self.sender
+            .send(Command::Update(policies))
+            .map_err(|_| anyhow::anyhow!("Controlador encerrado."))?;
+        Ok(true)
     }
     pub fn stop(&self) -> Result<()> {
         self.sender
@@ -109,6 +153,7 @@ async fn controller_loop(
     while let Some(command) = commands.recv().await {
         if let Command::Start {
             policy_path,
+            policies,
             allow_flags,
         } = command
         {
@@ -127,13 +172,17 @@ async fn controller_loop(
             let result = control_session(
                 &executable,
                 &policy_path,
+                policies,
                 allow_flags,
                 &mut commands,
                 &state,
             )
             .await;
             #[cfg(not(windows))]
-            let result: Result<()> = Err(anyhow::anyhow!("Sessões WFP exigem Windows."));
+            let result: Result<()> = {
+                let _ = (&executable, policy_path, policies, allow_flags);
+                Err(anyhow::anyhow!("Sessões WFP exigem Windows."))
+            };
             if let Err(e) = result {
                 set_state(&state, |s| {
                     s.busy = false;
@@ -147,6 +196,7 @@ async fn controller_loop(
 async fn control_session(
     executable: &Path,
     policy_path: &Path,
+    policies: Vec<RoutingPolicy>,
     allow_flags: bool,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     state: &Arc<Mutex<SessionState>>,
@@ -179,7 +229,16 @@ async fn control_session(
     }
     .await;
     let result = if connected.is_ok() {
-        exchange(pipe, pid, policy_path, allow_flags, commands, state).await
+        exchange(
+            pipe,
+            pid,
+            policy_path,
+            policies,
+            allow_flags,
+            commands,
+            state,
+        )
+        .await
     } else {
         drop(pipe);
         connected
@@ -225,6 +284,7 @@ async fn wait_for_agent_exit(
             command = commands.recv(), if commands_open => match command {
                 Some(Command::Stop) => set_state(state, |s| s.detail = "Parada recebida. O canal foi encerrado; aguardando a saída do agente, sem forçar término ou presumir limpeza.".into()),
                 Some(Command::Start { .. }) => set_state(state, |s| s.detail = "A nova sessão precisa aguardar a saída e a limpeza confirmada da anterior.".into()),
+                Some(Command::Update(_)) => {}
                 None => commands_open = false,
             }
         }
@@ -238,6 +298,7 @@ async fn exchange<S>(
     pipe: S,
     pid: u32,
     policy_path: &Path,
+    policies: Vec<RoutingPolicy>,
     allow_flags: bool,
     commands: &mut mpsc::UnboundedReceiver<Command>,
     state: &Arc<Mutex<SessionState>>,
@@ -259,6 +320,7 @@ where
         &mut writer,
         &Message::Start {
             policy_path: policy_path.to_string_lossy().into_owned(),
+            policies,
             allow_temporary_route_policies: allow_flags,
         },
     )
@@ -276,13 +338,15 @@ where
                 if accept_response(message?,pid,policy_path,state)? {return Ok(());}
                 Ok(())
             }
-            command=commands.recv(),if !exiting=> {
-                if matches!(command,None|Some(Command::Stop)) {
+            command=commands.recv(),if !exiting=> match command {
+                None|Some(Command::Stop) => {
                     exiting=true;stop_deadline=Some(time::Instant::now()+Duration::from_secs(30));
                     set_state(state,|s|{s.busy=true;s.detail="Encerrando o motor e restaurando opções temporárias…".to_owned();});
                     protocol::send(&mut writer,&Message::Stop).await
-                } else {Ok(())}
-            }
+                }
+                Some(Command::Update(policies)) => protocol::send(&mut writer,&Message::Update{policies}).await,
+                Some(Command::Start{..}) => Ok(()),
+            },
             _=ping.tick()=> {
                 if stop_deadline.is_some_and(|t|time::Instant::now()>t){anyhow::bail!("O agente não encerrou no prazo; limpeza não confirmada.");}
                 ensure!(last_response.elapsed()<Duration::from_secs(35),"O agente não respondeu; limpeza não confirmada.");
@@ -351,10 +415,6 @@ fn accept_response(
 
 #[cfg(windows)]
 pub async fn run_session(name: &str, owner_pid: u32, owner_start: u64) -> Result<()> {
-    use netlane_core::{
-        engine::RoutingEngine,
-        planning::{expand_related, plan},
-    };
     use netlane_windows::{
         flags::{TemporaryFlags, WindowsRoutePolicySettings},
         monitor, session,
@@ -369,37 +429,70 @@ pub async fn run_session(name: &str, owner_pid: u32, owner_start: u64) -> Result
     let request = time::timeout(Duration::from_secs(15), protocol::receive(&mut reader)).await??;
     let Message::Start {
         policy_path,
+        mut policies,
         allow_temporary_route_policies,
     } = request
     else {
         anyhow::bail!("Pedido inicial inválido.");
     };
-    let path = PathBuf::from(&policy_path);
     let mut global_lease = None;
     let mut flags = TemporaryFlags::new(WindowsRoutePolicySettings);
     let mut engine = None;
     let mut inbox = protocol::Inbox::new(reader);
     let result: Result<()> = async {
-        validate_start(&path)?;
+        // The rules arrive over the authenticated channel; the path only identifies the session.
+        ensure!(is_local_path(&policy_path), "Caminho remoto/dispositivo recusado.");
+        validate_policies(&policies)?;
         global_lease = Some(session::create_pipe("NetLane.RoutingSession.v1")?);
         flags.enable(allow_temporary_route_policies)?;
-        engine=Some(RoutingEngine::new(NativePolicySession::open()?));
-        let mut tick=time::interval(Duration::from_secs(10)); let mut owner_tick=time::interval(Duration::from_secs(1));
-        let mut last_ping=time::Instant::now();
+        engine = Some(RoutingEngine::new(NativePolicySession::open()?));
+        let mut tick = time::interval(Duration::from_secs(10));
+        let mut owner_tick = time::interval(Duration::from_secs(1));
+        let mut last_ping = time::Instant::now();
         loop {
             tokio::select! {
-                message=inbox.receive()=> {match message? {Message::Ping=>last_ping=time::Instant::now(),Message::Stop=>break,_=>anyhow::bail!("Comando de sessão inválido.")}}
-                _=owner_tick.tick()=> {if !session::running(&owner) || last_ping.elapsed()>Duration::from_secs(12){break;}}
-                _=tick.tick()=> {
-                    let loaded=PolicyFile::new(&path).load()?; let snapshot=monitor::snapshot()?;
-                    let expanded=expand_related(&loaded.policies,|p|Path::new(p).is_file()); let mut rules=plan(&expanded,&snapshot.adapters);
-                    for rule in &mut rules {if rule.mode!=netlane_core::RouteMode::Automatic && rule.executable.as_deref().is_none_or(|p|!Path::new(p).is_absolute() || !Path::new(p).is_file()){rule.mode=netlane_core::RouteMode::Automatic;rule.detail="Executável ausente; política retirada.".to_owned();}}
-                    engine.as_mut().expect("engine initialized").apply(&rules)?;
-                    protocol::send(&mut writer,&Message::Snapshot{process_id:std::process::id(),policy_path:policy_path.clone(),revision:loaded.revision,rules,detail:"Políticas aceitas pelo Windows. Tráfego ainda não verificado.".to_owned()}).await?;
+                message = inbox.receive() => match message? {
+                    Message::Ping => last_ping = time::Instant::now(),
+                    Message::Stop => break,
+                    Message::Update { policies: next } => match validate_policies(&next) {
+                        Ok(()) => {
+                            policies = next;
+                            tick.reset_immediately();
+                        }
+                        Err(e) => protocol::send(&mut writer, &Message::Error {
+                            detail: format!("Regras recusadas pela sessão: {e:#}. As anteriores continuam aplicadas."),
+                        }).await?,
+                    },
+                    _ => anyhow::bail!("Comando de sessão inválido."),
+                },
+                _ = owner_tick.tick() => {
+                    if !session::running(&owner) || last_ping.elapsed() > Duration::from_secs(12) {
+                        break;
+                    }
+                }
+                _ = tick.tick() => {
+                    let engine = engine.as_mut().expect("engine initialized");
+                    match apply_cycle(engine, &policies, monitor::adapters(), |p| Path::new(p).is_file()) {
+                        Ok(rules) => protocol::send(&mut writer, &Message::Snapshot {
+                            process_id: std::process::id(),
+                            policy_path: policy_path.clone(),
+                            revision: None,
+                            rules,
+                            detail: "Políticas aceitas pelo Windows. Tráfego ainda não verificado.".to_owned(),
+                        }).await?,
+                        Err(e) => {
+                            ensure!(!engine.is_poisoned(), "Rollback WFP falhou: {e:#}");
+                            protocol::send(&mut writer, &Message::Error {
+                                detail: format!("Ciclo não aplicado: {e:#}. As políticas anteriores continuam; nova tentativa em 10 s."),
+                            }).await?;
+                        }
+                    }
                 }
             }
-        } Ok(())
-    }.await;
+        }
+        Ok(())
+    }
+    .await;
     let mut errors = Vec::new();
     if let Some(mut engine) = engine
         && let Err(e) = engine.close()
@@ -435,7 +528,169 @@ pub async fn run_session(name: &str, owner_pid: u32, owner_start: u64) -> Result
 #[cfg(test)]
 mod tests {
     use super::*;
+    use netlane_core::RouteMode;
+    use std::{cell::RefCell, rc::Rc};
     use tokio::io::DuplexStream;
+
+    /// Transactional fake: keys become active only on commit; abort keeps the old set.
+    struct FakeSession {
+        active: Rc<RefCell<Vec<String>>>,
+        pending: Vec<String>,
+        fail: Option<String>,
+    }
+    impl PolicySession for FakeSession {
+        type Key = String;
+        fn begin(&mut self) -> Result<()> {
+            self.pending = self.active.borrow().clone();
+            Ok(())
+        }
+        fn add(&mut self, rule: &PlannedRule) -> Result<Vec<String>> {
+            let executable = rule.executable.clone().unwrap();
+            ensure!(self.fail.as_ref() != Some(&executable), "Falha simulada.");
+            self.pending.push(executable.clone());
+            Ok(vec![executable])
+        }
+        fn delete(&mut self, key: &String) -> Result<()> {
+            self.pending.retain(|k| k != key);
+            Ok(())
+        }
+        fn commit(&mut self) -> Result<()> {
+            *self.active.borrow_mut() = std::mem::take(&mut self.pending);
+            Ok(())
+        }
+        fn abort(&mut self) -> Result<()> {
+            self.pending.clear();
+            Ok(())
+        }
+        fn close(&mut self) -> Result<()> {
+            self.active.borrow_mut().clear();
+            Ok(())
+        }
+    }
+    fn ethernet() -> Vec<Adapter> {
+        vec![Adapter {
+            id: "d3ae43d2-8203-41d6-9d7f-0b6fa59518fd".into(),
+            name: "Ethernet".into(),
+            kind: "Ethernet".into(),
+            connected: true,
+            luid: 7,
+            ipv4: true,
+            ..Default::default()
+        }]
+    }
+    fn wired(path: &str) -> RoutingPolicy {
+        let mut policy = RoutingPolicy::new(path);
+        policy.route_mode = RouteMode::Ethernet;
+        policy
+    }
+
+    #[test]
+    fn failed_cycles_keep_previous_policies_and_the_session_recovers() {
+        let active = Rc::new(RefCell::new(Vec::new()));
+        let mut engine = RoutingEngine::new(FakeSession {
+            active: active.clone(),
+            pending: vec![],
+            fail: Some("C:\\Apps\\b.exe".into()),
+        });
+        let first = [wired("C:\\Apps\\a.exe")];
+        apply_cycle(&mut engine, &first, Ok(ethernet()), |_| true).unwrap();
+        assert_eq!(*active.borrow(), ["C:\\Apps\\a.exe"]);
+        // Interface enumeration failure: nothing applied, nothing removed.
+        assert!(
+            apply_cycle(
+                &mut engine,
+                &first,
+                Err(anyhow::anyhow!("As interfaces mudaram")),
+                |_| true
+            )
+            .is_err()
+        );
+        // One rule refused by WFP: the transaction rolls back to the previous set.
+        let second = [wired("C:\\Apps\\a.exe"), wired("C:\\Apps\\b.exe")];
+        assert!(apply_cycle(&mut engine, &second, Ok(ethernet()), |_| true).is_err());
+        assert!(!engine.is_poisoned());
+        assert_eq!(*active.borrow(), ["C:\\Apps\\a.exe"]);
+        // The next cycle applies normally once the rule is accepted.
+        let third = [wired("C:\\Apps\\c.exe")];
+        apply_cycle(&mut engine, &third, Ok(ethernet()), |_| true).unwrap();
+        assert_eq!(*active.borrow(), ["C:\\Apps\\c.exe"]);
+    }
+
+    #[test]
+    fn remote_executables_are_retired_without_touching_the_filesystem() {
+        let active = Rc::new(RefCell::new(Vec::new()));
+        let mut engine = RoutingEngine::new(FakeSession {
+            active: active.clone(),
+            pending: vec![],
+            fail: None,
+        });
+        let policies = [
+            wired("\\\\attacker\\share\\steam.exe"),
+            wired("\\\\?\\C:\\Apps\\a.exe"),
+            wired("\\\\.\\pipe\\x.exe"),
+            wired("relative\\b.exe"),
+        ];
+        let rules = apply_cycle(&mut engine, &policies, Ok(ethernet()), |path| {
+            assert!(is_local_path(path), "Acesso elevado a {path}");
+            true
+        })
+        .unwrap();
+        assert_eq!(
+            rules.len(),
+            4,
+            "Sem expansão Steam a partir de raiz remota."
+        );
+        assert!(rules.iter().all(|r| r.mode == RouteMode::Automatic));
+        assert!(active.borrow().is_empty());
+    }
+
+    #[tokio::test]
+    async fn saved_rules_reach_the_session_over_the_channel() {
+        let (client, mut agent) = tokio::io::duplex(65_536);
+        let (commands, mut receiver) = mpsc::unbounded_channel();
+        let shared = Arc::new(Mutex::new(SessionState::default()));
+        let fake = tokio::spawn(async move {
+            protocol::send(&mut agent, &Message::Hello { version: VERSION })
+                .await
+                .unwrap();
+            let Message::Start { policies, .. } = protocol::receive(&mut agent).await.unwrap()
+            else {
+                panic!("Start esperado");
+            };
+            assert_eq!(policies[0].application_id, "a.exe");
+            commands
+                .send(Command::Update(vec![wired("C:\\Apps\\b.exe")]))
+                .unwrap();
+            let Message::Update { policies } = protocol::receive(&mut agent).await.unwrap() else {
+                panic!("Update esperado");
+            };
+            assert_eq!(policies[0].application_id, "b.exe");
+            commands.send(Command::Stop).unwrap();
+            while !matches!(protocol::receive(&mut agent).await.unwrap(), Message::Stop) {}
+            protocol::send(
+                &mut agent,
+                &Message::Stopped {
+                    success: true,
+                    detail: "fixture".into(),
+                },
+            )
+            .await
+            .unwrap();
+        });
+        exchange(
+            client,
+            42,
+            Path::new("C:\\Fixtures\\rules.json"),
+            vec![wired("C:\\Apps\\a.exe")],
+            false,
+            &mut receiver,
+            &shared,
+        )
+        .await
+        .unwrap();
+        fake.await.unwrap();
+        assert!(shared.lock().unwrap().cleanup_confirmed);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn late_exit_is_supervised_after_deadline_and_accepts_stop_without_claiming_cleanup() {
@@ -502,6 +757,7 @@ mod tests {
             client,
             42,
             Path::new("C:\\Fixtures\\rules.json"),
+            vec![],
             false,
             &mut receiver,
             &shared,
@@ -568,6 +824,7 @@ mod tests {
                 client,
                 42,
                 Path::new("C:\\Fixtures\\rules.json"),
+                vec![],
                 false,
                 &mut commands,
                 &state
@@ -598,6 +855,7 @@ mod tests {
             client,
             42,
             Path::new("C:\\Fixtures\\rules.json"),
+            vec![],
             false,
             &mut commands,
             &state,
@@ -620,8 +878,8 @@ mod tests {
             ..Default::default()
         }));
         let controller = Controller { sender, state };
-        controller.start(file.clone(), false).unwrap();
-        assert!(controller.start(file.clone(), false).is_err());
+        controller.start(file.clone(), vec![], false).unwrap();
+        assert!(controller.start(file.clone(), vec![], false).is_err());
         assert!(matches!(
             receiver.try_recv().unwrap(),
             Command::Start {

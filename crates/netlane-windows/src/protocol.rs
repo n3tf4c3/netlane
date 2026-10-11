@@ -1,9 +1,12 @@
 use anyhow::{Result, ensure};
-use netlane_core::planning::PlannedRule;
+use netlane_core::{RoutingPolicy, planning::PlannedRule};
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
-pub const MAX_MESSAGE_BYTES: usize = 65_536;
-pub const VERSION: u32 = 1;
+/// Rules travel over the authenticated channel: room for the 4 MiB rules file
+/// (MAX_POLICIES) and its planned snapshot. Peers are verified before any frame.
+pub const MAX_MESSAGE_BYTES: usize = 8 * 1024 * 1024;
+/// 2: Start/Update carry the rules; the elevated agent never rereads the user's file.
+pub const VERSION: u32 = 2;
 // A dedicated reader keeps partially received frames alive when timers win select!.
 // Recreating read_exact futures in select! would corrupt the stream on cancellation.
 pub struct Inbox {
@@ -57,7 +60,12 @@ pub enum Message {
     },
     Start {
         policy_path: String,
+        policies: Vec<RoutingPolicy>,
         allow_temporary_route_policies: bool,
+    },
+    /// Rules saved by the panel during the session; refused rules keep the previous set.
+    Update {
+        policies: Vec<RoutingPolicy>,
     },
     Ping,
     Stop,
@@ -78,7 +86,7 @@ pub enum Message {
 }
 pub async fn send(writer: &mut (impl AsyncWrite + Unpin), message: &Message) -> Result<()> {
     let bytes = serde_json::to_vec(message)?;
-    ensure!(bytes.len() <= MAX_MESSAGE_BYTES, "Mensagem excede 64 KiB.");
+    ensure!(bytes.len() <= MAX_MESSAGE_BYTES, "Mensagem excede 8 MiB.");
     // If a write times out, the caller closes the session rather than reusing a partial frame.
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         writer
@@ -136,9 +144,11 @@ mod tests {
             .unwrap();
         assert!(matches!(
             receive(&mut b).await.unwrap(),
-            Message::Hello { version: 1 }
+            Message::Hello { version: VERSION }
         ));
-        a.write_all(&65537u32.to_le_bytes()).await.unwrap();
+        a.write_all(&(MAX_MESSAGE_BYTES as u32 + 1).to_le_bytes())
+            .await
+            .unwrap();
         assert!(receive(&mut b).await.is_err());
     }
     #[tokio::test]

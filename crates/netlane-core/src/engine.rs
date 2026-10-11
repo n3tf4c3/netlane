@@ -59,6 +59,11 @@ impl<S: PolicySession> RoutingEngine<S> {
             }
         }
     }
+    /// A failed apply that was rolled back keeps the previous policies; only a failed
+    /// rollback (or close) ends the session.
+    pub fn is_poisoned(&self) -> bool {
+        self.poisoned
+    }
     pub fn close(&mut self) -> Result<()> {
         self.poisoned = true;
         self.previous.clear();
