@@ -144,7 +144,10 @@ Essas rodadas usaram o layout **per-user** anterior. O pacote passou a ser por
 máquina em 2026-10-11 (achado 1 da auditoria); a mudança tem apenas compilação,
 extração estática e as oito recusas negativas aprovadas. Instalação, upgrade,
 remoção, recusa da prévia per-user (código 4), recusa sem administrador
-(código 9) e o UAC da instalação precisam de nova rodada no Sandbox/VM.
+(código 9) e o UAC da instalação precisam de nova rodada no Sandbox/VM. A
+[rodada de 2026-10-11](qa-sandbox-rust-permachine-2026-10-11.md) foi bloqueada
+pelo Smart App Control antes de executar o instalador sem assinatura; o QA
+runtime depende da assinatura ou da VM de laboratório autorizada.
 
 ## Gates runtime do laboratório
 
