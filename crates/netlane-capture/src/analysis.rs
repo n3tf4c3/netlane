@@ -9,7 +9,7 @@ use std::{
     collections::{BTreeMap, BinaryHeap},
     fs::File,
     io::{BufReader, Read},
-    path::Path,
+    path::{Path, PathBuf},
     sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 
@@ -147,6 +147,8 @@ pub struct Scan {
     pub capture: CaptureFile,
     pub summaries: Vec<Summary>,
     pub report: Report,
+    /// Local, read-only source of a completed file scan; never part of AI context.
+    pub source: Option<PathBuf>,
 }
 struct Sample {
     packet: Packet,
@@ -335,6 +337,7 @@ pub fn read_dump<R: Read>(reader: R, cancel: &AtomicBool, progress: &Progress) -
         capture,
         summaries,
         report: analyzer.report,
+        source: None,
     })
 }
 pub fn load_dump(path: &Path, cancel: &AtomicBool, progress: &Progress) -> Result<Scan> {
@@ -344,7 +347,7 @@ pub fn load_dump(path: &Path, cancel: &AtomicBool, progress: &Progress) -> Resul
         before.is_file() && before.len() <= MAX_DUMP_BYTES,
         "Escolha um dump comum de até 64 GiB."
     );
-    let scan = read_dump(BufReader::new(&file), cancel, progress)?;
+    let mut scan = read_dump(BufReader::new(&file), cancel, progress)?;
     let after = file.metadata()?;
     ensure!(
         before.len() == after.len()
@@ -352,5 +355,6 @@ pub fn load_dump(path: &Path, cancel: &AtomicBool, progress: &Progress) -> Resul
             && before.modified().ok() == after.modified().ok(),
         "O dump mudou durante a análise. Use uma coleta fechada."
     );
+    scan.source = Some(path.to_path_buf());
     Ok(scan)
 }

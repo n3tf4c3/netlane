@@ -6,6 +6,8 @@ mod demo;
 mod desktop;
 mod executable_icons;
 mod lifecycle;
+#[cfg(feature = "gui-test")]
+mod loopback_qa;
 mod packet_view;
 #[cfg(feature = "gui-test")]
 mod proof;
@@ -87,6 +89,15 @@ fn run() -> anyhow::Result<()> {
             "A prova de pacotes exige --demo e deve ser executada separadamente."
         );
     }
+    #[cfg(feature = "gui-test")]
+    let loopback_qa = loopback_qa::Plan::parse(
+        &args,
+        &profile,
+        demo,
+        proof.is_some() || packet_proof.is_some(),
+    )?;
+    #[cfg(feature = "gui-test")]
+    let start_in_tray = start_in_tray || loopback_qa.is_some();
     #[cfg(not(feature = "gui-test"))]
     let start_in_tray = startup;
     gpui_platform::application()
@@ -139,6 +150,10 @@ fn run() -> anyhow::Result<()> {
                     #[cfg(feature = "gui-test")]
                     if let Some(directory) = packet_proof {
                         proof::packets(window, directory, cx);
+                    }
+                    #[cfg(feature = "gui-test")]
+                    if let Some(plan) = loopback_qa {
+                        loopback_qa::start(window, plan, cx);
                     }
                     if !start_in_tray {
                         cx.activate(true);

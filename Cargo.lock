@@ -3142,6 +3142,7 @@ name = "netlane-ai"
 version = "0.4.0"
 dependencies = [
  "anyhow",
+ "netlane-capture",
  "serde",
  "serde_json",
  "sha2",
@@ -3180,6 +3181,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+ "windows-sys",
 ]
 
 [[package]]

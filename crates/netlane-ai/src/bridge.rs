@@ -275,7 +275,7 @@ fn native_command(info: &CodexInfo, home: &Path, workdir: &Path) -> tokio::proce
 }
 
 enum Pending {
-    Thread(u64, String),
+    Thread(u64, String, ModelChoice),
     Turn(u64),
 }
 struct Active {
@@ -492,16 +492,24 @@ async fn serve(
                         cancelled.clear();
                         events.send(Event::LoggedOut).await.map_err(|_| ())?;
                     }
-                    Command::Prompt { conversation, text } => {
-                        if !authenticated || text.len() > MAX_PROMPT || pending.len() + active.len() >= 8 || active.values().any(|a| a.conversation == conversation) || pending.values().any(|(p, _)| matches!(p, Pending::Thread(c, _) | Pending::Turn(c) if *c == conversation)) {
+                    command @ (Command::Prompt { .. } | Command::PromptWithModel { .. }) => {
+                        let (conversation, text, turn_choice) = match command {
+                            Command::Prompt { conversation, text } => (conversation, text, choice.clone()),
+                            Command::PromptWithModel { conversation, text, model } => (conversation, text, model),
+                            _ => unreachable!(),
+                        };
+                        if !authenticated || text.len() > MAX_PROMPT || pending.len() + active.len() >= 8 || active.values().any(|a| a.conversation == conversation) || pending.values().any(|(p, _)| matches!(p, Pending::Thread(c, _, _) | Pending::Turn(c) if *c == conversation)) {
                             events.send(Event::Failed { conversation: Some(conversation), message: "Entre com ChatGPT ou aguarde a resposta atual.".into() }).await.map_err(|_| ())?; continue;
+                        }
+                        if resolve(&options, &turn_choice) != turn_choice {
+                            events.send(Event::Failed { conversation: Some(conversation), message: "O modelo ou esforço solicitado não está disponível. Confirme a seleção antes de enviar.".into() }).await.map_err(|_| ())?; continue;
                         }
                         cancelled.remove(&conversation);
                         if let Some(thread) = ids.get(&conversation) {
-                            begin_turn(rpc, thread, conversation, text, &choice, &mut pending, &mut active).await?;
+                            begin_turn(rpc, thread, conversation, text, &turn_choice, &mut pending, &mut active).await?;
                         } else {
-                            let id = rpc.send("thread/start", thread_params(workdir, &choice.model)).await?;
-                            pending.insert(id, (Pending::Thread(conversation, text), Instant::now()));
+                            let id = rpc.send("thread/start", thread_params(workdir, &turn_choice.model)).await?;
+                            pending.insert(id, (Pending::Thread(conversation, text, turn_choice), Instant::now()));
                         }
                     }
                     Command::SetModel(wanted) => {
@@ -531,16 +539,16 @@ async fn serve(
                 if let Some(id) = msg["id"].as_u64() {
                     let Some((request, _)) = pending.remove(&id) else { continue };
                     let Some(result) = msg.get("result") else {
-                        let conversation = match request { Pending::Thread(c, _) | Pending::Turn(c) => c };
+                        let conversation = match request { Pending::Thread(c, _, _) | Pending::Turn(c) => c };
                         active.retain(|_, a| a.conversation != conversation);
                         events.send(Event::Failed { conversation: Some(conversation), message: failure_message(&msg["error"], &plan) }).await.map_err(|_| ())?; continue;
                     };
                     match request {
-                        Pending::Thread(conversation, text) => {
+                        Pending::Thread(conversation, text, turn_choice) => {
                             if result["thread"]["ephemeral"] != true { return Err(()) }
                             let thread = result["thread"]["id"].as_str().filter(|id| !id.is_empty()&&id.len() <= 128&&!id.chars().any(char::is_control)).ok_or(())?;
                             ids.insert(conversation, thread.into());
-                            if !cancelled.contains(&conversation) { begin_turn(rpc, thread, conversation, text, &choice, &mut pending, &mut active).await?; }
+                            if !cancelled.contains(&conversation) { begin_turn(rpc, thread, conversation, text, &turn_choice, &mut pending, &mut active).await?; }
                             else {events.send(Event::Done {conversation,note:Some("Cancelado antes de iniciar a análise no provedor.".into())}).await.map_err(|_|())?;}
                         }
                         Pending::Turn(conversation) => {
@@ -1018,6 +1026,85 @@ mod tests {
                 note: Some(_)
             }
         ));
+        drop(commands);
+        assert!(engine.await.unwrap().is_ok());
+        release_tx.send(()).unwrap();
+        server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn model_is_frozen_while_thread_start_is_pending() {
+        let (client, peer) = duplex(16 * 1024);
+        let mut rpc = mock(client);
+        let (commands, mut command_rx) = mpsc::channel(8);
+        let (events, mut receiver) = mpsc::channel(64);
+        let (thread_tx, thread_rx) = tokio::sync::oneshot::channel();
+        let (continue_tx, continue_rx) = tokio::sync::oneshot::channel();
+        let (turn_tx, turn_rx) = tokio::sync::oneshot::channel();
+        let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+        let options = catalog();
+        assert!(options.len() > 1);
+        let original = ModelChoice {
+            model: options[0].id.clone(),
+            effort: EFFORT.into(),
+        };
+        let alternate = ModelChoice {
+            model: options[1].id.clone(),
+            effort: EFFORT.into(),
+        };
+        let expected = original.clone();
+        let engine = tokio::spawn(async move {
+            serve(
+                &mut rpc,
+                json!({"account":{"type":"chatgpt"}}),
+                &CodexInfo {
+                    executable: "never-run.exe".into(),
+                    version: CODEX_VERSION.into(),
+                },
+                Path::new("fixture-home"),
+                Path::new("fixture-room"),
+                &mut command_rx,
+                &events,
+            )
+            .await
+        });
+        let server = tokio::spawn(async move {
+            let (r, mut w) = split(peer);
+            let mut lines = JsonLines::new(BufReader::new(r));
+            let thread = lines.next().await.unwrap();
+            assert_eq!(thread["method"], "thread/start");
+            assert_eq!(thread["params"]["model"], expected.model);
+            thread_tx.send(()).unwrap();
+            continue_rx.await.unwrap();
+            write_json(&mut w, json!({"id":thread["id"],"result":{"thread":{"id":"thread-frozen","ephemeral":true}}})).await;
+            let turn = lines.next().await.unwrap();
+            assert_eq!(turn["method"], "turn/start");
+            assert_eq!(turn["params"]["model"], expected.model);
+            assert_eq!(turn["params"]["effort"], expected.effort);
+            turn_tx.send(()).unwrap();
+            release_rx.await.unwrap();
+        });
+        commands
+            .send(Command::PromptWithModel {
+                conversation: 19,
+                text: "reviewed metadata".into(),
+                model: original,
+            })
+            .await
+            .unwrap();
+        thread_rx.await.unwrap();
+        commands
+            .send(Command::SetModel(alternate.clone()))
+            .await
+            .unwrap();
+        loop {
+            if let Event::Models { selected, .. } = receive(&mut receiver).await
+                && selected == alternate
+            {
+                break;
+            }
+        }
+        continue_tx.send(()).unwrap();
+        turn_rx.await.unwrap();
         drop(commands);
         assert!(engine.await.unwrap().is_ok());
         release_tx.send(()).unwrap();

@@ -102,11 +102,24 @@ public sealed class ConnectionPriorityTransaction(IConnectionSettings settings)
             foreach (var change in request.Changes.OrderBy(c => c.Id == request.PreferredInterface))
             {
                 token.ThrowIfCancellationRequested();
+                var current = await settings.ReadAsync(token);
+                ConnectionPriority.Validate(current);
+                foreach (var planned in request.Changes)
+                {
+                    var original = before.Interfaces.Single(i => i.Id == planned.Id);
+                    var actual = current.Interfaces.SingleOrDefault(i => i.Id == planned.Id);
+                    var expectedMetric = touched.Any(i => i.Id == planned.Id) ? planned : ConnectionPriority.Metric(original);
+                    if (actual is null || !SameIdentity(actual, original) || actual.Connected != original.Connected
+                        || actual.DefaultRouteMetric != original.DefaultRouteMetric || !ConnectionPriority.Matches(actual, expectedMetric))
+                        throw new InvalidOperationException("A prioridade mudou durante a operação. A configuração externa foi preservada.");
+                }
+                token.ThrowIfCancellationRequested();
                 touched.Add(before.Interfaces.Single(i => i.Id == change.Id));
                 await settings.WriteAsync(change, token);
             }
             var after = await settings.ReadAsync(token);
-            if (request.Changes.Any(c => !after.Interfaces.Any(i => ConnectionPriority.Matches(i, c))))
+            ConnectionPriority.Validate(after);
+            if (request.Changes.Any(c => !after.Interfaces.Any(i => SameIdentity(i, before.Interfaces.Single(o => o.Id == c.Id)) && ConnectionPriority.Matches(i, c))))
                 throw new IOException("O Windows não confirmou as prioridades solicitadas.");
             if (request.PreferredInterface is { } preferred)
             {
@@ -124,14 +137,38 @@ public sealed class ConnectionPriorityTransaction(IConnectionSettings settings)
             using var cleanup = new CancellationTokenSource(TimeSpan.FromSeconds(30));
             foreach (var original in touched.AsEnumerable().Reverse())
             {
-                try { await settings.WriteAsync(ConnectionPriority.Metric(original), cleanup.Token); }
+                try
+                {
+                    var current = await settings.ReadAsync(cleanup.Token);
+                    ConnectionPriority.Validate(current);
+                    var actual = current.Interfaces.SingleOrDefault(i => i.Id == original.Id);
+                    if (actual is null || !SameIdentity(actual, original))
+                        throw new InvalidOperationException("A identidade da interface mudou durante a operação.");
+                    var originalMetric = ConnectionPriority.Metric(original);
+                    if (ConnectionPriority.Matches(actual, originalMetric)) continue;
+                    var attempted = request.Changes.Single(c => c.Id == original.Id);
+                    // Active and persistent stores may be split by a partial CIM failure.
+                    // Restore only values that still belong to our attempted transaction.
+                    if (!(ActiveMatches(actual, originalMetric) || ActiveMatches(actual, attempted))
+                        || !(SavedMatches(actual, originalMetric) || SavedMatches(actual, attempted)))
+                        throw new InvalidOperationException("Prioridade alterada externamente durante a operação; configuração preservada.");
+                    await settings.WriteAsync(originalMetric, cleanup.Token);
+                }
                 catch (Exception restoreError) { errors.Add(restoreError.Message); }
             }
             ConnectionSnapshot after;
-            try { after = await settings.ReadAsync(cleanup.Token); }
+            try { after = await settings.ReadAsync(cleanup.Token); ConnectionPriority.Validate(after); }
             catch { after = new([], []); errors.Add("Não foi possível conferir a restauração."); }
-            var restored = errors.Count == 0 && touched.All(i => after.Interfaces.Any(a => ConnectionPriority.Matches(a, ConnectionPriority.Metric(i))));
+            if (!touched.All(i => after.Interfaces.Any(a => SameIdentity(a, i) && ConnectionPriority.Matches(a, ConnectionPriority.Metric(i)))))
+                errors.Add("Restauração não confirmada.");
+            var restored = errors.Count == 0;
             return new(after, false, ex.Message + (restored ? " Alteração revertida." : " Restauração incompleta: " + string.Join(" | ", errors)), restored);
         }
     }
+    private static bool SameIdentity(ConnectionInterface actual, ConnectionInterface original) => actual.Id == original.Id
+        && actual.Index == original.Index && actual.Kind == original.Kind;
+    private static bool ActiveMatches(ConnectionInterface actual, ConnectionMetric metric) => actual.AutomaticMetric == metric.AutomaticMetric
+        && (metric.AutomaticMetric || actual.Metric == metric.Metric);
+    private static bool SavedMatches(ConnectionInterface actual, ConnectionMetric metric) => metric.AutomaticMetric
+        ? actual.SavedMetric is null or 0 : actual.SavedMetric == metric.Metric;
 }

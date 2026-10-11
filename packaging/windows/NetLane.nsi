@@ -12,6 +12,11 @@ SetOverwrite on
 !include "ProcessGuard.nsh"
 !include "${BUILD_DEFINES}"
 
+; NSIS 3.12 exposes the uninstaller at compile time; no installer execution.
+!ifdef SIGN_UNINSTALLER_COMMAND
+  !uninstfinalize '${SIGN_UNINSTALLER_COMMAND}' = 0
+!endif
+
 !define PRODUCT_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLane"
 Name "NetLane (prévia local)"
 OutFile "${SETUP_OUTPUT}"
@@ -36,8 +41,8 @@ VIAddVersionKey /LANG=1046 "LegalCopyright" "NetLane contributors"
 !insertmacro DefineProcessGuard ""
 !insertmacro DefineProcessGuard "un."
 
-!macro CheckPayloadDirectory Relative
-  System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\${Relative}") i.r0'
+!macro CheckManagedDirectory Path
+  System::Call 'kernel32::GetFileAttributesW(w "${Path}") i.r0'
   ${If} $0 != -1
     IntOp $1 $0 & 0x400
     IntOp $2 $0 & 0x10
@@ -50,17 +55,23 @@ VIAddVersionKey /LANG=1046 "LegalCopyright" "NetLane contributors"
   ${EndIf}
 !macroend
 
-!macro CheckPayloadFile Relative
-  ${If} ${FileExists} "$INSTDIR\${Relative}"
-    System::Call 'kernel32::GetFileAttributesW(w "$INSTDIR\${Relative}") i.r0'
+!macro CheckPayloadDirectory Relative
+  !insertmacro CheckManagedDirectory "$INSTDIR\${Relative}"
+!macroend
+
+!macro CheckManagedFile Path
+  System::Call 'kernel32::GetFileAttributesW(w "${Path}") i.r0'
+  ${If} $0 != -1
     IntOp $1 $0 & 0x400
+    IntOp $2 $0 & 0x10
     ${If} $1 != 0
-      MessageBox MB_OK|MB_ICONSTOP "Um arquivo do programa é um link. Operação recusada para preservar arquivos externos." /SD IDOK
+    ${OrIf} $2 != 0
+      MessageBox MB_OK|MB_ICONSTOP "Um arquivo do programa é um link ou foi substituído por uma pasta. Operação recusada para preservar arquivos externos." /SD IDOK
       SetErrorLevel 4
       Abort
     ${EndIf}
     ; OPEN_EXISTING: never create, truncate or write. Check locks before copying/deleting.
-    System::Call 'kernel32::CreateFileW(w "$INSTDIR\${Relative}", i 0xC0000000, i 0, p 0, i 3, i 0x80, p 0) p.r0'
+    System::Call 'kernel32::CreateFileW(w "${Path}", i 0xC0000000, i 0, p 0, i 3, i 0x80, p 0) p.r0'
     ${If} $0 == -1
       MessageBox MB_OK|MB_ICONSTOP "Há arquivos do NetLane em uso ou sem permissão de acesso. Feche o painel e aguarde a parada normal do serviço antes de continuar." /SD IDOK
       SetErrorLevel 7
@@ -68,6 +79,10 @@ VIAddVersionKey /LANG=1046 "LegalCopyright" "NetLane contributors"
     ${EndIf}
     System::Call 'kernel32::CloseHandle(p r0)'
   ${EndIf}
+!macroend
+
+!macro CheckPayloadFile Relative
+  !insertmacro CheckManagedFile "$INSTDIR\${Relative}"
 !macroend
 
 ; Fixed destination: never honor /D or a writable directory from the registry.
@@ -99,6 +114,21 @@ VIAddVersionKey /LANG=1046 "LegalCopyright" "NetLane contributors"
     ${EndIf}
   ${EndIf}
   !include "${VALIDATE_PAYLOAD}"
+  !insertmacro CheckPayloadFile "Uninstall.exe"
+  !insertmacro CheckManagedDirectory "$SMPROGRAMS\NetLane"
+  !insertmacro CheckManagedFile "$SMPROGRAMS\NetLane\NetLane.lnk"
+!macroend
+
+!macro RequireSupportedUpgrade
+  ReadRegStr $0 HKLM "${PRODUCT_KEY}" "DisplayVersion"
+  ${If} $0 != ""
+    ${VersionCompare} $0 "${PRODUCT_VERSION}" $1
+    ${If} $1 == 1
+      MessageBox MB_OK|MB_ICONSTOP "Já existe uma versão mais recente do NetLane. Downgrade recusado." /SD IDOK
+      SetErrorLevel 6
+      Abort
+    ${EndIf}
+  ${EndIf}
 !macroend
 
 Function .onInit
@@ -115,21 +145,14 @@ Function .onInit
   SetRegView 64
   SetShellVarContext all
   !insertmacro RequireSafeDestination
-  ReadRegStr $0 HKLM "${PRODUCT_KEY}" "DisplayVersion"
-  ${If} $0 != ""
-    ${VersionCompare} $0 "${PRODUCT_VERSION}" $1
-    ${If} $1 == 1
-      MessageBox MB_OK|MB_ICONSTOP "Já existe uma versão mais recente do NetLane. Downgrade recusado." /SD IDOK
-      SetErrorLevel 6
-      Abort
-    ${EndIf}
-  ${EndIf}
+  !insertmacro RequireSupportedUpgrade
   !insertmacro RequireNetLaneClosed ""
 FunctionEnd
 
 Section "NetLane" MainSection
   ; Recheck after the welcome page; do not close or kill a process automatically.
   !insertmacro RequireSafeDestination
+  !insertmacro RequireSupportedUpgrade
   !insertmacro RequireNetLaneClosed ""
   !include "${INSTALL_FILES}"
   ClearErrors
@@ -177,18 +200,26 @@ Section "Uninstall"
   ; RMDir deliberately leaves unknown files/directories intact. Their presence
   ; must not turn a successful removal of the known payload into a false failure.
   ClearErrors
+  Delete "$SMPROGRAMS\NetLane\NetLane.lnk"
+  IfErrors uninstall_failed
+  RMDir "$SMPROGRAMS\NetLane"
+  ; Remove only this exact per-user startup command; preserve entries from other locations.
+  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLane"
+  ${If} $0 == '$\"$INSTDIR\NetLane.UI.exe$\" --startup'
+    ClearErrors
+    DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLane"
+    IfErrors uninstall_failed
+  ${EndIf}
+  ClearErrors
+  DeleteRegKey HKLM "${PRODUCT_KEY}"
+  IfErrors uninstall_failed
+  ; Keep the marker/uninstaller until other removal operations have succeeded.
+  ClearErrors
   Delete "$INSTDIR\Uninstall.exe"
   IfErrors uninstall_failed
   Delete "$INSTDIR\netlane-installed.layout"
   IfErrors uninstall_failed
   RMDir "$INSTDIR"
-  Delete "$SMPROGRAMS\NetLane\NetLane.lnk"
-  RMDir "$SMPROGRAMS\NetLane"
-  DeleteRegKey HKLM "${PRODUCT_KEY}"
-  ; Remove only this exact per-user startup command; preserve entries from other locations.
-  ReadRegStr $0 HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLane"
-  StrCmp $0 '$\"$INSTDIR\NetLane.UI.exe$\" --startup' 0 +2
-  DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "NetLane"
   Goto uninstall_done
 uninstall_failed:
   MessageBox MB_OK|MB_ICONSTOP "Não foi possível remover todos os arquivos do programa. A remoção não foi concluída. Dados do perfil foram preservados." /SD IDOK

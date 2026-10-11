@@ -60,6 +60,12 @@ impl PolicyFile {
     }
     pub fn save(&self, policies: &[RoutingPolicy], expected: Option<&str>) -> Result<String> {
         validate_policies(policies)?;
+        let bytes = serde_json::to_vec_pretty(policies)?;
+        if bytes.len() as u64 > MAX_JSON_BYTES {
+            bail!(
+                "As regras serializadas excedem o limite de 4 MiB. Reduza o conteúdo antes de salvar."
+            );
+        }
         let parent = self.path.parent().context("Pasta de regras inválida.")?;
         fs::create_dir_all(parent)?;
         let _lock = exclusive_file(&self.path.with_extension("json.lock"))?;
@@ -67,7 +73,6 @@ impl PolicyFile {
         if current.as_deref() != expected {
             bail!("O arquivo mudou desde a leitura. Recarregue as regras antes de salvar.");
         }
-        let bytes = serde_json::to_vec_pretty(policies)?;
         atomic_write_inner(&self.path, &bytes, true, Some(expected))?;
         Ok(revision(&bytes))
     }

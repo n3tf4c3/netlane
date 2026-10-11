@@ -6,6 +6,8 @@ pub mod analysis;
 pub mod collection;
 mod decode;
 pub mod export;
+pub mod lookup;
+pub mod qa;
 mod reader;
 pub use decode::Summary;
 pub use reader::{load, read};

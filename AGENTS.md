@@ -22,6 +22,10 @@ Aplicativo Windows para observar conexões e controlar seleção de saída de re
 | WPF, bandeja e inicialização | `src/NetLane.UI/` |
 | Testes locais | `tests/NetLane.Tests/`, `tests/NetLane.ControlProbe/` |
 | Instalador | `packaging/windows/`, `scripts/build-windows-installer.ps1`; [procedimento](docs/instalador-local.md) |
+| Assinatura SimplySign | `scripts/sign-windows-artifacts.ps1`; [revisão e procedimento](docs/assinatura-simplysign.md) |
+| Pendências antes da assinatura | [matriz e ensaios](docs/pendencias-pre-assinatura.md); coleta somente leitura em `scripts/capture-installer-qa-state.ps1` |
+| QA no Sandbox | `scripts/test-installer-sandbox.ps1`; exige alvo descartável autorizado, recusa execução no host |
+| QA em VM de laboratório | `scripts/test-installer-lab.ps1`; exige identidade/snapshot do alvo autorizado, recusa host e dados anteriores |
 | Retomada e fases | [continuidade](docs/continuidade-2026-09-10.md), [fase 3](docs/plano-de-execucao-fase3.md) |
 | Roteamento e provas reais | [WFP](docs/roteamento-nativo.md), [recuperação](docs/testes-recuperacao.md) |
 | UI e bandeja | [interface](docs/interface-desktop.md), [bandeja](docs/bandeja-windows.md) |

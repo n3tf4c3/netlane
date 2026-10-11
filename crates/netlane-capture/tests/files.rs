@@ -107,6 +107,16 @@ fn classic_endian_and_precision_are_preserved() {
                 2_000_000_000 + if nano { 123456 } else { 123456000 }
             );
             assert_eq!(c.packets[0].file_offset, 24);
+            let recovered = lookup::read_packet(
+                Cursor::new(pcap(le, nano, &[0x45, 0, 0, 20])),
+                &lookup::PacketAnchor::new(&c, 1).unwrap(),
+                &AtomicBool::new(false),
+                &analysis::Progress::default(),
+            )
+            .unwrap();
+            assert_eq!(recovered.packet.timestamp, c.packets[0].timestamp);
+            assert_eq!(recovered.packet.bytes, c.packets[0].bytes);
+            assert_eq!(recovered.interface.link_type, 101);
         }
     }
 }
@@ -136,6 +146,23 @@ fn multiple_interfaces_sections_endian_offsets_and_simple_packets() {
     assert_eq!(c.interfaces[2].section, 1);
     assert_eq!(c.packets[2].timestamp.unwrap().ticks, 1234567);
     assert_eq!(c.file_bytes, bytes.len() as u64);
+    for original in &c.packets {
+        let recovered = lookup::read_packet(
+            Cursor::new(&bytes),
+            &lookup::PacketAnchor::new(&c, original.number).unwrap(),
+            &AtomicBool::new(false),
+            &analysis::Progress::default(),
+        )
+        .unwrap();
+        let interface = &c.interfaces[original.interface];
+        assert_eq!(recovered.packet.bytes, original.bytes);
+        assert_eq!(recovered.packet.timestamp, original.timestamp);
+        assert_eq!(recovered.packet.file_offset, original.file_offset);
+        assert_eq!(recovered.packet.interface, original.interface);
+        assert_eq!(recovered.interface.section, interface.section);
+        assert_eq!(recovered.interface.resolution, interface.resolution);
+        assert_eq!(recovered.interface.offset_seconds, interface.offset_seconds);
+    }
 }
 #[test]
 fn options_and_headers_cannot_hide_truncated_or_foreign_data() {

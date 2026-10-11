@@ -19,13 +19,13 @@ pub struct Draft {
     pub question: String,
     pub response: Option<Response>,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct FileHash {
     pub file: String,
     pub bytes: usize,
     pub sha256: String,
 }
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Receipt {
     pub schema: u32,
     pub investigation_id: String,
@@ -206,7 +206,7 @@ impl Draft {
         Ok(receipt)
     }
 }
-fn section(out: &mut String, title: &str, text: &str) {
+pub(crate) fn section(out: &mut String, title: &str, text: &str) {
     out.push_str(&format!("## {title}\n\n"));
     for line in text.lines() {
         out.push_str("    ");
@@ -230,7 +230,7 @@ fn escape(value: &str) -> String {
         .replace('"', "&quot;")
         .replace('\'', "&#39;")
 }
-fn publish(directory: &Path, name: &str, data: &[u8]) -> Result<()> {
+pub(crate) fn publish(directory: &Path, name: &str, data: &[u8]) -> Result<()> {
     let part = directory.join(format!("{name}.part"));
     let mut f = fs::OpenOptions::new()
         .create_new(true)

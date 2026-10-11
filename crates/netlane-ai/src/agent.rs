@@ -16,6 +16,12 @@ pub enum Command {
         conversation: ConversationId,
         text: String,
     },
+    /// Bind report provenance to the acknowledged model for this specific turn.
+    PromptWithModel {
+        conversation: ConversationId,
+        text: String,
+        model: ModelChoice,
+    },
     Cancel {
         conversation: ConversationId,
     },
