@@ -111,6 +111,8 @@ $signature = Get-AuthenticodeSignature -LiteralPath $setup
 # Signed build: setup, extracted uninstaller and both own executables carry the recorded
 # certificate and an RFC 3161 timestamp. Unsigned build: none may carry a signature.
 $ownBinaries = @($setup,(Get-PackageFile $extracted 'Uninstall.exe'),(Get-PackageFile $extracted 'netlane.exe'),(Get-PackageFile $extracted 'netlane-agent.exe'))
+# Plug-ins run from %TEMP%; Smart App Control blocks them unsigned even in a signed setup.
+if ($signed) { $ownBinaries += @(Get-ChildItem -LiteralPath (Join-Path $extracted '$PLUGINSDIR') -Filter *.dll -File | ForEach-Object FullName) }
 foreach ($binary in $ownBinaries) {
     $current = Get-AuthenticodeSignature -LiteralPath $binary
     if ($signed) {
