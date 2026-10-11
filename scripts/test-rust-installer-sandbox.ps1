@@ -1,7 +1,7 @@
 ﻿[CmdletBinding()]
 param(
     [string]$PlanPath = 'C:\NetLaneRustQaInput\plan.json',
-    [ValidateSet('Preflight','Runtime','Install','LegacyRefusal','AdminRefusal')][string]$Mode = 'Preflight',
+    [ValidateSet('Preflight','Runtime','Install','LegacyRefusal','AdminRefusal','RuntimeRefusal')][string]$Mode = 'Preflight',
     [ValidatePattern('^[a-z0-9-]{1,40}$')][string]$Label = 'preflight',
     [ValidatePattern('^[a-z0-9-]{1,40}$')][string]$BaselineLabel = 'preflight'
 )
@@ -13,7 +13,16 @@ if ($env:COMPUTERNAME -eq $plan.HostComputer) { throw 'Execucao no host recusada
 if ($plan.Schema -ne 1 -or $plan.Product -ne 'NetLaneRustPreview' -or -not [Environment]::Is64BitProcess) { throw 'Plano/plataforma invalido.' }
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 $machine = Get-CimInstance Win32_ComputerSystem
-if ($env:USERNAME -ne 'WDAGUtilityAccount' -or $machine.Model -ne 'Virtual Machine' -or $machine.Manufacturer -ne 'Microsoft Corporation') {
+$lab = [bool]($plan.PSObject.Properties['Environment'] -and $plan.Environment -eq 'Lab')
+if ($lab) {
+    # Authorized lab VM: identity comes from the plan, confirmed before any setup runs.
+    $expectedMac = $plan.Target.ExpectedMac -replace '[:-]',''
+    $macs = @(Get-NetAdapter | ForEach-Object { $_.MacAddress -replace '[:-]','' })
+    if ($machine.Manufacturer -ne 'VMware, Inc.' -or $macs -notcontains $expectedMac -or -not $plan.Target.Computer -or
+        $env:COMPUTERNAME -ne $plan.Target.Computer -or (Get-CimInstance Win32_ComputerSystemProduct).UUID -ne $plan.Target.Uuid) {
+        throw 'Esta etapa exige a VM de laboratorio identificada no plano.'
+    }
+} elseif ($env:USERNAME -ne 'WDAGUtilityAccount' -or $machine.Model -ne 'Virtual Machine' -or $machine.Manufacturer -ne 'Microsoft Corporation') {
     throw 'Este ensaio exige uma nova sessao Windows Sandbox com WDAGUtilityAccount.'
 }
 if ([IO.Path]::GetFullPath($PlanPath) -notmatch '^C:\\NetLaneRustQaInput\\plan(?:-runtime)?\.json$') { throw 'Plano fora da pasta mapeada prevista.' }
@@ -144,6 +153,16 @@ try {
                 $result.Verdict = 'RuntimeStillRunning'
             }
             $result.State = Get-ProductState
+        } elseif ($Mode -eq 'RuntimeRefusal') {
+            # An older Visual C++ runtime must be refused before any file is copied (code 8).
+            $current = $baseline.Prerequisites.VisualCppX64
+            if (-not $current -or [version]$current -ge [version]$plan.Package.VisualCppX64Minimum) { throw 'Este caso exige runtime ausente ou anterior ao minimo.' }
+            $result.Before = Get-ProductState
+            $process = Start-Process -FilePath $setup -ArgumentList '/S' -PassThru
+            $result.InstallerExecuted = $true
+            $result.ExitCode = Wait-Setup $process
+            $result.After = Get-ProductState
+            $result.Verdict = if ($result.ExitCode -eq 8 -and (Assert-NothingInstalled $result.After)) { 'Passed' } else { 'Failed' }
         } elseif ($Mode -eq 'LegacyRefusal') {
             # A fictitious marker of the earlier per-user preview must block the per-machine setup.
             $legacy = Join-Path ([Environment]::GetFolderPath('LocalApplicationData')) 'Programs\NetLane Rust'
@@ -159,32 +178,31 @@ try {
             } finally { Remove-Item -LiteralPath $legacy -Recurse -Force }
             $result.Verdict = if ($result.ExitCode -eq 4 -and (Assert-NothingInstalled $result.After)) { 'Passed' } else { 'Failed' }
         } elseif ($Mode -eq 'AdminRefusal') {
-            # A standard user bypassing the manifest (RunAsInvoker) must still be refused by the
-            # setup itself (code 9). Temporary account and copy, removed afterwards.
-            $work = 'C:\NetLaneQaAdminRefusal'
-            if (Test-Path -LiteralPath $work) { throw 'Pasta anterior.' }
+            # An administrator who bypasses UAC (RunAsInvoker) keeps Administrators only as
+            # deny-only: the setup itself must refuse (code 9). Restricted copy of this
+            # session's token (same session, so no desktop/logon issues; exact exit code).
+            $launcherPath = Join-Path $inputRoot 'RestrictedLauncher.cs'
+            if ((Get-FileHash -LiteralPath $launcherPath).Hash -ne $plan.RestrictedLauncherSha256) { throw 'Lancador restrito diferente do plano.' }
+            Add-Type -TypeDefinition (Get-Content -Raw -LiteralPath $launcherPath)
+            $work = Join-Path $env:TEMP ('NetLaneQaAdminRefusal-' + [guid]::NewGuid().ToString('N').Substring(0,8))
             $null = New-Item -ItemType Directory -Path $work
-            $copy = Join-Path $work $plan.Package.Installer
-            Copy-Item -LiteralPath $setup -Destination $copy
-            if ((Get-FileHash -LiteralPath $copy).Hash -ne $plan.Package.Sha256) { throw 'Copia divergente.' }
-            $name = 'nlqa' + [guid]::NewGuid().ToString('N').Substring(0,8)
-            $password = ConvertTo-SecureString ([guid]::NewGuid().ToString('N') + 'Aa1!') -AsPlainText -Force
-            $null = New-LocalUser -Name $name -Password $password -AccountNeverExpires -PasswordNeverExpires
             try {
-                Add-LocalGroupMember -SID 'S-1-5-32-545' -Member $name
-                $credential = [pscredential]::new("$env:COMPUTERNAME\$name", $password)
+                $copy = Join-Path $work $plan.Package.Installer
+                Copy-Item -LiteralPath $setup -Destination $copy
+                if ((Get-FileHash -LiteralPath $copy).Hash -ne $plan.Package.Sha256) { throw 'Copia divergente.' }
+                # Evidence from inside the restricted token: not a member of Administrators.
+                $probe = Join-Path $work 'is-admin.txt'
+                $script = "[Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.SecurityIdentifier]'S-1-5-32-544') | Out-File -Encoding ascii '$probe'"
+                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
+                $null = [RestrictedLauncher]::Run((Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'), "-NoProfile -EncodedCommand $encoded", $work, 60000)
+                $result.RestrictedTokenIsAdmin = if (Test-Path -LiteralPath $probe) { (Get-Content -Raw -LiteralPath $probe).Trim() } else { 'unknown' }
+                if ($result.RestrictedTokenIsAdmin -ne 'False') { throw 'Token restrito ainda pertence a Administradores.' }
                 $result.Before = Get-ProductState
                 $env:__COMPAT_LAYER = 'RunAsInvoker'
-                try { $process = Start-Process -FilePath $copy -ArgumentList '/S' -Credential $credential -WorkingDirectory $work -LoadUserProfile -PassThru }
-                finally { Remove-Item Env:__COMPAT_LAYER }
+                try { $result.ExitCode = [RestrictedLauncher]::Run($copy, '/S', $work, 120000) } finally { Remove-Item Env:__COMPAT_LAYER }
                 $result.InstallerExecuted = $true
-                $result.StandardUser = $name
-                $result.ExitCode = Wait-Setup $process
                 $result.After = Get-ProductState
-            } finally {
-                Remove-LocalUser -Name $name
-                Remove-Item -LiteralPath $work -Recurse -Force
-            }
+            } finally { Remove-Item -LiteralPath $work -Recurse -Force }
             $result.Verdict = if ($result.ExitCode -eq 9 -and (Assert-NothingInstalled $result.After)) { 'Passed' } else { 'Failed' }
         } else {
         if (-not $baseline.Prerequisites.IcuPresent -or -not $baseline.Prerequisites.VisualCppX64 -or [version]$baseline.Prerequisites.VisualCppX64 -lt [version]$plan.Package.VisualCppX64Minimum) { throw 'Dependencias ausentes; nao tentar o instalador.' }

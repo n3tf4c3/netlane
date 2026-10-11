@@ -11,7 +11,9 @@ $outputRoot = 'C:\NetLaneRustQaOutput'
 $plan = Get-Content -Raw -LiteralPath $PlanPath -Encoding UTF8 | ConvertFrom-Json
 if ($env:COMPUTERNAME -eq $plan.HostComputer) { throw 'Execucao no host recusada.' }
 if ([IO.Path]::GetFullPath($PlanPath) -notmatch '^C:\\NetLaneRustQaInput\\plan-lifecycle(?:-v[0-9]+)?\.json$') { throw 'Plano fora do mapeamento previsto.' }
-if ($plan.Schema -ne 1 -or $plan.Product -ne 'NetLaneRustPreview' -or $env:USERNAME -ne 'WDAGUtilityAccount' -or -not [Environment]::Is64BitProcess) { throw 'Sandbox/plano invalido.' }
+$lab = [bool]($plan.PSObject.Properties['Environment'] -and $plan.Environment -eq 'Lab')
+$expectedTarget = if ($lab) { $env:COMPUTERNAME -eq $plan.Target.Computer -and (Get-CimInstance Win32_ComputerSystemProduct).UUID -eq $plan.Target.Uuid } else { $env:USERNAME -eq 'WDAGUtilityAccount' }
+if ($plan.Schema -ne 1 -or $plan.Product -ne 'NetLaneRustPreview' -or -not $expectedTarget -or -not [Environment]::Is64BitProcess) { throw 'Sandbox/VM ou plano invalido.' }
 $baseline = Get-Content -Raw -LiteralPath (Join-Path $outputRoot 'preflight.json') -Encoding UTF8 | ConvertFrom-Json
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if ($baseline.RoundId -ne $plan.RoundId -or $baseline.Identity.Computer -ne $env:COMPUTERNAME -or $baseline.Identity.Sid -ne $identity.User.Value) { throw 'Outra sessao.' }
@@ -175,7 +177,9 @@ try {
     }
     $result.After = Get-Snapshot
     if (($result.Before.Run | ConvertTo-Json -Depth 5 -Compress) -cne ($result.After.Run | ConvertTo-Json -Depth 5 -Compress)) { throw 'Run mudou inesperadamente.' }
-    if ($result.After.Network.Count -or @($result.After.Processes | Where-Object ProcessName -eq 'netlane-agent').Count) { throw 'Agente/rede inesperados.' }
+    # Sandbox has no network; the lab VM does, so its adapters must stay as they were.
+    $networkChanged = if ($lab) { ($result.Before.Network | ConvertTo-Json -Depth 4 -Compress) -cne ($result.After.Network | ConvertTo-Json -Depth 4 -Compress) } else { [bool]$result.After.Network.Count }
+    if ($networkChanged -or @($result.After.Processes | Where-Object ProcessName -eq 'netlane-agent').Count) { throw 'Agente/rede inesperados.' }
 } catch {
     $result.Verdict = 'Failed'
     $result.Error = $_.Exception.ToString()
