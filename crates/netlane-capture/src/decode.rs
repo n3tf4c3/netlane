@@ -105,13 +105,20 @@ pub(crate) fn summarize(bytes: &[u8], link: u16) -> Summary {
         s.info = "ARP".into();
         return s;
     }
+    let mut offloaded = false;
     let (protocol, transport, ipv6, truncated, transport_offset) = match kind {
         0x0800 if ip.len() >= 20 && ip[0] >> 4 == 4 => {
             s.protocol = "IPv4";
             s.source = Ipv4Addr::new(ip[12], ip[13], ip[14], ip[15]).to_string();
             s.destination = Ipv4Addr::new(ip[16], ip[17], ip[18], ip[19]).to_string();
             let header = usize::from(ip[0] & 15) * 4;
-            let total = usize::from(word(ip, 2).unwrap());
+            let mut total = usize::from(word(ip, 2).unwrap());
+            // Large Send Offload: outbound packets captured on the host before the
+            // NIC segments them report length 0. Use the captured bytes instead.
+            if total == 0 {
+                offloaded = true;
+                total = ip.len();
+            }
             if header < 20 || total < header || ip.len() < header {
                 s.info = "Cabeçalho IPv4 inválido/truncado".into();
                 return s;
@@ -255,5 +262,38 @@ pub(crate) fn summarize(bytes: &[u8], link: u16) -> Summary {
             s.info.push_str(" · porta DNS (estimativa)");
         }
     }
+    if offloaded {
+        s.info
+            .push_str(" · comprimento IP 0, provável segmentação na placa (TSO)");
+    }
     s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn ipv4_length_zero_from_send_offload_keeps_transport_details() {
+        let mut frame = vec![0u8; 12];
+        frame.extend([0x08, 0x00]);
+        // IPv4, IHL 5, total length 0 (LSO), DF, TTL 64, TCP.
+        frame.extend([0x45, 0, 0, 0, 0, 0, 0x40, 0, 64, 6, 0, 0]);
+        frame.extend([192, 0, 2, 1, 203, 0, 113, 5]);
+        frame.extend(50000u16.to_be_bytes());
+        frame.extend(443u16.to_be_bytes());
+        frame.extend([0; 8]);
+        frame.extend([0x50, 0x18, 0xff, 0xff, 0, 0, 0, 0]);
+        frame.extend([7; 100]);
+        let s = summarize(&frame, 1);
+        assert_eq!(s.protocol, "TCP");
+        assert_eq!(s.destination, "203.0.113.5:443");
+        assert_eq!(s.service, "https");
+        assert!(
+            s.info.starts_with("ACK PSH · 100 bytes de dados"),
+            "{}",
+            s.info
+        );
+        assert!(s.info.contains("TSO"));
+        assert_eq!(s.payload, Some(54..154));
+    }
 }
