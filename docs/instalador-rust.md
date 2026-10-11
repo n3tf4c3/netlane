@@ -152,6 +152,13 @@ recusas por runtime antigo (código 8), prévia per-user (4) e falta de
 administrador (9), instalação limpa com pasta e agente não graváveis por usuários
 comuns, smoke do agente, reinstalação e remoção.
 
+**Assinatura.** `build-rust-installer.ps1` aceita `-CertificateThumbprint` e
+`-SignToolPath` e assina executáveis, plug-ins NSIS, desinstalador e instalador; o
+verificador exige as seis assinaturas com timestamp. O
+[pacote assinado passou no Sandbox com Smart App Control aplicando](qa-sandbox-rust-signed-2026-10-11.md).
+Os plug-ins precisam ser assinados: o Smart App Control bloqueia o `System.dll`
+extraído em `%TEMP%` mesmo com o instalador assinado.
+
 ## Gates runtime do laboratório
 
 | Cenário | Prova necessária |

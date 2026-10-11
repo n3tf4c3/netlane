@@ -1,5 +1,12 @@
 # Revisão e assinatura local com SimplySign
 
+**Pacote Rust (2026-10-11):** assinado com o certificado
+`0C061E39B11C1A9092043F143F0CAA685BC94F62` depois do QA em laboratório; executáveis,
+plug-ins NSIS, desinstalador e instalador com timestamp Certum, aprovados no
+[Sandbox com Smart App Control](qa-sandbox-rust-signed-2026-10-11.md). O build .NET
+abaixo continua com a ordem e as pendências registradas; ao assinar o .NET, assinar
+também os plug-ins NSIS embutidos, pelo mesmo motivo.
+
 **Ordem vigente em 2026-10-08:** concluir as [pendências e ensaios do NetLane](pendencias-pre-assinatura.md) antes de retomar a assinatura. A prévia atual para QA é `pre-sign-20261008-035-v2`, sem assinatura. A tentativa e os artefatos descritos abaixo permanecem evidência histórica; não repetir a tentativa enquanto os gates anteriores estiverem abertos.
 
 Procedimento preparado em 8 de outubro de 2026 para o NetLane Windows x64. A assinatura usa o certificado de code signing disponibilizado no repositório pessoal do Windows pelo SimplySign Desktop; não exporta a chave privada. Login, token ou PIN, quando solicitados, são informados diretamente no aplicativo do fornecedor.
