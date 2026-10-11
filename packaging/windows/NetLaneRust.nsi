@@ -15,6 +15,10 @@ SetOverwrite on
 !include "FileFunc.nsh"
 !include "RustProcessGuard.nsh"
 !include "${BUILD_DEFINES}"
+; Signed builds: NSIS signs the uninstaller at compile time; no installer execution.
+!ifdef SIGN_UNINSTALLER_COMMAND
+  !uninstfinalize '${SIGN_UNINSTALLER_COMMAND}' = 0
+!endif
 !define PRODUCT_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\NetLaneRustPreview"
 !define PRODUCT_DIR "$PROGRAMFILES64\NetLane Rust"
 ; Layout of the earlier per-user preview, which must be removed before this one.

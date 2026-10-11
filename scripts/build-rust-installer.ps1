@@ -3,14 +3,30 @@ param(
     [Parameter(Mandatory=$true)][string]$NsisCompilerPath,
     [string]$VcRuntimeReferencePath,
     [string]$OutputDirectory = ('artifacts/rust-installer-' + (Get-Date -Format 'yyyyMMdd-HHmmss')),
-    [switch]$SkipChecks
+    [switch]$SkipChecks,
+    # Optional Authenticode signing through the certificate exposed by SimplySign Desktop.
+    [string]$CertificateThumbprint,
+    [string]$SignToolPath,
+    [ValidatePattern('^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[A-Za-z0-9./_-]*)?$')][string]$TimestampServer = 'http://time.certum.pl'
 )
-# Compile/package only. Never run the installer, apps, UAC, signing or network probes.
+# Compile/package only. Never runs the installer, apps, UAC or network probes. Signing only
+# when a certificate thumbprint is given explicitly; there is no implicit certificate.
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'rust-packaging-common.ps1')
 $root = Split-Path -Parent $PSScriptRoot
 $output = Get-ArtifactPath $root $OutputDirectory
 if (Test-Path -LiteralPath $output) { throw 'Escolha uma pasta nova; builds anteriores são preservados.' }
+$signing = -not [string]::IsNullOrWhiteSpace($CertificateThumbprint)
+$signingScript = Join-Path $PSScriptRoot 'sign-windows-artifacts.ps1'
+$signingMetadata = $null
+if ($signing) {
+    if ($CertificateThumbprint -notmatch '^[A-Fa-f0-9]{40}$' -or -not $SignToolPath) { throw 'Informe thumbprint de 40 dígitos hexadecimais e SignToolPath.' }
+    $CertificateThumbprint = $CertificateThumbprint.ToUpperInvariant()
+    $SignToolPath = (Resolve-Path -LiteralPath $SignToolPath).Path
+    $certificate = Get-Item -LiteralPath "Cert:\CurrentUser\My\$CertificateThumbprint"
+    if (-not $certificate.HasPrivateKey -or $certificate.NotAfter -le (Get-Date)) { throw 'Certificado indisponível ou expirado.' }
+    $signingMetadata = [ordered]@{ CertificateThumbprint=$CertificateThumbprint; Publisher=$certificate.Subject; FileDigest='SHA256'; TimestampDigest='SHA256'; TimestampServer=$TimestampServer }
+} elseif ($SignToolPath) { throw 'SignToolPath exige CertificateThumbprint; não há seleção automática de certificado.' }
 $compiler = (Resolve-Path -LiteralPath $NsisCompilerPath).Path
 Assert-RegularPath $compiler
 $compilerVersion = (& $compiler /VERSION | Out-String).Trim()
@@ -42,6 +58,11 @@ foreach ($name in @('netlane.exe','netlane-agent.exe')) {
     $binary = Join-Path $root ('artifacts/rust-target/release/' + $name)
     Assert-RegularPath $binary
     Copy-Item -LiteralPath $binary -Destination $payload
+}
+if ($signing) {
+    # Sign the payload copies before any hash/manifest is computed.
+    & $signingScript -FilePath @((Join-Path $payload 'netlane.exe'),(Join-Path $payload 'netlane-agent.exe')) -CertificateThumbprint $CertificateThumbprint -SignToolPath $SignToolPath -TimestampServer $TimestampServer
+    if (-not $?) { throw 'Falha na assinatura dos executáveis.' }
 }
 $pe = Get-PeSummary (Join-Path $payload 'netlane.exe')
 if ($pe.Machine -ne 0x8664 -or 'VCRUNTIME140.dll' -notin $pe.Imports) { throw 'Reavalie os pré-requisitos: o layout atual espera CRT dinâmico MSVC x64.' }
@@ -100,6 +121,14 @@ Write-Nsis 'build-defines.nsh' @(
     '!define VALIDATE_PAYLOAD "' + (Nsis-Literal (Join-Path $output 'validate-payload.nsh')) + '"'
     '!define PAYLOAD_KIB ' + [math]::Ceiling(($files | Measure-Object -Property Bytes -Sum).Sum / 1024)
 )
+if ($signing) {
+    $powershell = Join-Path $PSHOME 'powershell.exe'
+    foreach ($commandPath in @($powershell, $signingScript, $SignToolPath)) {
+        if ($commandPath.IndexOfAny([char[]]@([char]39, [char]34, [char]37, [char]13, [char]10)) -ge 0) { throw 'Caminho incompatível com o comando de assinatura NSIS.' }
+    }
+    $uninstallerCommand = '"' + $powershell + '" -NoProfile -NonInteractive -File "' + $signingScript + '" -CertificateThumbprint ' + $CertificateThumbprint + ' -SignToolPath "' + $SignToolPath + '" -TimestampServer ' + $TimestampServer + ' -FilePath "%1"'
+    [IO.File]::AppendAllText((Join-Path $output 'build-defines.nsh'), ("!define SIGN_UNINSTALLER_COMMAND '" + $uninstallerCommand.Replace('$', '$$') + "'`r`n"), $utf8)
+}
 $installLines = [Collections.Generic.List[string]]::new()
 $uninstallLines = [Collections.Generic.List[string]]::new()
 $validateLines = [Collections.Generic.List[string]]::new()
@@ -139,6 +168,10 @@ Write-Nsis 'validate-payload.nsh' $validateLines.ToArray()
 # NSIS defaults BOM-less files to the Windows codepage; our sources/includes are UTF-8.
 & $compiler /INPUTCHARSET UTF8 /V2 ('/DBUILD_DEFINES=' + (Join-Path $output 'build-defines.nsh')) (Join-Path $source 'NetLaneRust.nsi')
 if ($LASTEXITCODE -ne 0) { throw 'Compilação NSIS falhou; nenhum instalador foi executado.' }
+if ($signing) {
+    & $signingScript -FilePath $setup -CertificateThumbprint $CertificateThumbprint -SignToolPath $SignToolPath -TimestampServer $TimestampServer
+    if (-not $?) { throw 'Falha na assinatura do instalador.' }
+}
 $inputPaths = @('source/NetLaneRust.nsi','source/RustProcessGuard.nsh','source/build-rust-installer.ps1','source/rust-packaging-common.ps1','build-defines.nsh','install-files.nsh','uninstall-files.nsh','validate-payload.nsh','cargo-metadata.json')
 $inputs = @($inputPaths | ForEach-Object { [ordered]@{Path=$_;Sha256=(Get-FileHash -LiteralPath (Join-Path $output $_)).Hash} })
 Write-PackageJson (Join-Path $output 'build-report.json') ([ordered]@{
@@ -147,7 +180,7 @@ Write-PackageJson (Join-Path $output 'build-report.json') ([ordered]@{
     PackagingSources=$inputs; PayloadFiles=$files.Count; ChecksSkipped=[bool]$SkipChecks; ReleaseBuild=$true
     CompilerVersion=$compilerVersion; CompilerSha256=(Get-FileHash -LiteralPath $compiler).Hash; CompilerInputCharset='UTF8'
     Prerequisites=$prerequisites; VcRuntimeReferenceSha256=(Get-FileHash -LiteralPath $VcRuntimeReferencePath).Hash
-    InstallerExecuted=$false; RuntimeQaVerified=$false; Signed=$false; PublicReleaseReady=$false; LicenseReview=$licenseReview
+    InstallerExecuted=$false; RuntimeQaVerified=$false; Signed=$signing; Signing=$signingMetadata; PublicReleaseReady=$false; LicenseReview=$licenseReview
 })
 Write-Output "Instalador Rust compilado para revisão estática: $setup"
 Write-Output "Licenças: $($licenseReview.Packages) crates; $($licenseReview.Issues.Count) lacunas registradas. QA runtime e distribuição permanecem pendentes."
