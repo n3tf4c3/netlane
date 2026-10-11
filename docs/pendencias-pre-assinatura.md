@@ -1,5 +1,7 @@
 # Pendências do NetLane antes da assinatura
 
+**Atualização de 2026-10-11:** os quatro casos iniciais (instalação limpa 0.3.4, upgrade para 0.3.5 com fixtures, downgrade recusado e remoção) foram **aprovados na VM de laboratório** — ver [rodada na VM](#rodada-na-vm-de-laboratório--2026-10-11). Os demais cenários da matriz continuam pendentes; a 0.3.5 segue sem assinatura até fechá-los. O SimplySign já assina normalmente (pacote Rust de 2026-10-11).
+
 Atualizado em 2026-10-08. A orientação vigente é resolver as pendências antes de assinar a nova versão. **A 0.3.5 permanece sem assinatura e o QA completo do instalador permanece pendente.** A rodada autorizada no Windows Sandbox foi bloqueada pelo Controle de Aplicativo antes da execução do instalador 0.3.4: **0 de 4 casos concluídos**, sem tentativa da 0.3.5. O Sandbox foi encerrado e o estado do host foi conferido como preservado.
 
 ## Correções preparadas e verificadas localmente
@@ -85,6 +87,31 @@ Permanecem pendentes a restauração real da conexão padrão, sua persistência
 Usar um executável de prova e destino explícitos, com conexões novas e dados sintéticos. Registrar separadamente política aceita, tráfego observado e interface de saída. Ao terminar, remover apenas políticas/opções do ensaio, verificar serviço parado e comparar com o baseline. Uma transferência sustentada controlada também permanece sem comprovação; não reiniciar OneDrive/Steam ou usar arquivos reais por inferência.
 
 Os ciclos históricos de perda/retorno da Wi-Fi, suspensão/retomada, QUIC/IPv4 concorrente e continuidade na bandeja estão concluídos nos seus alvos registrados. IPv6 e VPN continuam limites sem validação neste ambiente; não habilitar bindings ou ampliar esses ensaios automaticamente. [Recuperação](testes-recuperacao.md), [conexão padrão](conexao-padrao.md) e [limites dos protocolos](ampliacao-ensaios-rede.md) mantêm os resultados e os escopos específicos.
+
+## Rodada na VM de laboratório — 2026-10-11
+
+Alvo `Win11 - Work` (`DESKTOP-DC6M247`, VMware, UUID `3F1D4D56-…-12D6082F4AD0`,
+IPv4 `192.168.184.128`), Smart App Control desligado, snapshot de retorno `PC-OK`;
+acesso por OpenSSH com chave dedicada e sessão administrativa. Os pacotes 0.3.4
+(`4468E105…604B`) e 0.3.5 (`020EE3A9…B281`) e os manifestos foram conferidos por
+hash no host e no convidado. Não houve logon real, abertura de UI/serviço, teste
+de rede nem alteração de proteção. O `test-installer-lab.ps1` passou a guardar o
+handle do processo logo após iniciar: sem isso, recusas rápidas (downgrade, código
+6) podem chegar com código de saída vazio no PowerShell.
+
+| Caso | Resultado |
+| --- | --- |
+| Instalação limpa 0.3.4 | retorno 0; payload por hash e atalho conferidos |
+| Upgrade 0.3.4 → 0.3.5 com dados | retorno 0; perfil (`netlane-rules.json`) e arquivos desconhecidos na raiz e em `notices` preservados; quatro avisos `System.Text.Json`/`Encodings.Web` 8.0.0 removidos |
+| Downgrade 0.3.5 → 0.3.4 | **recusado com código 6**; registro, autorun, programa, perfil e menu Iniciar sem alteração |
+| Remoção | retorno 0; payload removido; fixtures preservadas; autorun próprio removido e demais entradas Run preservadas |
+| Rede | adaptadores, bindings, métricas, rotas, DNS e flags globais iguais antes/depois |
+
+Evidências: `artifacts/dotnet-lab-20261011-113752` (pacote, inventário, recibos e
+estados `lab-before` → `lab-after`). Continuam pendentes: cancelamento, processos
+e segunda checagem, arquivo em uso, destinos inválidos, falha de cópia e reparo,
+falha na remoção, autorun pela UI, logon real e UI instalada. A VM mantém, por
+desenho, as fixtures preservadas em `C:\Program Files\NetLane` e no perfil.
 
 ## Assinatura depois dos ensaios
 
