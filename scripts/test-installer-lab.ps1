@@ -90,6 +90,9 @@ function Invoke-LabInstaller($Package, [int]$ExpectedExitCode) {
     Assert-Package $Package
     Assert-NoProductProcesses
     $process = Start-Process -FilePath (Join-Path $inputDirectory $Package.Installer) -ArgumentList '/S' -PassThru -WindowStyle Hidden
+    # Cache the handle now: a fast refusal (e.g. downgrade, code 6) can exit before
+    # WaitForExit, and PowerShell then reports an empty ExitCode.
+    $null = $process.Handle
     if (-not $process.WaitForExit(300000)) { throw 'Instalador nao concluiu; nenhum processo encerrado a forca.' }
     $process.Refresh()
     if ($process.ExitCode -ne $ExpectedExitCode) { throw "Saida inesperada: $($process.ExitCode); esperado $ExpectedExitCode." }
@@ -173,6 +176,7 @@ try {
     $uninstaller = Join-Path $programDirectory 'Uninstall.exe'
     Assert-NoProductProcesses
     $process = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -WindowStyle Hidden
+    $null = $process.Handle
     if (-not $process.WaitForExit(300000)) { throw 'Remocao nao concluiu; nenhum processo encerrado a forca.' }
     $process.Refresh()
     if ($process.ExitCode -ne 0) { throw "Remocao falhou: $($process.ExitCode)." }
