@@ -128,6 +128,18 @@ if ($signing) {
     }
     $uninstallerCommand = '"' + $powershell + '" -NoProfile -NonInteractive -File "' + $signingScript + '" -CertificateThumbprint ' + $CertificateThumbprint + ' -SignToolPath "' + $SignToolPath + '" -TimestampServer ' + $TimestampServer + ' -FilePath "%1"'
     [IO.File]::AppendAllText((Join-Path $output 'build-defines.nsh'), ("!define SIGN_UNINSTALLER_COMMAND '" + $uninstallerCommand.Replace('$', '$$') + "'`r`n"), $utf8)
+    # Plug-ins extracted to %TEMP% at run time must be signed too (Smart App Control).
+    $signedPlugins = Join-Path $output 'signed-plugins'
+    New-Item -ItemType Directory -Path $signedPlugins | Out-Null
+    $pluginFiles = @(foreach ($plugin in @('System.dll','nsDialogs.dll')) {
+        $pluginSource = Join-Path (Split-Path -Parent $compiler) ('Plugins\x86-unicode\' + $plugin)
+        Assert-RegularPath $pluginSource
+        Copy-Item -LiteralPath $pluginSource -Destination $signedPlugins
+        Join-Path $signedPlugins $plugin
+    })
+    & $signingScript -FilePath $pluginFiles -CertificateThumbprint $CertificateThumbprint -SignToolPath $SignToolPath -TimestampServer $TimestampServer
+    if (-not $?) { throw 'Falha na assinatura dos plug-ins NSIS.' }
+    [IO.File]::AppendAllText((Join-Path $output 'build-defines.nsh'), ('!define SIGNED_PLUGIN_DIR "' + (Nsis-Literal $signedPlugins) + '"' + "`r`n"), $utf8)
 }
 $installLines = [Collections.Generic.List[string]]::new()
 $uninstallLines = [Collections.Generic.List[string]]::new()

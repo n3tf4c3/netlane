@@ -15,6 +15,11 @@ SetOverwrite on
 !include "FileFunc.nsh"
 !include "RustProcessGuard.nsh"
 !include "${BUILD_DEFINES}"
+; Signed builds embed signed copies of the NSIS plug-ins: Smart App Control blocks an
+; unsigned System.dll extracted to %TEMP% even when the installer itself is signed.
+!ifdef SIGNED_PLUGIN_DIR
+  !addplugindir /x86-unicode "${SIGNED_PLUGIN_DIR}"
+!endif
 ; Signed builds: NSIS signs the uninstaller at compile time; no installer execution.
 !ifdef SIGN_UNINSTALLER_COMMAND
   !uninstfinalize '${SIGN_UNINSTALLER_COMMAND}' = 0
