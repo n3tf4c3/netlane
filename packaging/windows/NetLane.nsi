@@ -144,16 +144,18 @@ Function .onInit
   ${EndIf}
   SetRegView 64
   SetShellVarContext all
+  ; Process guard first: an open panel locks payload files, and the user must be
+  ; told to close NetLane (code 2), not that files are in use (code 7).
+  !insertmacro RequireNetLaneClosed ""
   !insertmacro RequireSafeDestination
   !insertmacro RequireSupportedUpgrade
-  !insertmacro RequireNetLaneClosed ""
 FunctionEnd
 
 Section "NetLane" MainSection
   ; Recheck after the welcome page; do not close or kill a process automatically.
+  !insertmacro RequireNetLaneClosed ""
   !insertmacro RequireSafeDestination
   !insertmacro RequireSupportedUpgrade
-  !insertmacro RequireNetLaneClosed ""
   !include "${INSTALL_FILES}"
   ClearErrors
   WriteUninstaller "$INSTDIR\Uninstall.exe"
@@ -188,13 +190,13 @@ Function un.onInit
     SetErrorLevel 4
     Abort
   ${EndIf}
-  !insertmacro RequireSafeDestination
   !insertmacro RequireNetLaneClosed "un."
+  !insertmacro RequireSafeDestination
 FunctionEnd
 
 Section "Uninstall"
-  !insertmacro RequireSafeDestination
   !insertmacro RequireNetLaneClosed "un."
+  !insertmacro RequireSafeDestination
   ; Exact compile-time file list; no recursive deletion, profile access, or wildcard.
   !include "${UNINSTALL_FILES}"
   ; RMDir deliberately leaves unknown files/directories intact. Their presence
