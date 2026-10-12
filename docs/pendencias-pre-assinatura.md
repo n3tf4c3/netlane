@@ -1,6 +1,8 @@
 # Pendências do NetLane antes da assinatura
 
-**Atualização de 2026-10-11:** os quatro casos iniciais (instalação limpa 0.3.4, upgrade para 0.3.5 com fixtures, downgrade recusado e remoção) foram **aprovados na VM de laboratório** — ver [rodada na VM](#rodada-na-vm-de-laboratório--2026-10-11). Na mesma VM, a [matriz sem interface](#matriz-sem-interface-na-vm--2026-10-11) também passou: guarda de processo, arquivo em uso, destinos inválidos, falhas na remoção e falha de cópia com reparo. Faltam cancelamento, UI real na guarda de processo, autorun pela UI, logon real e UI instalada, que exigem desktop interativo; a 0.3.5 segue sem assinatura até fechá-los. O SimplySign já assina normalmente (pacote Rust de 2026-10-11).
+**Atualização de 2026-10-12:** gerada e aprovada a **0.3.6 assinada** — ver [pacote 0.3.6](#pacote-036-assinado--2026-10-12). Ela inclui todo o código .NET atual (a 0.3.5 testada era do commit `687f016` e não tinha `a95979d`/`97d11df`), a guarda de processo antes da de destino e o ícone da identidade nova. As três decisões abertas foram resolvidas: ordem das guardas corrigida, reparo por nova execução aceito sem rollback automático e ícone trocado. A 0.3.5 fica substituída e não será assinada. Permanecem fora do instalador o ensaio de conexão padrão + roteamento por aplicativo e as escalas 125%/150%.
+
+**Atualização de 2026-10-11:** os quatro casos iniciais (instalação limpa 0.3.4, upgrade para 0.3.5 com fixtures, downgrade recusado e remoção) foram **aprovados na VM de laboratório** — ver [rodada na VM](#rodada-na-vm-de-laboratório--2026-10-11). Na mesma VM, a [matriz sem interface](#matriz-sem-interface-na-vm--2026-10-11) também passou: guarda de processo, arquivo em uso, destinos inválidos, falhas na remoção e falha de cópia com reparo. Os [casos interativos](#casos-interativos-na-vm--2026-10-11) (cancelamento, UI real, autorun pela UI, logon real e UI instalada) também foram exercitados. A 0.3.5 segue sem assinatura até decidir três pontos: ordem das guardas (recusa 7 em vez de 2 com a UI aberta), reparo sem rollback automático e ícone antigo. O SimplySign já assina normalmente (pacote Rust de 2026-10-11).
 
 Atualizado em 2026-10-08. A orientação vigente é resolver as pendências antes de assinar a nova versão. **A 0.3.5 permanece sem assinatura e o QA completo do instalador permanece pendente.** A rodada autorizada no Windows Sandbox foi bloqueada pelo Controle de Aplicativo antes da execução do instalador 0.3.4: **0 de 4 casos concluídos**, sem tentativa da 0.3.5. O Sandbox foi encerrado e o estado do host foi conferido como preservado.
 
@@ -150,6 +152,71 @@ repete a de `.onInit`. O reparo depende de executar de novo: a falha de cópia d
 binários de versões misturadas com registro 0.3.4, e **não há rollback automático**.
 Continuam pendentes: cancelamento na página inicial, guarda com UI real, autorun pela UI,
 logon real e UI instalada.
+
+## Casos interativos na VM — 2026-10-11
+
+Executados pelo usuário via RDP na sessão do `pepg` (administrador), com conferência por
+SSH a cada passo. Mesmo pacote 0.3.5 (`020EE3A9…B281`).
+
+| Caso | Resultado |
+| --- | --- |
+| Cancelamento na página inicial | saída **1** (cancelamento NSIS), duas vezes; programa, registro, atalho, perfil e autorun inalterados |
+| Instalação pelo assistente | saída 0; 756 arquivos conferidos por hash; atalho presente |
+| Abertura pelo menu Iniciar | sem UAC; processo como `pepg`, sessão interativa; vai para a bandeja; nenhum serviço iniciado |
+| Instalador com a UI aberta | recusa com **7** (arquivo em uso), não 2 — ver ressalva; estado e processo preservados |
+| Desinstalador com a UI aberta | recusa (o lançador retorna 0; estado intacto confirma); processo não encerrado |
+| Autorun marcado pela UI | entrada exata `"C:\Program Files\NetLane\NetLane.UI.exe" --startup`; outras entradas intactas |
+| Logon real (sair/entrar) | uma instância na bandeja e painel restaurável, sem UAC nem erro; nova execução manual com `--startup` sai com 0 por instância única |
+| Autorun desmarcado pela UI | só a entrada `NetLane` removida |
+| UI instalada | ícones, teclado (Tab/Espaço/Enter), redimensionamento e fechar para a bandeja ok a **100%**; 125%/150% não testados |
+| Remoção por Configurações → Aplicativos | programa, registro, atalho e autorun removidos; rede igual à `matrix-after` |
+
+**Ressalva — ordem das guardas:** com a UI aberta, `RequireSafeDestination` (abre os arquivos
+do payload com compartilhamento 0) roda antes de `RequireNetLaneClosed`, então a recusa sai
+como 7 ("arquivos em uso") em vez de 2 ("feche o NetLane"). É seguro e a mensagem também
+pede para fechar o painel, mas difere do critério da matriz. Corrigir exige inverter as
+chamadas em `.onInit`/`un.onInit`/Section, recompilar e repetir o QA do pacote.
+
+**Observações:** no logon o Windows executa as entradas `Run` em série, esperando até 30 s
+cada (OneDrive, Lists e Teams vêm antes), então o NetLane apareceu cerca de 2 minutos após
+o logon (log `Shell-Core/Operational`, eventos 9707/9708). O ícone do .NET é o `netlane.ico`
+anterior; a identidade nova de 10/10 está só na versão Rust (`assets/brand/README.md`).
+
+Com isso, todos os cenários da matriz do instalador .NET foram exercitados. Decisões abertas
+antes de assinar a 0.3.5: aceitar ou corrigir a ordem das guardas, aceitar o reparo por
+nova execução sem rollback automático e manter ou trocar o ícone antigo. Qualquer mudança
+no pacote exige nova rodada de QA.
+
+## Pacote 0.3.6 assinado — 2026-10-12
+
+Decisões do usuário: corrigir a ordem das guardas, aceitar o reparo por nova execução
+(sem rollback automático) e usar o logo novo. Mudanças:
+- `NetLane.nsi`: `RequireNetLaneClosed` passa a rodar antes de `RequireSafeDestination` em
+  `.onInit`, Section, `un.onInit` e Uninstall;
+- `src/NetLane.UI/Assets/netlane.ico` substituído por `assets/brand/netlane-diagnostics.ico`;
+- versão padrão do build: 0.3.6.
+
+Build Release sem avisos; 288 testes aprovados.
+
+Pacote em `artifacts/installer/signed-20261012-036-b/NetLane-0.3.6-preview-win-x64-setup.exe`,
+SHA-256 `6835D5BC43F097D40FB83C2A5B20F531CAC71AE150B6D36D8FAF22D11D5E083E`, revisão
+`df9eca7` com as mudanças acima ainda não commitadas. A primeira tentativa
+(`signed-20261012-036`) falhou com o SimplySign desconectado. Depois do login, o verificador
+estático passou: 757 arquivos, **10 assinaturas válidas com timestamp Certum** e ícone do
+`NetLane.UI.exe` igual ao logo novo, sem diferença de pixels.
+
+QA na VM `DESKTOP-DC6M247`, com evidências em `artifacts/dotnet-qa-036-20261012`:
+
+| Rodada | Resultado |
+| --- | --- |
+| `test-installer-lab.ps1` (anterior 0.3.5) | instalação limpa 0.3.5, upgrade para 0.3.6 com fixtures, downgrade recusado com **6** e remoção preservando fixtures/autorun alheio. Os nomes dos casos no recibo são fixos no roteiro ("0.3.4/0.3.5"); os pacotes executados são os do plano |
+| `test-installer-lab-matrix.ps1` (anterior 0.3.4) | os mesmos 14 casos da 0.3.5 aprovados, inclusive falha de cópia 0.3.4 → 0.3.6 com reparo; rede igual |
+| Interativo (RDP, `pepg`) | instalação 0; ícone novo na janela, barra e bandeja; instalador com a UI aberta recusa com **2** e a mensagem "Feche o NetLane…"; remoção por Configurações limpa; rede igual |
+
+O PowerShell da rodada interativa já estava elevado, então o UAC não apareceu. O editor
+verificado foi conferido pela assinatura no host, não pela tela do UAC. Fixtures do roteiro
+de 4 casos foram registradas em `removed-fixtures.json` e apagadas antes da matriz. A VM
+terminou sem NetLane.
 
 ## Assinatura depois dos ensaios
 

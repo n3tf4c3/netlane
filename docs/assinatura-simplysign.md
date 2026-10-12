@@ -38,7 +38,7 @@ Pré-requisitos: compilador NSIS 3.12 conferido, SignTool disponível, certifica
 ```powershell
 .\scripts\build-windows-installer.ps1 `
   -NsisCompilerPath '<caminho absoluto do makensis.exe conferido>' `
-  -Version 0.3.5 `
+  -Version 0.3.6 `
   -CertificateThumbprint '<40 dígitos hexadecimais do certificado>' `
   -SignToolPath '<caminho absoluto do signtool.exe>'
 
