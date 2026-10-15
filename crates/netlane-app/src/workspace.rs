@@ -1848,7 +1848,16 @@ impl Workspace {
     }
     fn rules(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();
-        let mut rows = div().flex().flex_col().gap(px(12.));
+        let compact = AppSettings::get(cx).compact;
+        // Compact rule cards use smaller buttons so mode, target and helpers share a row.
+        let button = |id: gpui::ElementId, label: &str, cx: &App| {
+            self.button(id, label, cx)
+                .when(compact, |b| b.px(px(8.)).py(px(3.)).text_size(px(12.)))
+        };
+        let mut rows = div()
+            .flex()
+            .flex_col()
+            .gap(px(if compact { 6. } else { 12. }));
         let query = self.filter.read(cx).text().to_lowercase();
         for (i, p) in self.policies.iter().enumerate().filter(|(_, p)| {
             format!(
@@ -1859,11 +1868,11 @@ impl Workspace {
             .to_lowercase()
             .contains(&query)
         }) {
-            let mut modes = div().flex().gap(px(6.));
+            let mut modes = div().flex().gap(px(if compact { 4. } else { 6. }));
             for mode in RouteMode::ALL {
                 modes = modes.child(
-                    self.button(
-                        gpui::SharedString::from(format!("mode-{i}-{mode:?}")),
+                    button(
+                        gpui::SharedString::from(format!("mode-{i}-{mode:?}")).into(),
                         mode.label(),
                         cx,
                     )
@@ -1878,7 +1887,12 @@ impl Workspace {
                     })),
                 );
             }
-            let mut targets = div().flex().flex_wrap().gap(px(6.));
+            let mut targets =
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(if compact { 4. } else { 6. }));
             for a in self
                 .snapshot
                 .adapters
@@ -1887,8 +1901,8 @@ impl Workspace {
             {
                 let id = a.id.clone();
                 targets = targets.child(
-                    self.button(
-                        gpui::SharedString::from(format!("target-{i}-{id}")),
+                    button(
+                        gpui::SharedString::from(format!("target-{i}-{id}")).into(),
                         &a.name,
                         cx,
                     )
@@ -1918,95 +1932,117 @@ impl Workspace {
                         .child("Interface salva indisponível. A escolha será preservada."),
                 );
             }
-            rows = rows.child(
-                div()
-                    .p(px(16.))
-                    .rounded(px(6.))
-                    .border_1()
-                    .border_color(t.border)
-                    .bg(t.panel)
-                    .flex()
-                    .flex_col()
+            let icon = self.application_icon(p.executable_path.as_deref(), t.text_muted);
+            let name = div()
+                .font_weight(FontWeight::SEMIBOLD)
+                .child(p.application_id.clone());
+            let path = div()
+                .flex_1()
+                .min_w_0()
+                .font_family(MONO_FONT)
+                .text_size(px(11.))
+                .text_color(t.text_muted)
+                .when(compact, |d| d.truncate())
+                .child(
+                    p.executable_path
+                        .clone()
+                        .unwrap_or_else(|| "Caminho do executável ausente".to_owned()),
+                );
+            let enabled = button(
+                ("enabled", i).into(),
+                if p.enabled { "Ativada" } else { "Desativada" },
+                cx,
+            )
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.policies[i].enabled = !ws.policies[i].enabled;
+                ws.dirty = true;
+                cx.notify();
+            }));
+            let remove = button(("delete", i).into(), "Remover", cx).on_click(cx.listener(
+                move |ws, _, _, cx| {
+                    ws.policies.remove(i);
+                    ws.dirty = true;
+                    cx.notify();
+                },
+            ));
+            let choose = button(("choose-rule-exe", i).into(), "Escolher .exe", cx)
+                .on_click(cx.listener(move |ws, _, w, cx| ws.choose_rule_executable(i, w, cx)));
+            let related = button(
+                ("related", i).into(),
+                match (p.include_related_executables, compact) {
+                    (true, true) => "✓ Auxiliares",
+                    (false, true) => "Auxiliares",
+                    (true, false) => "✓ Incluir auxiliares conhecidos",
+                    (false, false) => "Incluir auxiliares conhecidos",
+                },
+                cx,
+            )
+            .on_click(cx.listener(move |ws, _, _, cx| {
+                ws.policies[i].include_related_executables =
+                    !ws.policies[i].include_related_executables;
+                ws.dirty = true;
+                cx.notify();
+            }));
+            let card = div()
+                .rounded(px(6.))
+                .border_1()
+                .border_color(t.border)
+                .bg(t.panel)
+                .flex()
+                .flex_col();
+            rows = rows.child(if compact {
+                // Two rows: identity and actions, then mode, target and helpers.
+                card.px(px(10.))
+                    .py(px(8.))
+                    .gap(px(6.))
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(icon)
+                            .child(name)
+                            .child(path)
+                            .child(enabled)
+                            .child(choose)
+                            .child(remove),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .flex_wrap()
+                            .items_center()
+                            .gap(px(8.))
+                            .child(modes)
+                            .child(targets)
+                            .child(div().flex_1())
+                            .child(related),
+                    )
+            } else {
+                card.p(px(16.))
                     .gap(px(12.))
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap(px(8.))
-                            .child(
-                                self.application_icon(p.executable_path.as_deref(), t.text_muted),
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .font_weight(FontWeight::SEMIBOLD)
-                                    .child(p.application_id.clone()),
-                            )
-                            .child(
-                                self.button(
-                                    ("enabled", i),
-                                    if p.enabled { "Ativada" } else { "Desativada" },
-                                    cx,
-                                )
-                                .on_click(cx.listener(
-                                    move |ws, _, _, cx| {
-                                        ws.policies[i].enabled = !ws.policies[i].enabled;
-                                        ws.dirty = true;
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .child(self.button(("delete", i), "Remover", cx).on_click(
-                                cx.listener(move |ws, _, _, cx| {
-                                    ws.policies.remove(i);
-                                    ws.dirty = true;
-                                    cx.notify();
-                                }),
-                            )),
+                            .child(icon)
+                            .child(name.flex_1())
+                            .child(enabled)
+                            .child(remove),
                     )
                     .child(
                         div()
                             .flex()
                             .items_center()
                             .gap(px(12.))
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .font_family(MONO_FONT)
-                                    .text_size(px(11.))
-                                    .text_color(t.text_muted)
-                                    .child(p.executable_path.clone().unwrap_or_else(|| {
-                                        "Caminho do executável ausente".to_owned()
-                                    })),
-                            )
-                            .child(
-                                self.button(("choose-rule-exe", i), "Escolher .exe", cx)
-                                    .on_click(cx.listener(move |ws, _, w, cx| {
-                                        ws.choose_rule_executable(i, w, cx)
-                                    })),
-                            ),
+                            .child(path)
+                            .child(choose),
                     )
                     .child(modes)
                     .child(targets)
-                    .child(
-                        self.button(
-                            ("related", i),
-                            if p.include_related_executables {
-                                "✓ Incluir auxiliares conhecidos"
-                            } else {
-                                "Incluir auxiliares conhecidos"
-                            },
-                            cx,
-                        )
-                        .on_click(cx.listener(move |ws, _, _, cx| {
-                            ws.policies[i].include_related_executables =
-                                !ws.policies[i].include_related_executables;
-                            ws.dirty = true;
-                            cx.notify();
-                        })),
-                    ),
-            );
+                    .child(related)
+            });
         }
         if self.policies.is_empty() {
             rows = rows.child(
@@ -2019,7 +2055,7 @@ impl Workspace {
         div()
             .flex()
             .flex_col()
-            .gap(px(16.))
+            .gap(px(if compact { 10. } else { 16. }))
             .child(self.heading(
                 "Cada aplicativo, sua rota",
                 "Edite as regras e salve para que sejam lidas pela próxima sessão.",
