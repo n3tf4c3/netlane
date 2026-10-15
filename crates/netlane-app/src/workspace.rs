@@ -1349,24 +1349,62 @@ impl Workspace {
     }
     fn heading(&self, title: &str, subtitle: &str, cx: &App) -> gpui::Div {
         let t = cx.theme();
+        let compact = AppSettings::get(cx).compact;
         div()
             .flex()
             .flex_col()
-            .gap(px(6.))
-            .mb(px(22.))
+            .gap(px(if compact { 2. } else { 6. }))
+            .mb(px(if compact { 8. } else { 22. }))
             .child(
                 div()
-                    .text_size(px(24.))
+                    .text_size(px(if compact { 20. } else { 24. }))
                     .font_weight(FontWeight::SEMIBOLD)
                     .text_color(t.text_strong)
                     .child(title.to_owned()),
             )
-            .child(div().text_color(t.text_muted).child(subtitle.to_owned()))
+            .child(
+                div()
+                    .text_size(px(12.))
+                    .text_color(t.text_muted)
+                    .child(subtitle.to_owned()),
+            )
+    }
+    /// Small count tile for the overview header row.
+    fn stat_tile(&self, value: String, label: &str, cx: &App) -> gpui::Div {
+        let t = cx.theme();
+        div()
+            .flex_1()
+            .min_w(px(110.))
+            .px(px(12.))
+            .py(px(8.))
+            .rounded(px(6.))
+            .bg(t.panel)
+            .border_1()
+            .border_color(t.border)
+            .flex()
+            .flex_col()
+            .gap(px(2.))
+            .child(
+                div()
+                    .text_size(px(18.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .text_color(t.text_strong)
+                    .child(value),
+            )
+            .child(
+                div()
+                    .text_size(px(11.))
+                    .text_color(t.text_muted)
+                    .child(label.to_owned()),
+            )
     }
     fn overview(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();
         let settings = AppSettings::get(cx).clone();
-        let mut cards = div().flex().flex_wrap().gap(px(16.));
+        let mut cards = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(if settings.compact { 10. } else { 16. }));
         for a in self
             .snapshot
             .adapters
@@ -1376,7 +1414,12 @@ impl Workspace {
             let usage = self.traffic.usage.get(&a.id).cloned().unwrap_or_default();
             let id = a.id.clone();
             let speed = |s: Option<f64>| s.map_or("—".to_owned(), |s| format!("{s:.2} Mbps"));
-            let mut history = div().h(px(58.)).flex().items_end().gap(px(3.));
+            let compact = settings.compact;
+            let mut history = div()
+                .h(px(if compact { 32. } else { 58. }))
+                .flex()
+                .items_end()
+                .gap(px(3.));
             let maximum = usage
                 .history
                 .iter()
@@ -1387,23 +1430,25 @@ impl Workspace {
                     div()
                         .id(gpui::SharedString::from(format!("sample-{}-{i}", a.id)))
                         .w(px(6.))
-                        .h(px(rx.unwrap_or(0.) as f32 / maximum as f32 * 50. + 2.))
+                        .h(px(rx.unwrap_or(0.) as f32 / maximum as f32
+                            * if compact { 28. } else { 50. }
+                            + 2.))
                         .bg(t.accent.opacity(0.8))
                         .rounded(px(2.)),
                 );
             }
             cards = cards.child(
                 div()
-                    .w(gpui::relative(0.48))
-                    .min_w(px(300.))
-                    .p(px(if settings.compact { 14. } else { 20. }))
+                    .w(gpui::relative(if compact { 0.32 } else { 0.48 }))
+                    .min_w(px(if compact { 240. } else { 300. }))
+                    .p(px(if compact { 12. } else { 20. }))
                     .bg(t.panel)
                     .rounded(px(8.))
                     .border_1()
                     .border_color(t.border)
                     .flex()
                     .flex_col()
-                    .gap(px(16.))
+                    .gap(px(if compact { 8. } else { 16. }))
                     .child(
                         div()
                             .flex()
@@ -1450,7 +1495,7 @@ impl Workspace {
                                     .child(div().text_color(t.text_muted).child("Download"))
                                     .child(
                                         div()
-                                            .text_size(px(21.))
+                                            .text_size(px(if compact { 16. } else { 21. }))
                                             .text_color(t.text_strong)
                                             .child(speed(usage.download_mbps)),
                                     ),
@@ -1463,7 +1508,7 @@ impl Workspace {
                                     .child(div().text_color(t.text_muted).child("Upload"))
                                     .child(
                                         div()
-                                            .text_size(px(21.))
+                                            .text_size(px(if compact { 16. } else { 21. }))
                                             .text_color(t.text_strong)
                                             .child(speed(usage.upload_mbps)),
                                     ),
@@ -1513,17 +1558,59 @@ impl Workspace {
                 .on_click(cx.listener(move |ws, _, _, cx| ws.toggle_interface(id.clone(), cx))),
             );
         }
+        let compact = settings.compact;
+        let (download, upload) = self
+            .selected
+            .iter()
+            .filter_map(|id| self.traffic.usage.get(id))
+            .fold((0.0, 0.0), |(d, u), usage| {
+                (
+                    d + usage.download_mbps.unwrap_or(0.),
+                    u + usage.upload_mbps.unwrap_or(0.),
+                )
+            });
+        let connected = self
+            .snapshot
+            .adapters
+            .iter()
+            .filter(|a| a.connected)
+            .count();
+        let enabled_rules = self.policies.iter().filter(|p| p.enabled).count();
+        let stats = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(8.))
+            .child(self.stat_tile(
+                format!("{connected}/{}", self.snapshot.adapters.len()),
+                "Interfaces conectadas",
+                cx,
+            ))
+            .child(self.stat_tile(format!("{download:.1}"), "Download (Mbps)", cx))
+            .child(self.stat_tile(format!("{upload:.1}"), "Upload (Mbps)", cx))
+            .child(self.stat_tile(self.snapshot.connections.len().to_string(), "Conexões", cx))
+            .child(self.stat_tile(
+                format!("{enabled_rules}/{}", self.policies.len()),
+                "Regras ativas",
+                cx,
+            ));
+        // Side by side when there is room; each panel wraps below the other on narrow windows.
+        let panels = div()
+            .flex()
+            .flex_wrap()
+            .gap(px(if compact { 10. } else { 18. }))
+            .child(div().flex_1().min_w(px(380.)).child(self.default_panel(cx)))
+            .child(div().flex_1().min_w(px(380.)).child(self.quality_panel(cx)));
         div()
             .flex()
             .flex_col()
-            .gap(px(18.))
+            .gap(px(if compact { 10. } else { 18. }))
             .child(self.heading(
                 "Suas conexões, em um só lugar",
                 "Acompanhe o consumo por interface e escolha a saída dos aplicativos.",
                 cx,
             ))
-            .child(self.default_panel(cx))
-            .child(self.quality_panel(cx))
+            .when(compact, |d| d.child(stats))
+            .child(panels)
             .child(cards)
             .child(
                 div()
@@ -2051,7 +2138,12 @@ impl Render for Workspace {
         self.refresh_icons(window, cx);
         let t = cx.theme().clone();
         let settings = AppSettings::get(cx).clone();
-        let mut nav = div().flex().flex_col().gap(px(4.)).p(px(10.));
+        let compact = settings.compact;
+        let mut nav = div()
+            .flex()
+            .flex_col()
+            .gap(px(if compact { 2. } else { 4. }))
+            .p(px(if compact { 8. } else { 10. }));
         for page in [
             Page::Overview,
             Page::Packets,
@@ -2061,10 +2153,15 @@ impl Render for Workspace {
             Page::Diagnostics,
             Page::Settings,
         ] {
+            let count = match page {
+                Page::Connections => Some(self.snapshot.connections.len()),
+                Page::Rules => Some(self.policies.len()),
+                _ => None,
+            };
             nav = nav.child(
                 div()
                     .id(("nav", page as usize))
-                    .h(px(36.))
+                    .h(px(if compact { 30. } else { 36. }))
                     .px(px(10.))
                     .flex()
                     .items_center()
@@ -2082,14 +2179,22 @@ impl Render for Workspace {
                     }))
                     .child(icon(
                         page.icon(),
-                        18.,
+                        if compact { 16. } else { 18. },
                         if self.page == page {
                             t.accent
                         } else {
                             t.text_muted
                         },
                     ))
-                    .child(page.title()),
+                    .child(div().flex_1().child(page.title()))
+                    .when_some(count, |d, count| {
+                        d.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(t.text_muted)
+                                .child(count.to_string()),
+                        )
+                    }),
             );
         }
         let content = match self.page {
@@ -2248,25 +2353,28 @@ impl Render for Workspace {
                             .border_color(t.divider)
                             .flex()
                             .flex_col()
-                            .child(
-                                div()
-                                    .p(px(20.))
-                                    .flex()
-                                    .flex_col()
-                                    .gap(px(5.))
-                                    .child(
-                                        div()
-                                            .text_size(px(18.))
-                                            .font_weight(FontWeight::SEMIBOLD)
-                                            .child("NetLane"),
-                                    )
-                                    .child(
-                                        div()
-                                            .text_size(px(11.))
-                                            .text_color(t.text_muted)
-                                            .child("Ferramentas de rede"),
-                                    ),
-                            )
+                            // The title bar already shows the brand; compact mode drops the repeat.
+                            .when(!compact, |d| {
+                                d.child(
+                                    div()
+                                        .p(px(20.))
+                                        .flex()
+                                        .flex_col()
+                                        .gap(px(5.))
+                                        .child(
+                                            div()
+                                                .text_size(px(18.))
+                                                .font_weight(FontWeight::SEMIBOLD)
+                                                .child("NetLane"),
+                                        )
+                                        .child(
+                                            div()
+                                                .text_size(px(11.))
+                                                .text_color(t.text_muted)
+                                                .child("Ferramentas de rede"),
+                                        ),
+                                )
+                            })
                             .child(nav)
                             .child(div().flex_1())
                             .child(
@@ -2283,7 +2391,7 @@ impl Render for Workspace {
                             .flex_1()
                             .min_w_0()
                             .overflow_y_scroll()
-                            .p(px(28.))
+                            .p(px(if compact { 18. } else { 28. }))
                             .flex()
                             .flex_col()
                             .gap(px(12.))

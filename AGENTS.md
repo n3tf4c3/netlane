@@ -31,6 +31,7 @@ Aplicativo Windows para observar conexões e controlar seleção de saída de re
 | UI e bandeja | [interface](docs/interface-desktop.md), [bandeja](docs/bandeja-windows.md) |
 
 ## Comandos e limites
+- **Não executar o NetLane no computador principal** (nem `--demo`, `--gui-proof`, `scripts/verify-rust-ui.ps1` ou instaladores): o usuário mantém outros projetos rodando nele. No host, só compilação, testes unitários e verificações estáticas; execução visual e de runtime vai para a VM de laboratório ou o Windows Sandbox.
 - Rust: `cargo build --workspace --release --locked`, `cargo test --workspace --locked`, `cargo clippy --workspace --all-targets --locked -- -D warnings`. Demonstração com `netlane.exe --demo`; perfil Rust separado. Não inferir autorização para ativar o agente/WFP ao testar o port.
 - Da raiz: `dotnet build NetLane.sln --configuration Release` e `dotnet test NetLane.sln --configuration Release --no-build`. A suíte usa fixtures/sessões simuladas; não instala políticas de roteamento.
 - Ensaios em `scripts/` e `poc/` podem aplicar políticas reais e exigir elevação. Leia o procedimento específico e use somente a autorização vigente para o ensaio e seu alvo.

@@ -16,8 +16,8 @@ impl Default for Settings {
         Self {
             theme: None,
             font_size: 13,
-            compact: false,
-            sidebar_width: 228,
+            compact: true,
+            sidebar_width: 200,
         }
     }
 }
@@ -61,6 +61,8 @@ mod tests {
         let settings = AppSettings::load(path.clone()).unwrap();
         assert!(!path.exists());
         assert_eq!(settings.value.font_size, 13);
+        assert!(settings.value.compact);
+        assert_eq!(settings.value.sidebar_width, 200);
         std::fs::write(
             &path,
             r#"{"font_size":255,"sidebar_width":1,"theme":"One Light"}"#,
