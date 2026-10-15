@@ -19,6 +19,8 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> impl IntoElement {
         "filter_none" => "icons/filter_none.svg",
         "auto_awesome" => "icons/auto_awesome.svg",
         "visibility" => "icons/visibility.svg",
+        "keyboard_double_arrow_left" => "icons/keyboard_double_arrow_left.svg",
+        "keyboard_double_arrow_right" => "icons/keyboard_double_arrow_right.svg",
         "palette" => "icons/palette.svg",
         "refresh" => "icons/refresh.svg",
         "search" => "icons/search.svg",

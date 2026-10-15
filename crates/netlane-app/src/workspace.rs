@@ -51,6 +51,12 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", SaveRules, Some("NetLane")),
     ]);
 }
+/// Right-click menu on a connection row.
+struct ConnectionMenu {
+    position: gpui::Point<gpui::Pixels>,
+    name: String,
+    executable: Option<String>,
+}
 /// Why the last Sair was refused. The message is recomputed on render, so it
 /// disappears as soon as the reason is gone.
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -100,6 +106,7 @@ pub struct Workspace {
     error: Option<String>,
     /// Why the last Sair was refused; replaced on every attempt.
     exit_notice: Option<ExitBlock>,
+    connection_menu: Option<ConnectionMenu>,
     notice: Option<String>,
     demo: bool,
     filter: Entity<TextInput>,
@@ -583,6 +590,7 @@ impl Workspace {
             dirty: false,
             error,
             exit_notice: None,
+            connection_menu: None,
             notice: None,
             demo: is_demo,
             filter,
@@ -783,6 +791,33 @@ impl Workspace {
         };
         cx.notify();
         discarded
+    }
+    /// From the Connections right-click menu: same checks as Adicionar, with the
+    /// chosen route. The rule is unsaved until Ctrl+S, like any edit.
+    fn create_rule_for(&mut self, path: String, mode: RouteMode, cx: &mut Context<Self>) {
+        self.connection_menu = None;
+        let mut policy = RoutingPolicy::new(&path);
+        if !path.to_lowercase().ends_with(".exe")
+            || (!self.demo && !std::path::Path::new(&path).is_file())
+        {
+            self.error = Some("O executável desta conexão não está mais acessível.".to_owned());
+        } else if self.policies.iter().any(|p| {
+            p.application_id
+                .eq_ignore_ascii_case(&policy.application_id)
+        }) {
+            self.error = Some("Este aplicativo já possui uma regra.".to_owned());
+        } else {
+            policy.route_mode = mode;
+            self.notice = Some(format!(
+                "Regra criada para {} · {}. Salve com Ctrl+S ou em Regras.",
+                policy.application_id,
+                mode.label()
+            ));
+            self.policies.push(policy);
+            self.dirty = true;
+            self.error = None;
+        }
+        cx.notify();
     }
     fn add_rule(&mut self, cx: &mut Context<Self>) {
         let path = self.executable.read(cx).text().trim().to_owned();
@@ -1708,6 +1743,98 @@ impl Workspace {
             .detach();
         }
     }
+    fn connection_menu_view(
+        &self,
+        menu: &ConnectionMenu,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let t = cx.theme().clone();
+        let item = |id: gpui::ElementId, label: String| {
+            div()
+                .id(id)
+                .h(px(28.))
+                .px(px(12.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .cursor_pointer()
+                .hover(|d| d.bg(t.hover))
+                .child(label)
+        };
+        let rule = menu.executable.as_deref().and_then(|path| {
+            self.policies.iter().find(|p| {
+                p.executable_path
+                    .as_deref()
+                    .is_some_and(|b| b.eq_ignore_ascii_case(path))
+            })
+        });
+        let mut list = div()
+            .id("connection-menu")
+            .min_w(px(220.))
+            .p(px(4.))
+            .flex()
+            .flex_col()
+            .rounded(px(6.))
+            .border_1()
+            .border_color(t.border)
+            .bg(t.elevated)
+            .shadow_md()
+            .text_size(px(12.5))
+            .on_mouse_down_out(cx.listener(|ws, _, _, cx| {
+                ws.connection_menu = None;
+                cx.notify();
+            }))
+            .child(
+                div()
+                    .px(px(12.))
+                    .py(px(4.))
+                    .text_size(px(11.))
+                    .text_color(t.text_muted)
+                    .child(menu.name.clone()),
+            );
+        match (&menu.executable, rule) {
+            (None, _) => {
+                list = list.child(
+                    div()
+                        .max_w(px(260.))
+                        .px(px(12.))
+                        .py(px(6.))
+                        .text_color(t.text_muted)
+                        .child("Executável não identificado: processo do sistema ou protegido. Crie a regra em Regras pelo caminho do .exe."),
+                );
+            }
+            (Some(_), Some(rule)) => {
+                let name = rule.application_id.clone();
+                list = list.child(
+                    item(
+                        "connection-open-rule".into(),
+                        format!("Abrir a regra ({})", rule.route_mode.label()),
+                    )
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.connection_menu = None;
+                        ws.page = Page::Rules;
+                        ws.filter.update(cx, |f, cx| f.set_text(name.clone(), cx));
+                        cx.notify();
+                    })),
+                );
+            }
+            (Some(path), None) => {
+                for mode in RouteMode::ALL {
+                    let path = path.clone();
+                    list = list.child(
+                        item(
+                            gpui::SharedString::from(format!("connection-rule-{mode:?}")).into(),
+                            format!("Criar regra: {}", mode.label()),
+                        )
+                        .on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.create_rule_for(path.clone(), mode, cx)
+                        })),
+                    );
+                }
+            }
+        }
+        list
+    }
     fn connections(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();
         let rows = self.connection_rows(cx);
@@ -1752,9 +1879,21 @@ impl Workspace {
                     .zip(p.executable_path.as_deref())
                     .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b))
             });
+            let (name, executable) = (c.name.clone(), c.executable.clone());
             list = list.child(
                 div()
                     .id(("connection", i))
+                    .on_mouse_down(
+                        gpui::MouseButton::Right,
+                        cx.listener(move |ws, e: &gpui::MouseDownEvent, _, cx| {
+                            ws.connection_menu = Some(ConnectionMenu {
+                                position: e.position,
+                                name: name.clone(),
+                                executable: executable.clone(),
+                            });
+                            cx.notify();
+                        }),
+                    )
                     .flex()
                     .items_center()
                     .px(px(12.))
@@ -2195,42 +2334,7 @@ impl Render for Workspace {
                 8.
             } else {
                 10.
-            }))
-            .child(
-                div()
-                    .id("nav-collapse")
-                    .h(item_height)
-                    .px(px(10.))
-                    .flex()
-                    .items_center()
-                    .when(collapsed, |d| d.justify_center().px_0())
-                    .gap(px(10.))
-                    .rounded(px(4.))
-                    .cursor_pointer()
-                    .text_color(t.text_muted)
-                    .hover(|s| s.bg(t.hover))
-                    .tooltip(move |_, cx| {
-                        cx.new(|_| {
-                            Tip(if collapsed {
-                                "Expandir menu"
-                            } else {
-                                "Recolher menu"
-                            }
-                            .into())
-                        })
-                        .into()
-                    })
-                    .on_click(cx.listener(|ws, _, _, cx| {
-                        if let Err(e) =
-                            AppSettings::update(cx, |s| s.sidebar_collapsed = !s.sidebar_collapsed)
-                        {
-                            ws.error = Some(format!("Não foi possível salvar a aparência: {e:#}"));
-                        }
-                        cx.notify();
-                    }))
-                    .child(icon("menu", if compact { 16. } else { 18. }, t.text_muted))
-                    .when(!collapsed, |d| d.child("Recolher menu")),
-            );
+            }));
         for page in [
             Page::Overview,
             Page::Packets,
@@ -2268,6 +2372,11 @@ impl Render for Workspace {
                     })
                     .hover(|s| s.bg(t.hover))
                     .on_click(cx.listener(move |ws, _, _, cx| {
+                        // Page-level messages belong to the page that raised them.
+                        if ws.page != page {
+                            ws.error = None;
+                            ws.notice = None;
+                        }
                         ws.page = page;
                         ws.connection_page = 0;
                         cx.notify();
@@ -2451,12 +2560,48 @@ impl Render for Workspace {
                             .when(!collapsed, |d| {
                                 d.child(
                                     div()
-                                        .p(px(14.))
+                                        .px(px(14.))
                                         .text_size(px(11.))
                                         .text_color(t.text_muted)
                                         .child("Ctrl+Shift+T · Temas\nCtrl+S · Salvar regras"),
                                 )
-                            }),
+                            })
+                            // Small collapse toggle at the foot, as in Safynia.
+                            .child(
+                                div()
+                                    .p(px(8.))
+                                    .flex()
+                                    .when(collapsed, |d| d.justify_center())
+                                    .child(
+                                        icon_button(
+                                            "nav-collapse",
+                                            if collapsed {
+                                                "keyboard_double_arrow_right"
+                                            } else {
+                                                "keyboard_double_arrow_left"
+                                            },
+                                            if collapsed {
+                                                "Expandir menu"
+                                            } else {
+                                                "Recolher menu"
+                                            },
+                                            false,
+                                            cx,
+                                        )
+                                        .on_click(
+                                            cx.listener(|ws, _, _, cx| {
+                                                if let Err(e) = AppSettings::update(cx, |s| {
+                                                    s.sidebar_collapsed = !s.sidebar_collapsed
+                                                }) {
+                                                    ws.error = Some(format!(
+                                                        "Não foi possível salvar a aparência: {e:#}"
+                                                    ));
+                                                }
+                                                cx.notify();
+                                            }),
+                                        ),
+                                    ),
+                            ),
                     )
                     .child(
                         div()
@@ -2577,6 +2722,14 @@ impl Render for Workspace {
             );
         if self.default_confirmation.is_some() {
             root = root.child(gpui::deferred(self.default_overlay(cx)));
+        }
+        if let Some(menu) = &self.connection_menu {
+            root = root.child(gpui::deferred(
+                gpui::anchored()
+                    .position(menu.position)
+                    .snap_to_window()
+                    .child(self.connection_menu_view(menu, cx)),
+            ));
         }
         if let Some(picker) = &self.theme_picker {
             root = root.child(gpui::deferred(
