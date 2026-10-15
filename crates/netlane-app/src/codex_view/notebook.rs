@@ -16,11 +16,12 @@ impl CodexView {
             self.chat_scroll.scroll_to_bottom();
         }
     }
-    pub fn allow_close(&mut self, cx: &mut Context<Self>) -> bool {
+    /// Why leaving now would lose investigation work, if it would. No side effects.
+    pub fn close_blocker(&self, cx: &App) -> Option<&'static str> {
         if self.dialog.load(Ordering::Relaxed) {
-            self.status = "Aguarde a abertura ou gravação do caderno antes de sair.".into();
+            Some("aguarde a abertura ou gravação do caderno antes de sair.")
         } else if self.answering {
-            self.status = "Interrompa ou aguarde a resposta antes de sair da investigação.".into();
+            Some("interrompa ou aguarde a resposta antes de sair da investigação.")
         } else if self.notebook_revision != self.saved_revision
             || !self.note_input.read(cx).text().trim().is_empty()
             || self
@@ -28,12 +29,22 @@ impl CodexView {
                 .as_ref()
                 .is_some_and(|saved| saved != &self.session_stamp(cx))
         {
-            self.status="Antes de sair, registre a anotação em edição e salve a investigação. Para descartar, use Nova investigação e confirme.".into();
+            Some(
+                "há conversa ou anotação sem salvar. Salve o caderno (engrenagem do painel) ou descarte com + Nova investigação e confirme.",
+            )
         } else {
-            return true;
+            None
         }
-        cx.notify();
-        false
+    }
+    pub fn allow_close(&mut self, cx: &mut Context<Self>) -> bool {
+        match self.close_blocker(cx) {
+            None => true,
+            Some(reason) => {
+                self.status = format!("Antes de sair: {reason}");
+                cx.notify();
+                false
+            }
+        }
     }
     pub(super) fn finish_turn(&mut self, status: &str) {
         if !self.answering {

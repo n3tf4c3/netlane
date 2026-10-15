@@ -51,6 +51,13 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-s", SaveRules, Some("NetLane")),
     ]);
 }
+/// Why the last Sair was refused. The message is recomputed on render, so it
+/// disappears as soon as the reason is gone.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ExitBlock {
+    Capture,
+    Codex,
+}
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Page {
     Overview,
@@ -91,6 +98,8 @@ pub struct Workspace {
     profile: PathBuf,
     pub dirty: bool,
     error: Option<String>,
+    /// Why the last Sair was refused; replaced on every attempt.
+    exit_notice: Option<ExitBlock>,
     notice: Option<String>,
     demo: bool,
     filter: Entity<TextInput>,
@@ -573,6 +582,7 @@ impl Workspace {
             profile,
             dirty: false,
             error,
+            exit_notice: None,
             notice: None,
             demo: is_demo,
             filter,
@@ -1013,11 +1023,12 @@ impl Workspace {
     }
     pub fn request_close(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.restore_panel();
+        self.exit_notice = None;
         if self
             .capture_active
             .load(std::sync::atomic::Ordering::Relaxed)
         {
-            self.error = Some("Pare e feche a coleta de pacotes antes de sair.".into());
+            self.exit_notice = Some(ExitBlock::Capture);
             cx.notify();
             return;
         }
@@ -1035,6 +1046,7 @@ impl Workspace {
         }
         if !self.codex.update(cx, |panel, cx| panel.allow_close(cx)) {
             self.chat_open = true;
+            self.exit_notice = Some(ExitBlock::Codex);
             cx.notify();
             return;
         }
@@ -2280,6 +2292,21 @@ impl Render for Workspace {
                     }),
             );
         }
+        let exit_notice = match self.exit_notice {
+            Some(ExitBlock::Capture)
+                if self
+                    .capture_active
+                    .load(std::sync::atomic::Ordering::Relaxed) =>
+            {
+                Some("Para sair, pare a captura de pacotes.".to_owned())
+            }
+            Some(ExitBlock::Codex) => self
+                .codex
+                .read(cx)
+                .close_blocker(cx)
+                .map(|reason| format!("Para sair, no Codex: {reason}")),
+            _ => None,
+        };
         let content = match self.page {
             Page::Overview => self.overview(cx),
             Page::Packets => div().child(self.packets.clone()),
@@ -2441,6 +2468,16 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
+                            .when_some(exit_notice, |d, notice| {
+                                d.child(
+                                    div()
+                                        .p(px(12.))
+                                        .rounded(px(4.))
+                                        .bg(t.warning.opacity(0.12))
+                                        .text_color(t.warning)
+                                        .child(notice),
+                                )
+                            })
                             .when_some(self.error.clone(), |d, error| {
                                 d.child(
                                     div()
