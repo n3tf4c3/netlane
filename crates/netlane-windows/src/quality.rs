@@ -428,8 +428,10 @@ fn https(
         };
         write!(
             tls,
-            "HEAD {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: NetLane-Quality/0.4.0\r\nConnection: close\r\n\r\n",
-            target.request_path, authority
+            "HEAD {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: NetLane-Quality/{}\r\nConnection: close\r\n\r\n",
+            target.request_path,
+            authority,
+            env!("CARGO_PKG_VERSION")
         )?;
         tls.flush()?;
         headers(&mut tls)

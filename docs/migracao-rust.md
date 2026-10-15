@@ -88,6 +88,18 @@ e troca da conexão padrão exigem a versão instalada. Com `-CertificateThumbpr
 e `-SignToolPath`, o script assina o `netlane.exe` portátil (SimplySign) antes dos
 hashes e gera `<pasta>.zip` com `.sha256`.
 
+O **portátil oficial** (desde a 1.0.0, em 2026-10-15) usa o mesmo script com
+`-Release`. Esse modo exige assinatura e árvore Git limpa, recusa `-SkipChecks`
+e roda também os passos de `.github/workflows/ci.yml` que faltam no fluxo da
+prévia. Ele gera `artifacts/NetLane-<versão>-portatil-win-x64.zip` com o
+[LEIA-ME para quem vai usar](leia-me-portatil.md), sem atalho de demonstração,
+e registra versão e commit em `build-receipt.json`. Uma correção posterior sai
+como versão nova: suba `version` em `Cargo.toml` e gere outro pacote.
+
+```powershell
+.\scripts\build-rust-preview.ps1 -Release -CertificateThumbprint <thumbprint> -SignToolPath <signtool.exe>
+```
+
 Uma abertura normal usa `%LOCALAPPDATA%\NetLane-Rust` e começa em observação.
 `--profile C:\PastaAbsoluta` permite um perfil próprio. Não aponte uma prévia
 para dados instalados ou regras do checkout. Aparência usa `appearance.json`;
@@ -295,8 +307,10 @@ anexos, modelo e esforço. Uma pergunta sem captura anexada envia só o texto
 digitado e fica fora do caderno. **Acompanhar** (olho) é opcional e pede
 confirmação no primeiro uso. A cada 30 s com pacotes novos, envia os agregados e
 os metadados dos 8 pacotes mais recentes, sem payload e sem revisão por envio.
-O caderno guarda até 96 turnos. A ponte aceita correções da série validada
-0.162.x com aviso de versão não testada e informa a etapa que falhou.
+O caderno guarda até 96 turnos. As versões 0.162.0 e 0.162.1 estão validadas;
+a 0.162.1 foi conferida na VM de laboratório em 2026-10-15, com Acompanhar ao
+longo de vários resumos. Outras correções da série 0.162.x são aceitas com
+aviso de versão não testada, e a ponte informa a etapa que falhou.
 
 **Conexões.** O botão direito numa conexão cria uma regra para o aplicativo no
 modo escolhido, com as validações de **Adicionar**, ou abre a regra existente já

@@ -2297,7 +2297,7 @@ impl Workspace {
                     .child(self.button("density",if settings.compact{"Compacta"}else{"Confortável"},cx).on_click(cx.listener(|ws,_,_,cx|ws.change_settings(cx,|s|s.compact = !s.compact))))))
             .child(div().p(px(20.)).bg(t.panel).rounded(px(6.)).border_1().border_color(t.border).flex().flex_col().gap(px(8.))
                 .child(gpui::img(if t.appearance == crate::theme::Appearance::Light { "brand/logo-light.png" } else { "brand/logo-dark.png" }).w(px(360.)).h(px(112.)))
-                .child(div().font_weight(FontWeight::SEMIBOLD).child("NetLane · 0.4.0 Rust"))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(if PORTABLE { concat!("NetLane ", env!("CARGO_PKG_VERSION"), " · portátil") } else { concat!("NetLane ", env!("CARGO_PKG_VERSION")) }))
                 .child(div().text_color(t.text_muted).child(format!("Interface GPUI · aparência {:?}. Preferências salvas neste perfil.",t.appearance)))
                 .child(div().font_family(MONO_FONT).text_size(px(11.)).text_color(t.text_muted).child(self.profile.display().to_string())))
             .child(div().p(px(20.)).bg(t.panel).rounded(px(6.)).border_1().border_color(t.border).flex().flex_col().gap(px(12.))
