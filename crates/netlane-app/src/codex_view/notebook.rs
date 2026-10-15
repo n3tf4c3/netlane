@@ -16,25 +16,40 @@ impl CodexView {
             self.chat_scroll.scroll_to_bottom();
         }
     }
+    fn unsaved(&self, cx: &App) -> bool {
+        self.notebook_revision != self.saved_revision
+            || !self.note_input.read(cx).text().trim().is_empty()
+            || self
+                .bundle_saved
+                .as_ref()
+                .is_some_and(|saved| saved != &self.session_stamp(cx))
+    }
     /// Why leaving now would lose investigation work, if it would. No side effects.
     pub fn close_blocker(&self, cx: &App) -> Option<&'static str> {
         if self.dialog.load(Ordering::Relaxed) {
             Some("aguarde a abertura ou gravação do caderno antes de sair.")
         } else if self.answering {
             Some("interrompa ou aguarde a resposta antes de sair da investigação.")
-        } else if self.notebook_revision != self.saved_revision
-            || !self.note_input.read(cx).text().trim().is_empty()
-            || self
-                .bundle_saved
-                .as_ref()
-                .is_some_and(|saved| saved != &self.session_stamp(cx))
-        {
+        } else if self.unsaved(cx) {
             Some(
-                "há conversa ou anotação sem salvar. Salve o caderno (engrenagem do painel) ou descarte com + Nova investigação e confirme.",
+                "há conversa ou anotação sem salvar. Salve o caderno (engrenagem do painel) ou use Descartar e sair no aviso da página.",
             )
         } else {
             None
         }
+    }
+    /// True when the only thing holding Sair is unsaved work, which the user may discard.
+    pub fn can_discard_for_exit(&self, cx: &App) -> bool {
+        !self.dialog.load(Ordering::Relaxed) && !self.answering && self.unsaved(cx)
+    }
+    /// Drops the in-memory investigation so Sair can go on. Files already saved stay.
+    pub fn discard_for_exit(&mut self, cx: &mut Context<Self>) -> bool {
+        if !self.can_discard_for_exit(cx) {
+            return false;
+        }
+        self.confirm_new = true;
+        self.reset(cx);
+        true
     }
     pub fn allow_close(&mut self, cx: &mut Context<Self>) -> bool {
         match self.close_blocker(cx) {
@@ -647,6 +662,10 @@ impl CodexView {
         );
         let revision = self.notebook_revision;
         assert!(!self.allow_close(cx));
+        assert!(self.can_discard_for_exit(cx));
+        self.answering = true;
+        assert!(!self.can_discard_for_exit(cx));
+        self.answering = false;
         self.reset(cx);
         assert!(self.confirm_new && self.notebook_revision == revision);
         self.confirm_new = false;
@@ -654,6 +673,7 @@ impl CodexView {
         assert!(receipt.turns >= 2 && receipt.notes == 1);
         self.saved_revision = revision;
         assert!(self.allow_close(cx));
+        assert!(!self.can_discard_for_exit(cx));
         self.discuss_note(1, cx);
         assert!(
             self.question

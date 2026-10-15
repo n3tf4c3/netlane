@@ -187,7 +187,8 @@ Há conexão, login ChatGPT, seleção de modelo, respostas progressivas, cancel
 e saída da conta. Somente **Enviar contexto revisado** inicia inferência.
 Em `--demo` tudo isso é fictício: nenhum processo de agente ou serviço externo.
 
-A ponte aceita o executável nativo Codex **0.162.0** já instalado; não instala
+A ponte aceita o executável nativo Codex **0.162.0** já instalado e correções da
+mesma série (0.162.x) com aviso de versão não testada; não instala
 ferramentas nem executa shims npm. Usa processo oculto e perfil próprio em
 `<perfil Rust>/codex-proposals/home`, diretório `room` separado, credenciais no
 keyring, histórico desabilitado e threads efêmeras. Configuração e ausência de

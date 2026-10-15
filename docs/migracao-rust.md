@@ -37,15 +37,17 @@ A interface segue o termIAX: GPUI na mesma revisão, Segoe UI, JetBrains Mono,
 Material Symbols e cores por tokens de tema. Há 13 temas (NetLane Dark, One,
 One Dark Pro, Ayu e Gruvbox), busca, prévia ao navegar, confirmação com Enter
 e cancelamento com Esc. Tema, texto de 10–20 px e densidade são persistidos.
-As sete telas são Visão geral, Pacotes, Codex, Conexões, Regras, Diagnóstico e Configurações.
+O menu lateral tem seis páginas: Visão geral, Pacotes, Conexões, Regras,
+Diagnóstico e Configurações. O Codex é um painel fixo à direita, disponível em
+todas as páginas (ver [Interface de 2026-10-15](#interface-de-2026-10-15)).
 Desde 10/10/2026, a identidade fornecida em SVG é incorporada como imagens e
-ícone Windows próprios da versão Rust. A tela Pacotes inicia a
+ícone Windows próprios da versão Rust. A página Pacotes inicia a
 [ampliação para diagnóstico com IA](diagnostico-rede-ia.md#primeira-implementação).
-A tela Codex prepara, copia e envia contexto revisado por uma ponte isolada do
+O painel Codex prepara, copia e envia contexto revisado por uma ponte isolada do
 App Server. Login, modelos e resposta progressiva têm implementação e provas
 sintéticas; conta/inferência reais ainda exigem QA. Exportação derivada de amostras
-e relatórios Markdown/HTML locais têm implementação inicial. Investigação
-reabrível, PDF e QA real da captura Npcap com rotação permanecem pendentes.
+e relatórios Markdown/HTML locais têm implementação inicial. PDF e QA real da
+captura ao vivo com Npcap permanecem pendentes.
 
 O painel coleta a cada dois segundos, sem elevação e sem enviar sondagens de
 rede. As conexões observadas são TCP estabelecidas e portas UDP abertas, em
@@ -111,7 +113,8 @@ Uma interface escolhida explicitamente não é substituída silenciosamente.
 ## Bandeja e inicialização (2026-10-10)
 
 O painel Rust usa o ícone da identidade NetLane com `Shell_NotifyIconW` e menu nativo do
-Windows. **X** e **Minimizar** ocultam a mesma janela, sem parar a sessão nem
+Windows. **X** e **Minimizar** (na barra de título própria desde 15/10/2026)
+ocultam a mesma janela, sem parar a sessão nem
 salvar/descartar edições. Clique no ícone ou **Abrir NetLane** restaura o estado
 normal/maximizado. O menu mostra sessão, contagem e edições; isso não comprova
 tráfego. **Diagnóstico** e **Parar com segurança** usam os controles do painel.
@@ -270,6 +273,41 @@ escritor CIM em andamento não é morto, para evitar corrida com a reversão. Um
 provedor travado pode manter a operação ocupada; duração, cancelamento, UAC,
 restauração real e persistência após reboot exigem QA autorizado separado.
 Nenhuma prioridade aplicada é prova de tráfego ou acesso à Internet.
+
+## Interface de 2026-10-15
+
+**Janela.** A barra de título é própria: arrastar, minimizar, maximizar e fechar
+(fechar leva à bandeja). Codex, tema e Sair ficam como ícones na barra de status.
+O menu lateral recolhe pelo ícone « / » no pé e o estado fica em `appearance.json`.
+O modo compacto passou a ser o padrão, com barra lateral de 200 px, indicadores
+na Visão geral e cartões de regra em duas linhas. O modo confortável mantém a
+disposição anterior.
+
+**Pacotes.** A [captura ao vivo](diagnostico-rede-ia.md#captura-ao-vivo) fica em
+memória (modo Diagnóstico). A captura longa grava segmentos PCAP numa pasta nova
+em `captures` do perfil Rust, por 15 min a 72 h, e a tabela mostra os 20.000
+pacotes mais recentes. A barra fica numa linha, com as ações de arquivo e
+análise como ícones com dica. A coleta segmentada anterior ficou só para QA.
+O menu da bandeja mostra "Capturando pacotes" enquanto há captura.
+
+**Codex.** O painel abre pelo ícone na barra de status: conversa em balões,
+anexos, modelo e esforço. Uma pergunta sem captura anexada envia só o texto
+digitado e fica fora do caderno. **Acompanhar** (olho) é opcional e pede
+confirmação no primeiro uso. A cada 30 s com pacotes novos, envia os agregados e
+os metadados dos 8 pacotes mais recentes, sem payload e sem revisão por envio.
+O caderno guarda até 96 turnos. A ponte aceita correções da série validada
+0.162.x com aviso de versão não testada e informa a etapa que falhou.
+
+**Conexões.** O botão direito numa conexão cria uma regra para o aplicativo no
+modo escolhido, com as validações de **Adicionar**, ou abre a regra existente já
+filtrada. Processos sem executável consultável explicam por que não dá.
+
+**Sair recusado.** O aviso na página mostra o motivo atual e some quando ele
+deixa de valer: captura de pacotes ativa ou investigação do Codex em uso. Se o
+único impedimento for conversa ou anotação sem salvar, o aviso oferece
+**Descartar e sair**. Esse botão limpa o caderno em memória, preserva os arquivos
+já salvos e retoma a saída com as demais confirmações. Com resposta em andamento
+ou gravação do caderno aberta, o botão não aparece.
 
 ## Validação local
 
