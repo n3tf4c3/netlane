@@ -120,6 +120,14 @@ static ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/icons/visibility.svg"),
     ),
     (
+        "icons/keyboard_double_arrow_left.svg",
+        include_bytes!("../../../assets/icons/keyboard_double_arrow_left.svg"),
+    ),
+    (
+        "icons/keyboard_double_arrow_right.svg",
+        include_bytes!("../../../assets/icons/keyboard_double_arrow_right.svg"),
+    ),
+    (
         "icons/arrow_downward.svg",
         include_bytes!("../../../assets/icons/arrow_downward.svg"),
     ),
