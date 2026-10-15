@@ -10,6 +10,8 @@ pub struct Settings {
     pub font_size: u8,
     pub compact: bool,
     pub sidebar_width: u16,
+    /// Icon-only navigation rail.
+    pub sidebar_collapsed: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -18,6 +20,7 @@ impl Default for Settings {
             font_size: 13,
             compact: true,
             sidebar_width: 200,
+            sidebar_collapsed: false,
         }
     }
 }
@@ -68,8 +71,12 @@ mod tests {
             r#"{"font_size":255,"sidebar_width":1,"theme":"One Light"}"#,
         )
         .unwrap();
-        let settings = AppSettings::load(path).unwrap();
+        let settings = AppSettings::load(path.clone()).unwrap();
         assert_eq!(settings.value.font_size, 20);
         assert_eq!(settings.value.sidebar_width, 180);
+        // Files written before the collapsible menu keep the full menu.
+        assert!(!settings.value.sidebar_collapsed);
+        std::fs::write(&path, r#"{"sidebar_collapsed":true}"#).unwrap();
+        assert!(AppSettings::load(path).unwrap().value.sidebar_collapsed);
     }
 }

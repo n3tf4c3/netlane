@@ -17,7 +17,7 @@ mod import_tests;
 mod persistence;
 mod resume;
 
-pub const MAX_TURNS: usize = 24;
+pub const MAX_TURNS: usize = 96;
 pub const MAX_NOTES: usize = 32;
 pub const MAX_NOTE_BYTES: usize = 4096;
 pub const MAX_NOTE_CHANGES: usize = 32;
@@ -176,7 +176,7 @@ impl Notebook {
     pub fn can_start(&self) -> Result<()> {
         ensure!(
             self.turns.len() < MAX_TURNS,
-            "O caderno chegou a 24 turnos. Salve-o antes de iniciar outra investigação."
+            "O caderno chegou a {MAX_TURNS} turnos. Salve-o antes de iniciar outra investigação."
         );
         Ok(())
     }

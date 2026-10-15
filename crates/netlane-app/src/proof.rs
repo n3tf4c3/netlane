@@ -71,7 +71,7 @@ pub fn packets(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App
             cx.background_executor().timer(Duration::from_millis(550)).await;
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("18-investigation-notes.png")).unwrap();}).unwrap();
             cx.update(|w,_|w.resize(size(px(1000.),px(640.)))).unwrap();
-            this.update(cx,|ws,cx|{ws.page=Page::Codex;Themes::set_active(cx,"One Light");cx.notify();}).unwrap();
+            this.update(cx,|ws,cx|{ws.chat_open=true;Themes::set_active(cx,"One Light");cx.notify();}).unwrap();
             cx.background_executor().timer(Duration::from_millis(550)).await;
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("19-notebook-minimum.png")).unwrap();}).unwrap();
             this.update(cx,|ws,cx|{Themes::set_active(cx,"NetLane Dark");ws.proof_codex_recovery(&directory.join("recovered-notebook"),cx);}).unwrap();
@@ -81,12 +81,12 @@ pub fn packets(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App
             this.update(cx,|ws,cx|ws.proof_open_resume(&directory.join("recovered-notebook"),cx)).unwrap();
             cx.update(|w,_|w.resize(size(px(1320.),px(1000.)))).unwrap();
             cx.background_executor().timer(Duration::from_millis(550)).await;
-            this.update(cx,|ws,_|assert!(matches!(ws.page,Page::Codex))).unwrap();
+            this.update(cx,|ws,_|assert!(ws.chat_open)).unwrap();
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("21-reopened-investigation.png")).unwrap();}).unwrap();
             this.update(cx,|ws,cx|{ws.proof_resume_send(&directory.join("reopened-notebook"),cx);Themes::set_active(cx,"One Light");}).unwrap();
             cx.update(|w,_|w.resize(size(px(1000.),px(920.)))).unwrap();
             cx.background_executor().timer(Duration::from_millis(550)).await;
-            this.update(cx,|ws,_|assert!(matches!(ws.page,Page::Codex))).unwrap();
+            this.update(cx,|ws,_|assert!(ws.chat_open)).unwrap();
             cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("22-note-state-history.png")).unwrap();}).unwrap();
             std::fs::write(directory.join("resume-verified.txt"),"Three-file notebook reopened after receipt and semantic validation. Unsaved notebook and edited note block replacement; invalid import preserves current history. Opening and preparing bounded local resume excerpts send nothing. Review is required before explicit synthetic follow-up in a new conversation. Original turn contexts remain immutable; user state history is bounded and saved with UTC registration. No native picker, provider, account, real capture or network started.\n").unwrap();
             std::fs::write(directory.join("recovery-verified.txt"),"Synthetic logout and disconnect start distinct conversation ids, retain immutable turns and notes, and reject stale deltas. A full 16-packet selection rejects a seventeenth attachment, allows explicit replacement and removal, and preserves history. Pending model confirmation blocks sending and retains the question. No provider or network started.\n").unwrap();
