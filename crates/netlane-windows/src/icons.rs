@@ -408,10 +408,20 @@ mod tests {
                 GetGuiResources(process, GR_USEROBJECTS),
             )
         };
-        let before = counts();
-        for _ in 0..32 {
-            load();
+        // Counts are process-wide: a parallel test loading a DLL (Npcap) can add objects
+        // mid-loop. A real leak grows on every attempt; foreign noise does not repeat.
+        let mut deltas = Vec::new();
+        for _ in 0..3 {
+            let before = counts();
+            for _ in 0..32 {
+                load();
+            }
+            let after = counts();
+            if after == before {
+                return;
+            }
+            deltas.push((before, after));
         }
-        assert_eq!(counts(), before);
+        panic!("GDI/USER objects grew on every attempt: {deltas:?}");
     }
 }
