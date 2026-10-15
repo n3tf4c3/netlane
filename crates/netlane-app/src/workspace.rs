@@ -2407,13 +2407,17 @@ impl Render for Workspace {
                     .capture_active
                     .load(std::sync::atomic::Ordering::Relaxed) =>
             {
-                Some("Para sair, pare a captura de pacotes.".to_owned())
+                Some(("Para sair, pare a captura de pacotes.".to_owned(), false))
             }
-            Some(ExitBlock::Codex) => self
-                .codex
-                .read(cx)
-                .close_blocker(cx)
-                .map(|reason| format!("Para sair, no Codex: {reason}")),
+            Some(ExitBlock::Codex) => {
+                let codex = self.codex.read(cx);
+                codex.close_blocker(cx).map(|reason| {
+                    (
+                        format!("Para sair, no Codex: {reason}"),
+                        codex.can_discard_for_exit(cx),
+                    )
+                })
+            }
             _ => None,
         };
         let content = match self.page {
@@ -2613,14 +2617,34 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             .gap(px(12.))
-                            .when_some(exit_notice, |d, notice| {
+                            .when_some(exit_notice, |d, (notice, discard)| {
                                 d.child(
                                     div()
                                         .p(px(12.))
                                         .rounded(px(4.))
                                         .bg(t.warning.opacity(0.12))
                                         .text_color(t.warning)
-                                        .child(notice),
+                                        .flex()
+                                        .items_center()
+                                        .gap(px(12.))
+                                        .child(div().flex_1().min_w_0().child(notice))
+                                        .when(discard, |d| {
+                                            d.child(
+                                                self.button(
+                                                    "exit-discard-codex",
+                                                    "Descartar e sair",
+                                                    cx,
+                                                )
+                                                .flex_none()
+                                                .on_click(cx.listener(|ws, _, w, cx| {
+                                                    if ws.codex.update(cx, |panel, cx| {
+                                                        panel.discard_for_exit(cx)
+                                                    }) {
+                                                        ws.request_close(w, cx);
+                                                    }
+                                                })),
+                                            )
+                                        }),
                                 )
                             })
                             .when_some(self.error.clone(), |d, error| {
