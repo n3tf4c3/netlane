@@ -20,7 +20,8 @@ use crate::{
 };
 
 pub const CODEX_VERSION: &str = "0.162.0";
-const VALIDATED_VERSIONS: [&str; 1] = [CODEX_VERSION];
+/// Releases exercised end to end on the lab VM; the last one is the install hint.
+const VALIDATED_VERSIONS: [&str; 2] = [CODEX_VERSION, "0.162.1"];
 
 fn validated_version(version: &str) -> bool {
     VALIDATED_VERSIONS.contains(&version)
@@ -186,7 +187,8 @@ impl Rpc {
         if !version.status.success() || !accepted_version(found) {
             let shown: String = reported.chars().take(64).collect();
             return Err(format!(
-                "versão encontrada {shown:?}; o NetLane aceita a série validada {CODEX_VERSION}. Instale com npm i -g @openai/codex@{CODEX_VERSION}."
+                "versão encontrada {shown:?}; o NetLane aceita a série validada {CODEX_VERSION}. Instale com npm i -g @openai/codex@{}.",
+                VALIDATED_VERSIONS[VALIDATED_VERSIONS.len() - 1]
             ));
         }
         let found = found.to_owned();
@@ -933,9 +935,14 @@ mod tests {
         }
         let untested = CodexInfo {
             executable: PathBuf::new(),
-            version: format!("{series}.1"),
+            version: format!("{series}.2"),
         };
         assert!(untested.label().contains("não testada"));
+        let validated = CodexInfo {
+            executable: PathBuf::new(),
+            version: "0.162.1".into(),
+        };
+        assert!(!validated.label().contains("não testada"));
     }
 
     async fn write_json(writer: &mut (impl AsyncWrite + Unpin), value: Value) {
@@ -981,6 +988,8 @@ mod tests {
                 .contains("capturas")
         );
         assert!(validated_version("0.162.0"));
+        assert!(validated_version("0.162.1"));
+        assert!(!validated_version("0.162.2"));
         assert!(!validated_version("0.163.0"));
         assert!(!valid_login_url(
             "https://auth.openai.com.evil.invalid/oauth/authorize?"

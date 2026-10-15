@@ -15,7 +15,7 @@ Aplicativo Windows para observar conexões e controlar seleção de saída de re
 | --- | --- |
 | Migração Rust/GPUI e gates | `crates/AGENTS.md`, [migração](docs/migracao-rust.md), `Cargo.toml` |
 | Domínio / Win32 / agente / GUI Rust | `crates/netlane-core/`, `crates/netlane-windows/`, `crates/netlane-agent/`, `crates/netlane-app/` |
-| Prévia e QA Rust | `scripts/build-rust-preview.ps1`, `scripts/verify-rust-compatibility.ps1`, `scripts/verify-rust-ui.ps1` |
+| Prévia, portátil oficial e QA Rust | `scripts/build-rust-preview.ps1` (`-Release` para o oficial; [LEIA-ME](docs/leia-me-portatil.md)), `scripts/verify-rust-compatibility.ps1`, `scripts/verify-rust-ui.ps1` |
 | Regras e domínio | `src/NetLane.Core/` |
 | Rede, interfaces e WFP | `src/NetLane.Network/` |
 | Serviço e IPC | `src/NetLane.Service/` |
