@@ -9,7 +9,7 @@ use crate::{
     text_input::{TextInput, TextInputEvent},
     theme::{ActiveTheme, MONO_FONT, Themes, UI_FONT},
     theme_picker::{ThemePicker, ThemePickerEvent},
-    ui::icon,
+    ui::{Tip, icon, icon_button},
 };
 use gpui::{
     App, Context, Entity, FocusHandle, Focusable, FontWeight, KeyBinding, Subscription, Window,
@@ -55,7 +55,6 @@ pub fn bind_keys(cx: &mut App) {
 pub enum Page {
     Overview,
     Packets,
-    Codex,
     Connections,
     Rules,
     Diagnostics,
@@ -66,7 +65,6 @@ impl Page {
         match self {
             Self::Overview => "Visão geral",
             Self::Packets => "Pacotes",
-            Self::Codex => "Codex",
             Self::Connections => "Conexões",
             Self::Rules => "Regras",
             Self::Diagnostics => "Diagnóstico",
@@ -77,7 +75,6 @@ impl Page {
         match self {
             Self::Overview => "lan",
             Self::Packets => "search",
-            Self::Codex => "info",
             Self::Connections => "desktop_windows",
             Self::Rules => "tune",
             Self::Diagnostics => "info",
@@ -133,7 +130,7 @@ pub struct Workspace {
     file_dialog_open: bool,
     packets: Entity<PacketView>,
     codex: Entity<CodexView>,
-    chat_open: bool,
+    pub chat_open: bool,
     packet_dialog: std::sync::Arc<std::sync::atomic::AtomicBool>,
     capture_active: std::sync::Arc<std::sync::atomic::AtomicBool>,
     hide_pending: bool,
@@ -304,7 +301,7 @@ impl Workspace {
     pub fn proof_codex(&mut self, cx: &mut Context<Self>) {
         self.packets.update(cx, |panel, cx| panel.prepare_codex(cx));
         self.codex.update(cx, |panel, cx| panel.proof_review(cx));
-        self.page = Page::Codex;
+        self.chat_open = true;
         cx.notify();
     }
     #[cfg(feature = "gui-test")]
@@ -342,7 +339,7 @@ impl Workspace {
         self.codex.update(cx, |c, cx| {
             c.proof_bundle_save(&directory.join("complete-package"), cx)
         });
-        self.page = Page::Codex;
+        self.chat_open = true;
         cx.notify();
     }
     #[cfg(feature = "gui-test")]
@@ -366,7 +363,7 @@ impl Workspace {
     pub fn proof_analyze_dump(&mut self, cx: &mut Context<Self>) {
         self.packets.update(cx, |panel, cx| panel.prepare_codex(cx));
         self.codex.update(cx, |panel, cx| panel.proof_analysis(cx));
-        self.page = Page::Codex;
+        self.chat_open = true;
         cx.notify();
     }
     #[cfg(feature = "gui-test")]
@@ -402,14 +399,14 @@ impl Workspace {
     pub fn proof_codex_recovery(&mut self, directory: &std::path::Path, cx: &mut Context<Self>) {
         self.codex
             .update(cx, |panel, cx| panel.proof_recovery(directory, cx));
-        self.page = Page::Codex;
+        self.chat_open = true;
         cx.notify();
     }
     #[cfg(feature = "gui-test")]
     pub fn proof_open_resume(&mut self, source: &std::path::Path, cx: &mut Context<Self>) {
         self.codex
             .update(cx, |panel, cx| panel.proof_open_resume(source, cx));
-        self.page = Page::Codex;
+        self.chat_open = true;
         cx.notify();
     }
     #[cfg(feature = "gui-test")]
@@ -548,19 +545,13 @@ impl Workspace {
                 cx,
             )
         });
-        let codex_subscription =
-            cx.subscribe_in(&codex, window, |ws, _, _: &ContextPrepared, window, cx| {
-                ws.chat_open = true;
-                ws.page = if window.viewport_size().width >= px(1280.) {
-                    Page::Packets
-                } else {
-                    Page::Codex
-                };
-                cx.notify();
-            });
+        // The chat is a side panel: opening it never leaves the current page.
+        let codex_subscription = cx.subscribe(&codex, |ws, _, _: &ContextPrepared, cx| {
+            ws.chat_open = true;
+            cx.notify();
+        });
         let notebook_subscription = cx.subscribe(&codex, |ws, _, _: &NotebookOpened, cx| {
             ws.chat_open = true;
-            ws.page = Page::Codex;
             cx.notify();
         });
         let packets = cx.new(|cx| {
@@ -1043,7 +1034,7 @@ impl Workspace {
             return;
         }
         if !self.codex.update(cx, |panel, cx| panel.allow_close(cx)) {
-            self.page = Page::Codex;
+            self.chat_open = true;
             cx.notify();
             return;
         }
@@ -1147,6 +1138,11 @@ impl Workspace {
                 "Operação em andamento"
             } else if state.running {
                 "Sessão ativa · consulte o diagnóstico"
+            } else if self
+                .capture_active
+                .load(std::sync::atomic::Ordering::Relaxed)
+            {
+                "Capturando pacotes · abra o painel para parar"
             } else if !state.cleanup_confirmed {
                 "Limpeza não confirmada"
             } else if self.demo {
@@ -2175,15 +2171,57 @@ impl Render for Workspace {
         let t = cx.theme().clone();
         let settings = AppSettings::get(cx).clone();
         let compact = settings.compact;
+        let collapsed = settings.sidebar_collapsed;
+        let item_height = px(if compact { 30. } else { 36. });
         let mut nav = div()
             .flex()
             .flex_col()
             .gap(px(if compact { 2. } else { 4. }))
-            .p(px(if compact { 8. } else { 10. }));
+            .p(px(if collapsed {
+                6.
+            } else if compact {
+                8.
+            } else {
+                10.
+            }))
+            .child(
+                div()
+                    .id("nav-collapse")
+                    .h(item_height)
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .when(collapsed, |d| d.justify_center().px_0())
+                    .gap(px(10.))
+                    .rounded(px(4.))
+                    .cursor_pointer()
+                    .text_color(t.text_muted)
+                    .hover(|s| s.bg(t.hover))
+                    .tooltip(move |_, cx| {
+                        cx.new(|_| {
+                            Tip(if collapsed {
+                                "Expandir menu"
+                            } else {
+                                "Recolher menu"
+                            }
+                            .into())
+                        })
+                        .into()
+                    })
+                    .on_click(cx.listener(|ws, _, _, cx| {
+                        if let Err(e) =
+                            AppSettings::update(cx, |s| s.sidebar_collapsed = !s.sidebar_collapsed)
+                        {
+                            ws.error = Some(format!("Não foi possível salvar a aparência: {e:#}"));
+                        }
+                        cx.notify();
+                    }))
+                    .child(icon("menu", if compact { 16. } else { 18. }, t.text_muted))
+                    .when(!collapsed, |d| d.child("Recolher menu")),
+            );
         for page in [
             Page::Overview,
             Page::Packets,
-            Page::Codex,
             Page::Connections,
             Page::Rules,
             Page::Diagnostics,
@@ -2194,13 +2232,22 @@ impl Render for Workspace {
                 Page::Rules => Some(self.policies.len()),
                 _ => None,
             };
+            let tip = match count {
+                Some(count) => format!("{} · {count}", page.title()),
+                None => page.title().to_owned(),
+            };
             nav = nav.child(
                 div()
                     .id(("nav", page as usize))
-                    .h(px(if compact { 30. } else { 36. }))
+                    .h(item_height)
                     .px(px(10.))
                     .flex()
                     .items_center()
+                    .when(collapsed, |d| {
+                        d.justify_center()
+                            .px_0()
+                            .tooltip(move |_, cx| cx.new(|_| Tip(tip.clone().into())).into())
+                    })
                     .gap(px(10.))
                     .rounded(px(4.))
                     .cursor_pointer()
@@ -2222,8 +2269,8 @@ impl Render for Workspace {
                             t.text_muted
                         },
                     ))
-                    .child(div().flex_1().child(page.title()))
-                    .when_some(count, |d, count| {
+                    .when(!collapsed, |d| d.child(div().flex_1().child(page.title())))
+                    .when_some(count.filter(|_| !collapsed), |d, count| {
                         d.child(
                             div()
                                 .text_size(px(11.))
@@ -2235,82 +2282,7 @@ impl Render for Workspace {
         }
         let content = match self.page {
             Page::Overview => self.overview(cx),
-            Page::Packets => {
-                let split = self.chat_open && window.viewport_size().width >= px(1280.);
-                let height = (f32::from(window.viewport_size().height) - 150.).max(360.);
-                div()
-                    .flex()
-                    .flex_col()
-                    .gap(px(8.))
-                    .child(
-                        div()
-                            .flex()
-                            .gap(px(8.))
-                            .child(
-                                self.button(
-                                    "packet-chat-toggle",
-                                    if self.chat_open {
-                                        "Ocultar chat"
-                                    } else {
-                                        "Conversar com Codex"
-                                    },
-                                    cx,
-                                )
-                                .on_click(cx.listener(
-                                    |ws, _, _, cx| {
-                                        ws.chat_open = !ws.chat_open;
-                                        cx.notify();
-                                    },
-                                )),
-                            )
-                            .when(self.chat_open, |d| {
-                                d.child(
-                                    self.button(
-                                        "packet-chat-focus",
-                                        "Abrir chat em tela inteira",
-                                        cx,
-                                    )
-                                    .on_click(cx.listener(
-                                        |ws, _, _, cx| {
-                                            ws.page = Page::Codex;
-                                            cx.notify();
-                                        },
-                                    )),
-                                )
-                            }),
-                    )
-                    .child(if split {
-                        div()
-                            .flex()
-                            .gap(px(16.))
-                            .h(px(height))
-                            .min_w_0()
-                            .child(
-                                div()
-                                    .id("packet-analysis-scroll")
-                                    .flex_1()
-                                    .min_w_0()
-                                    .h_full()
-                                    .overflow_y_scroll()
-                                    .child(self.packets.clone()),
-                            )
-                            .child(
-                                div()
-                                    .id("packet-chat-scroll")
-                                    .w(px(440.))
-                                    .flex_none()
-                                    .h_full()
-                                    .overflow_y_scroll()
-                                    .pl(px(12.))
-                                    .border_l_1()
-                                    .border_color(t.border)
-                                    .child(self.codex.clone()),
-                            )
-                    } else {
-                        div().child(self.packets.clone())
-                    })
-            }
-            Page::Codex => div().child(self.codex.clone()),
+            Page::Packets => div().child(self.packets.clone()),
             Page::Connections => self.connections(cx),
             Page::Rules => self.rules(cx),
             Page::Diagnostics => self.diagnostics(cx),
@@ -2346,33 +2318,65 @@ impl Render for Workspace {
             .text_color(t.text)
             .on_action(cx.listener(|ws, _: &SelectTheme, w, cx| ws.open_theme_picker(w, cx)))
             .on_action(cx.listener(|ws, _: &SaveRules, _, cx| ws.save(cx)))
+            // Custom title bar, as in termIAX: drag area plus native window controls.
+            // Close hides to the tray (on_window_should_close); Sair is in the status bar.
             .child(
                 div()
-                    .h(px(36.))
+                    .h(px(32.))
                     .flex_none()
                     .flex()
                     .items_center()
-                    .px(px(14.))
-                    .gap(px(10.))
                     .bg(t.chrome)
                     .border_b_1()
                     .border_color(t.divider)
-                    .child(gpui::img("brand/icon-app.png").size(px(24.)))
-                    .child(div().font_weight(FontWeight::SEMIBOLD).child("NetLane"))
                     .child(
                         div()
+                            .id("title-drag")
                             .flex_1()
-                            .text_color(t.text_muted)
-                            .text_size(px(11.))
-                            .child("Diagnóstico de rede"),
+                            .min_w_0()
+                            .h_full()
+                            .flex()
+                            .items_center()
+                            .gap(px(8.))
+                            .pl(px(12.))
+                            .window_control_area(gpui::WindowControlArea::Drag)
+                            .child(gpui::img("brand/icon-app.png").size(px(20.)))
+                            .child(div().font_weight(FontWeight::SEMIBOLD).child("NetLane"))
+                            .child(
+                                div()
+                                    .text_color(t.text_muted)
+                                    .text_size(px(11.))
+                                    .child("Diagnóstico de rede"),
+                            ),
                     )
-                    .child(
-                        self.button("title-theme", &t.name, cx)
-                            .on_click(cx.listener(|ws, _, w, cx| ws.open_theme_picker(w, cx))),
-                    )
-                    .child(
-                        self.button("exit", "Sair", cx)
-                            .on_click(cx.listener(|ws, _, w, cx| ws.request_close(w, cx))),
+                    .children(
+                        [
+                            ("win-min", "remove", gpui::WindowControlArea::Min, false),
+                            (
+                                "win-max",
+                                if window.is_maximized() {
+                                    "filter_none"
+                                } else {
+                                    "crop_square"
+                                },
+                                gpui::WindowControlArea::Max,
+                                false,
+                            ),
+                            ("win-close", "close", gpui::WindowControlArea::Close, true),
+                        ]
+                        .map(|(id, glyph, area, close)| {
+                            let hover = if close { t.error } else { t.hover };
+                            div()
+                                .id(id)
+                                .w(px(44.))
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .hover(move |s| s.bg(hover))
+                                .window_control_area(area)
+                                .child(icon(glyph, 16., t.text_muted))
+                        }),
                     ),
             )
             .child(
@@ -2382,7 +2386,11 @@ impl Render for Workspace {
                     .flex()
                     .child(
                         div()
-                            .w(px(settings.sidebar_width as f32))
+                            .w(px(if collapsed {
+                                52.
+                            } else {
+                                settings.sidebar_width as f32
+                            }))
                             .flex_none()
                             .bg(t.panel)
                             .border_r_1()
@@ -2390,7 +2398,7 @@ impl Render for Workspace {
                             .flex()
                             .flex_col()
                             // The title bar already shows the brand; compact mode drops the repeat.
-                            .when(!compact, |d| {
+                            .when(!compact && !collapsed, |d| {
                                 d.child(
                                     div()
                                         .p(px(20.))
@@ -2413,13 +2421,15 @@ impl Render for Workspace {
                             })
                             .child(nav)
                             .child(div().flex_1())
-                            .child(
-                                div()
-                                    .p(px(14.))
-                                    .text_size(px(11.))
-                                    .text_color(t.text_muted)
-                                    .child("Ctrl+Shift+T · Temas\nCtrl+S · Salvar regras"),
-                            ),
+                            .when(!collapsed, |d| {
+                                d.child(
+                                    div()
+                                        .p(px(14.))
+                                        .text_size(px(11.))
+                                        .text_color(t.text_muted)
+                                        .child("Ctrl+Shift+T · Temas\nCtrl+S · Salvar regras"),
+                                )
+                            }),
                     )
                     .child(
                         div()
@@ -2448,11 +2458,23 @@ impl Render for Workspace {
                                 d.child(div().p(px(12.)).text_color(t.ok).child(notice))
                             })
                             .child(content),
-                    ),
+                    )
+                    // Codex chat docked on the right, available on every page.
+                    .when(self.chat_open, |d| {
+                        d.child(
+                            div()
+                                .w(px(400.))
+                                .flex_none()
+                                .h_full()
+                                .border_l_1()
+                                .border_color(t.divider)
+                                .child(self.codex.clone()),
+                        )
+                    }),
             )
             .child(
                 div()
-                    .h(px(28.))
+                    .h(px(32.))
                     .flex_none()
                     .flex()
                     .items_center()
@@ -2469,7 +2491,52 @@ impl Render for Workspace {
                     } else {
                         "Regras salvas"
                     })
-                    .child("Rust / GPUI"),
+                    // App actions as icons, as in the termIAX status bar.
+                    .child(
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap(px(2.))
+                            .child(
+                                icon_button(
+                                    "title-codex",
+                                    "auto_awesome",
+                                    if self.chat_open {
+                                        "Ocultar Codex"
+                                    } else {
+                                        "Conversar com Codex"
+                                    },
+                                    self.chat_open,
+                                    cx,
+                                )
+                                .on_click(cx.listener(
+                                    |ws, _, _, cx| {
+                                        ws.chat_open = !ws.chat_open;
+                                        cx.notify();
+                                    },
+                                )),
+                            )
+                            .child(
+                                icon_button(
+                                    "title-theme",
+                                    "palette",
+                                    format!("Tema: {} (Ctrl+Shift+T)", t.name),
+                                    false,
+                                    cx,
+                                )
+                                .on_click(cx.listener(|ws, _, w, cx| ws.open_theme_picker(w, cx))),
+                            )
+                            .child(
+                                icon_button(
+                                    "exit",
+                                    "power_settings_new",
+                                    "Sair do NetLane",
+                                    false,
+                                    cx,
+                                )
+                                .on_click(cx.listener(|ws, _, w, cx| ws.request_close(w, cx))),
+                            ),
+                    ),
             );
         if self.default_confirmation.is_some() {
             root = root.child(gpui::deferred(self.default_overlay(cx)));

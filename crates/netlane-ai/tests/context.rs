@@ -185,3 +185,16 @@ fn aggregate_context_rejects_inconsistent_totals_and_unbounded_or_foreign_anchor
     c.analysis.as_mut().unwrap().baseline_sha256 = Some("invalid".into());
     assert!(c.validate().is_err());
 }
+
+#[test]
+fn general_prompt_sends_only_the_typed_text_within_bounds() {
+    let prompt = netlane_ai::general_prompt("", "Por que o DNS fica lento?").unwrap();
+    assert!(prompt.contains("Por que o DNS fica lento?"));
+    assert!(prompt.contains("Nenhuma captura foi anexada"));
+    assert!(!prompt.contains("Problema relatado"));
+    let with_problem = netlane_ai::general_prompt("Wi-Fi cai à noite", "O que medir?").unwrap();
+    assert!(with_problem.contains("Problema relatado (texto do usuário):\nWi-Fi cai à noite"));
+    assert!(netlane_ai::general_prompt("", "   ").is_err());
+    assert!(netlane_ai::general_prompt(&"x".repeat(4097), "ok").is_err());
+    assert!(netlane_ai::general_prompt("", &"x".repeat(4097)).is_err());
+}

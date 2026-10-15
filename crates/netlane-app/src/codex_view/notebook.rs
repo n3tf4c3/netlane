@@ -41,6 +41,16 @@ impl CodexView {
         }
         self.follow_answer();
         self.answering = false;
+        if let Some(question) = self.sent_free.take() {
+            self.free_turns.push(FreeTurn {
+                question,
+                answer: self.answer.clone(),
+                status: status.into(),
+                provider: if self.demo { "Codex simulado" } else { "Codex" }.into(),
+            });
+            self.order.push(Entry::Free(self.free_turns.len() - 1));
+            return;
+        }
         if let Some(draft) = &mut self.sent_report {
             if let Some(response) = &mut draft.response {
                 response.status = status.into();
@@ -49,6 +59,7 @@ impl CodexView {
             match self.notebook.record(self.conversation, draft.clone()) {
                 Ok(id) => {
                     self.last_turn = Some(id);
+                    self.order.push(Entry::Turn(id));
                     self.notebook_revision += 1;
                 }
                 Err(e) => self.status = format!("Não foi possível registrar o turno: {e}"),
@@ -162,77 +173,208 @@ impl CodexView {
             });
         }).detach();
     }
-    pub(super) fn render_chat(&self, height: f32, cx: &mut Context<Self>) -> gpui::Div {
+    /// Chat bubbles: your question on the right, the answer below it on the left.
+    /// Each turn keeps its capture reference and the note/copy actions.
+    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
         let t = cx.theme().clone();
-        let count = self.notebook.turns().len();
-        let start = self
-            .history_page
-            .unwrap_or(count.saturating_sub(4))
-            .min(count.saturating_sub(1));
-        let mut history = div()
+        let question = |text: String| {
+            div().flex().justify_end().child(
+                div()
+                    .max_w(gpui::relative(0.88))
+                    .px(px(10.))
+                    .py(px(7.))
+                    .rounded(px(8.))
+                    .bg(t.accent.opacity(0.16))
+                    .child(text),
+            )
+        };
+        let answer = |label: String, text: String| {
+            div()
+                .max_w(gpui::relative(0.96))
+                .px(px(10.))
+                .py(px(7.))
+                .flex()
+                .flex_col()
+                .gap(px(4.))
+                .rounded(px(8.))
+                .border_1()
+                .border_color(t.border)
+                .bg(t.editor)
+                .child(
+                    div()
+                        .text_size(px(11.))
+                        .text_color(t.text_muted)
+                        .child(label),
+                )
+                .child(text)
+        };
+        let mut list = div()
             .id("investigation-chat-scroll")
-            .h(px(height))
+            .flex_1()
+            .min_h_0()
             .overflow_y_scroll()
             .track_scroll(&self.chat_scroll)
             .flex()
             .flex_col()
-            .gap(px(10.))
-            .p(px(10.))
-            .bg(t.editor)
-            .rounded(px(6.));
-        for turn in self.notebook.turns().iter().skip(start).take(4) {
+            .gap(px(8.))
+            .p(px(10.));
+        // Turns loaded from a notebook first, then this session's order.
+        let listed: std::collections::HashSet<usize> = self
+            .order
+            .iter()
+            .filter_map(|entry| match entry {
+                Entry::Turn(id) => Some(*id),
+                Entry::Free(_) => None,
+            })
+            .collect();
+        let entries: Vec<Entry> = self
+            .notebook
+            .turns()
+            .iter()
+            .filter(|turn| !listed.contains(&turn.id))
+            .map(|turn| Entry::Turn(turn.id))
+            .chain(self.order.iter().copied())
+            .collect();
+        for entry in entries {
+            let turn = match entry {
+                Entry::Free(index) => {
+                    let free = &self.free_turns[index];
+                    list = list
+                        .child(
+                            div()
+                                .text_size(px(10.5))
+                                .text_color(t.text_muted)
+                                .child("Sem captura anexada · só nesta sessão"),
+                        )
+                        .child(question(excerpt(&free.question, 4096).to_owned()))
+                        .child(
+                            answer(
+                                free.provider.clone(),
+                                excerpt(&free.answer, 4096).to_owned(),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .text_color(t.text_muted)
+                                    .child(free.status.clone()),
+                            )
+                            .child(
+                                Self::chip(("free-copy", index), "Copiar", cx).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        if let Some(free) = this.free_turns.get(index) {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                free.answer.clone(),
+                                            ));
+                                        }
+                                    }),
+                                ),
+                            ),
+                        );
+                    continue;
+                }
+                Entry::Turn(id) => match self.notebook.turns().iter().find(|t| t.id == id) {
+                    Some(turn) => turn,
+                    None => continue,
+                },
+            };
             let id = turn.id;
-            let answer = turn.draft.response.as_ref();
-            history=history.child(div().flex_none().flex().flex_col().gap(px(6.)).p(px(10.)).bg(t.panel).rounded(px(5.))
-                .child(div().text_size(px(11.)).text_color(t.text_muted).child(format!("Turno #{id} · conversa {} · captura {}… · {}",turn.conversation,&turn.draft.context.sha256[..12], turn.created_unix_seconds.map_or("horário não registrado".into(), netlane_ai::investigation::registration_label))))
-                .child(div().font_weight(FontWeight::SEMIBOLD).text_color(t.accent).child("Você"))
-                .child(excerpt(&turn.draft.question,4096).to_owned())
-                .child(div().font_weight(FontWeight::SEMIBOLD).child(answer.map_or("Codex",|r|r.provider.as_str()).to_owned()))
-                .child(excerpt(answer.map_or("",|r|r.text.as_str()),4096).to_owned())
-                .child(div().text_size(px(11.)).text_color(if turn.references_valid {t.text_muted}else{t.warning}).child(if turn.references_valid {answer.map_or("",|r|r.status.as_str())}else{"Referência fora deste contexto. Resposta conservada como registro; confira as evidências."}.to_owned()))
-                .child(div().flex().flex_wrap().gap(px(6.))
-                    .child(Self::button(("turn-note",id),"Anotar resposta",cx).on_click(cx.listener(move|this,_,_,cx|this.note_from_turn(id,cx))))
-                    .child(Self::button(("turn-copy",id),"Copiar completa",cx).on_click(cx.listener(move|this,_,_,cx|{
-                        if let Some(response)=this.notebook.turns().iter().find(|t|t.id==id).and_then(|t|t.draft.response.as_ref()) {cx.write_to_clipboard(ClipboardItem::new_string(response.text.clone()));}
-                    })))));
+            let response = turn.draft.response.as_ref();
+            list = list
+                .child(
+                    div()
+                        .text_size(px(10.5))
+                        .text_color(t.text_muted)
+                        .child(format!(
+                            "Turno #{id} · captura {}… · {}",
+                            &turn.draft.context.sha256[..12],
+                            turn.created_unix_seconds.map_or(
+                                "horário não registrado".into(),
+                                netlane_ai::investigation::registration_label
+                            )
+                        )),
+                )
+                .child(question(excerpt(&turn.draft.question, 4096).to_owned()))
+                .child(
+                    answer(
+                        response.map_or("Codex".into(), |r| r.provider.clone()),
+                        excerpt(response.map_or("", |r| r.text.as_str()), 4096).to_owned(),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(11.))
+                            .text_color(if turn.references_valid {
+                                t.text_muted
+                            } else {
+                                t.warning
+                            })
+                            .child(if turn.references_valid {
+                                response.map_or("", |r| r.status.as_str()).to_owned()
+                            } else {
+                                "Referência fora deste contexto. Resposta conservada como registro; confira as evidências.".to_owned()
+                            }),
+                    )
+                    .child(
+                        div()
+                            .flex()
+                            .gap(px(4.))
+                            .child(Self::chip(("turn-note", id), "Anotar", cx).on_click(
+                                cx.listener(move |this, _, _, cx| this.note_from_turn(id, cx)),
+                            ))
+                            .child(Self::chip(("turn-copy", id), "Copiar", cx).on_click(
+                                cx.listener(move |this, _, _, cx| {
+                                    if let Some(response) = this
+                                        .notebook
+                                        .turns()
+                                        .iter()
+                                        .find(|t| t.id == id)
+                                        .and_then(|t| t.draft.response.as_ref())
+                                    {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            response.text.clone(),
+                                        ));
+                                    }
+                                }),
+                            )),
+                    ),
+                );
         }
         if self.answering {
-            history = history.child(
+            list = list
+                .child(question(
+                    self.sent_free
+                        .as_deref()
+                        .or(self.sent_report.as_ref().map(|d| d.question.as_str()))
+                        .unwrap_or_default()
+                        .to_owned(),
+                ))
+                .child(answer(
+                    "Codex está analisando…".into(),
+                    self.visible_answer().to_owned(),
+                ));
+        }
+        if self.notebook.turns().is_empty() && self.free_turns.is_empty() && !self.answering {
+            list = list.child(
                 div()
-                    .flex_none()
-                    .p(px(10.))
-                    .bg(t.panel)
-                    .rounded(px(5.))
-                    .child(
-                        div()
-                            .text_color(t.accent)
-                            .child("Você · turno em andamento"),
-                    )
-                    .child(
-                        self.sent_report
-                            .as_ref()
-                            .map_or("", |d| d.question.as_str())
-                            .to_owned(),
-                    )
-                    .child(
-                        div()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child("Codex está analisando…"),
-                    )
-                    .child(self.visible_answer().to_owned()),
+                    .flex_1()
+                    .flex()
+                    .flex_col()
+                    .items_center()
+                    .justify_center()
+                    .gap(px(6.))
+                    .px(px(16.))
+                    .text_center()
+                    .child(crate::ui::icon("auto_awesome", 22., t.text_muted))
+                    .child(div().text_color(t.text).child(if self.evidence.is_some() {
+                        "Pergunte sobre os pacotes anexados."
+                    } else {
+                        "Pergunte sobre redes ou anexe pacotes."
+                    }))
+                    .child(div().text_size(px(11.5)).text_color(t.text_muted).child(
+                        "Sem anexo, vai só o que você digitar. Para analisar tráfego, use Preparar análise para Codex em Pacotes ou ligue o acompanhamento (olho) durante a captura. O Codex não executa comandos nesta máquina.",
+                    )),
             );
         }
-        if count == 0 && !self.answering {
-            history=history.child("Converse sobre o que está vendo. Questione um achado, proponha outra explicação ou peça a próxima verificação.");
-        }
-        div().flex().flex_col().gap(px(6.))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child("Chat da investigação"))
-            .child(history)
-            .child(div().flex().flex_wrap().gap(px(6.))
-                .when(start>0,|d|d.child(Self::button("chat-previous","Turnos anteriores",cx).on_click(cx.listener(move|this,_,_,cx|{this.history_page=Some(start.saturating_sub(4));this.chat_scroll.set_offset(Default::default());cx.notify();}))))
-                .when(start+4<count,|d|d.child(Self::button("chat-next","Turnos seguintes",cx).on_click(cx.listener(move|this,_,_,cx|{let next=(start+4).min(count.saturating_sub(4));this.history_page=if next+4>=count {None}else{Some(next)};this.chat_scroll.set_offset(Default::default());cx.notify();}))))
-                .when(count>0,|d|d.child(Self::button("chat-latest","Última resposta",cx).on_click(cx.listener(|this,_,_,cx|{this.history_page=None;this.chat_scroll.scroll_to_bottom();cx.notify();}))))
-                .child(div().text_size(px(11.)).text_color(t.text_muted).child(format!("{count}/24 turnos · até 4 KiB visíveis por resposta; cópia e caderno completos."))))
+        list
     }
     pub(super) fn render_notes(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();

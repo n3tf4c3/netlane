@@ -34,6 +34,10 @@ impl CodexView {
         self.conversation_capture = context.as_ref().map(|c| c.sha256.clone());
         self.evidence = context;
         self.notebook = notebook;
+        // Session-only free questions belong to the investigation being replaced.
+        self.free_turns.clear();
+        self.order.clear();
+        self.following = false;
         self.sources.clear();
         self.bundle_saved = None;
         self.notebook_revision = self.notebook_revision.saturating_add(1);

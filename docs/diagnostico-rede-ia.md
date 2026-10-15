@@ -84,13 +84,37 @@ se refere ao arquivo/segmento atual, e uma troca de segmento invalida a leitura.
 O baseline é escolhido
 pelo usuário e pode ser removido; não há aprendizagem ou captura automática.
 
+## Captura ao vivo
+
+No modelo do termIAX, a barra de **Pacotes** reúne a escolha da interface Npcap,
+o filtro BPF opcional e **Iniciar captura**/**Parar**. Os pacotes entram na tabela
+enquanto chegam, e a rolagem acompanha o fim até que uma linha seja selecionada.
+A captura fica somente em memória: até 20.000 pacotes ou 32 MiB, 2048 bytes por
+pacote e sem modo promíscuo. Ao atingir o limite, ela para sozinha. Ao parar, a
+imagem PCAP em memória recebe SHA-256 e análise completa, e referência, Codex e
+exportação de seleção funcionam como num arquivo importado. Nada vai para o disco
+sem **Salvar captura**, que grava um PCAP novo e nunca substitui um existente.
+Se a tabela não acompanhar a leitura, os lotes excedentes são descartados e
+contados. Em `--demo`, a fonte é fictícia e não abre driver, socket nem arquivo.
+Não há captura automática, instalação de driver ou elevação do aplicativo.
+O runtime existente é carregado somente de `System32\Npcap\wpcap.dll`. A captura
+real com Npcap foi conferida na VM de laboratório em 2026-10-15 com a coleta em
+segmentos (pacotes lidos, estatísticas do driver presentes); a captura ao vivo
+ainda precisa da mesma conferência.
+
 ## Coleta Windows com rotação
 
-**Captura longa** abre controles de interface Npcap, filtro BPF opcional, destino,
-limite de disco (1/4/16/64 GiB) e duração (1/8/24/72 h). A interface precisa ser
-selecionada explicitamente; **Iniciar coleta nesta interface** cria uma pasta nova.
-Não há captura automática, instalação de driver ou elevação do aplicativo.
-O runtime existente é carregado somente de `System32\Npcap\wpcap.dll`.
+**Modo: longa (disco)** usa esta coleta a partir da mesma barra. O usuário escolhe
+a duração (15 min, 1 h, 4 h, 8 h, 24 h ou 72 h); cada captura cria uma pasta nova
+`NetLane-<uuid>` em `captures` dentro do perfil local, com limite de 4 GiB e
+segmentos de 2048 bytes por pacote. Ao lado da gravação, cada pacote lido é
+copiado para a tabela, que mostra os 20.000 mais recentes (até 32 MiB); os
+anteriores continuam nos arquivos. A cópia nunca bloqueia a leitura: se a tabela
+não acompanhar, os pacotes ficam só no disco e são contados. Fechar a janela leva
+o NetLane para a bandeja sem parar a gravação; Sair fica bloqueado até parar.
+**Abrir pasta** mostra os arquivos, e **Abrir PCAP** analisa cada segmento.
+A coleta também tem perfil de alto volume e limites de disco de 1/16/64 GiB,
+hoje usados apenas pelos roteiros de QA.
 
 A coleta não usa modo promíscuo e escreve PCAP 2.4 com horário em microssegundos.
 O perfil diagnóstico grava até 2048 bytes por pacote e segmentos de 64 MiB;
@@ -107,7 +131,8 @@ prévias limitadas, coalescendo resultados para mostrar a mais recente recebida.
 Totais da coleta aparecem no painel; totais/achados da tabela pertencem ao segmento
 indicado. O baseline se aplica aos segmentos recebidos. Pode-se conversar com
 Codex sobre um segmento fechado enquanto a coleta continua, sempre com envio
-explícito; não há inferência automática periódica.
+explícito. O único envio automático é o acompanhamento opcional da captura de
+diagnóstico, descrito em "Investigação interativa".
 
 **Parar e fechar coleta** aguarda fechamento da fonte, segmento e análises
 pendentes. Sair é bloqueado durante esse trabalho; minimizar não exige parar.
@@ -199,12 +224,30 @@ Referências: [App Server](https://learn.chatgpt.com/docs/app-server) e
 
 O fluxo principal é analisar junto com a IA: perguntar sobre o que aparece na
 captura, confrontar explicações, identificar o que falta observar e registrar
-possíveis problemas. **Preparar análise para Codex** abre o chat ao lado dos
-pacotes em janelas a partir de 1280 px. A tabela e o chat têm rolagem independente.
-Em janelas menores o chat abre na página **Codex**; a seleção e o histórico são
-mantidos ao voltar a **Pacotes**. Também há abertura do chat em tela inteira.
+possíveis problemas. No modelo do termIAX, o chat é um painel fixo à direita,
+aberto pelo botão **Codex** da barra de título e disponível em qualquer página;
+não há página própria. **Preparar análise para Codex** abre o painel sem sair de
+**Pacotes**. O painel reúne cabeçalho (estado da conexão, anotações, nova
+investigação e opções), a linha de evidências, a conversa em balões e, embaixo,
+o campo de pergunta com os pacotes anexados, sugestões, modelo e
+**Revisar**/**Enviar**. Enter revisa e, com o texto exato à vista, Enter de novo
+envia. Conexão, caderno, investigação com capturas e relatórios ficam nas opções.
 
-Perguntas e respostas ficam em um histórico de até 24 turnos por caderno, sem
+Sem pacotes anexados, a pergunta vai direto e leva só o texto digitado (problema
+e pergunta), com a instrução de não presumir evidências. Essas perguntas livres
+aparecem na mesma conversa, mas ficam só na sessão: o caderno continua aceitando
+apenas turnos ligados a uma captura revisada.
+
+**Acompanhar** (o olho no campo de pergunta) é opcional e pede confirmação no
+primeiro uso. Ligado, durante a captura de diagnóstico, a cada 30 s com pacotes
+novos o NetLane calcula o SHA-256 e a análise completa da imagem em memória e
+envia sozinho o mesmo formato de contexto do envio manual: agregados da captura e
+metadados dos 8 pacotes mais recentes, sem payload. Esse envio não passa pela
+revisão de cada turno; cada um fica registrado no caderno, na mesma conversa do
+provedor. Se o Codex ainda estiver respondendo, a foto seguinte espera. Ao
+chegar ao limite do caderno, o acompanhamento pausa e pede para salvá-lo.
+
+Perguntas e respostas ficam em um histórico de até 96 turnos por caderno, sem
 substituir o turno anterior. Cada turno conserva pergunta, problema, modelo,
 estado da resposta e a cópia das evidências do envio. Na mesma captura, perguntas
 sucessivas usam a mesma conversa do provedor. Ao trocar o hash da captura, uma
@@ -240,7 +283,7 @@ aberto, sem bytes dos pacotes ou dados de autenticação; revise os endereços e
 textos antes de compartilhar.
 
 **Abrir caderno** seleciona manualmente uma pasta local com os três arquivos.
-A leitura ocorre em segundo plano, com limite de 24 MiB por arquivo, 24 turnos,
+A leitura ocorre em segundo plano, com limite de 24 MiB por arquivo, 96 turnos,
 32 anotações e 32 registros de estado por anotação. O importador confere nomes
 fixos, tamanhos, hashes e consistência dos contextos; recusa links/junções,
 arquivos alterados e formatos incompatíveis. Hashes conferem a consistência do

@@ -23,6 +23,20 @@ mod notebook;
 mod resume;
 pub struct ContextPrepared;
 pub struct NotebookOpened;
+/// A question asked without a capture. Kept for this session only, outside the
+/// notebook, whose turns are always tied to reviewed capture evidence.
+pub(super) struct FreeTurn {
+    question: String,
+    answer: String,
+    status: String,
+    provider: String,
+}
+/// Display order of notebook turns and free questions in the conversation.
+#[derive(Clone, Copy)]
+pub(super) enum Entry {
+    Turn(usize),
+    Free(usize),
+}
 pub struct CodexView {
     demo: bool,
     profile: PathBuf,
@@ -67,6 +81,14 @@ pub struct CodexView {
     bundle_progress: Arc<netlane_ai::bundle::Progress>,
     bundle_busy: bool,
     bundle_saved: Option<(u64, Option<EvidenceContext>, String, String)>,
+    free_turns: Vec<FreeTurn>,
+    order: Vec<Entry>,
+    /// Question of the free turn in progress, if any.
+    sent_free: Option<String>,
+    /// Opt-in: live diagnostic snapshots are sent automatically while true.
+    following: bool,
+    follow_confirm: bool,
+    follow_confirmed: bool,
     _subscriptions: Vec<Subscription>,
 }
 impl EventEmitter<ContextPrepared> for CodexView {}
@@ -83,13 +105,7 @@ impl CodexView {
             cx.new(|cx| TextInput::new("", "Descreva o problema observado neste computador", cx));
         let note_input =
             cx.new(|cx| TextInput::new("", "Hipótese, possível problema ou algo a verificar", cx));
-        let question = cx.new(|cx| {
-            TextInput::new(
-                "Quais fatos, hipóteses e próximos passos estes pacotes permitem levantar?",
-                "Pergunta para o Codex",
-                cx,
-            )
-        });
+        let question = cx.new(|cx| TextInput::new("", "Pergunte ao Codex sobre esta captura…", cx));
         let discovered = if demo {
             None
         } else {
@@ -121,7 +137,9 @@ impl CodexView {
             .collect::<Vec<_>>();
         subscriptions.push(cx.subscribe(&question, |this, _, event, cx| {
             if matches!(event, TextInputEvent::Confirmed) {
-                if this.preview.is_some() {
+                // Without capture evidence only the typed text leaves; while following, the
+                // user already authorized the snapshot metadata: no review step either.
+                if this.preview.is_some() || this.evidence.is_none() || this.following {
                     this.send(cx);
                 } else {
                     this.review(cx);
@@ -182,6 +200,12 @@ impl CodexView {
             bundle_progress: Arc::new(netlane_ai::bundle::Progress::default()),
             bundle_busy: false,
             bundle_saved: None,
+            free_turns: Vec::new(),
+            order: Vec::new(),
+            sent_free: None,
+            following: false,
+            follow_confirm: false,
+            follow_confirmed: false,
             _subscriptions: subscriptions,
         }
     }
@@ -288,6 +312,9 @@ impl CodexView {
         }
         self.reset_conversation();
         self.notebook = Default::default();
+        self.free_turns.clear();
+        self.order.clear();
+        self.following = false;
         self.sources.clear();
         self.bundle_saved = None;
         self.notebook_revision = 0;
@@ -493,49 +520,70 @@ impl CodexView {
         }
         cx.notify();
     }
-    fn send(&mut self, cx: &mut Context<Self>) {
+    /// Shared gate for every kind of send.
+    fn can_send(&mut self) -> bool {
         if self.dialog.load(Ordering::Relaxed) {
             self.status = "Aguarde a abertura ou gravação atual antes de enviar.".into();
-            cx.notify();
-            return;
+            return false;
         }
         if self.answering {
-            return;
+            return false;
+        }
+        if !self.agent_ready {
+            self.status = "Conecte o Codex e entre com ChatGPT antes de enviar.".into();
+            return false;
         }
         if !self.demo && (self.model_pending || self.model.is_none()) {
             self.status = "Aguarde a confirmação do modelo antes de enviar.".into();
+            return false;
+        }
+        true
+    }
+    fn send(&mut self, cx: &mut Context<Self>) {
+        if !self.can_send() {
             cx.notify();
             return;
         }
+        let Some(context) = self.evidence.clone() else {
+            self.send_free(cx);
+            return;
+        };
         if let Err(error) = self.notebook.can_start() {
             self.status = error.to_string();
             cx.notify();
             return;
         }
-        let Some(context) = &self.evidence else {
-            return;
-        };
-        let Ok(prompt) =
-            context.prompt(self.problem.read(cx).text(), self.question.read(cx).text())
-        else {
+        let problem = self.problem.read(cx).text().to_owned();
+        let question = self.question.read(cx).text().to_owned();
+        let Ok(prompt) = context.prompt(&problem, &question) else {
             self.status = "Confira problema, pergunta e limites do contexto.".into();
             cx.notify();
             return;
         };
-        if self.preview.as_ref() != Some(&prompt) {
+        // Following was confirmed for this metadata shape; otherwise review first.
+        if !self.following && self.preview.as_ref() != Some(&prompt) {
             self.status = "Revise o contexto atualizado antes de enviar.".into();
             cx.notify();
             return;
         }
-        if !self.agent_ready {
-            self.status = "Conecte o Codex e entre com ChatGPT antes de enviar.".into();
-            cx.notify();
-            return;
+        if self.submit(context, prompt, problem, question, cx) {
+            self.question.update(cx, |field, cx| field.set_text("", cx));
         }
+        cx.notify();
+    }
+    /// Sends one evidence turn and records it in the notebook when it ends.
+    fn submit(
+        &mut self,
+        context: EvidenceContext,
+        prompt: String,
+        problem: String,
+        question: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
         let sent_report = netlane_ai::report::Draft {
             context: context.clone(),
-            problem: self.problem.read(cx).text().into(),
-            question: self.question.read(cx).text().into(),
+            problem,
+            question,
             response: Some(netlane_ai::report::Response {
                 provider: if self.demo { "Codex simulado" } else { "Codex" }.into(),
                 model: if self.demo {
@@ -549,18 +597,76 @@ impl CodexView {
                 text: String::new(),
             }),
         };
-        let mut submitted = false;
         if self.demo {
-            self.last_turn = None;
-            submitted = true;
-            self.sent_context = Some(context.clone());
-            self.sent_report = Some(sent_report);
-            self.answer.clear();
-            self.preview = None;
+            self.begin_turn(Some(context.clone()), Some(sent_report), None);
             let number = context.packets[0].number;
             let hash = context.sha256.clone();
-            self.answering = true;
             self.agent_event(AgentEvent::Text {conversation:self.conversation,text:format!("Demonstração de análise, sem provedor real. O resumo local cobre {} pacotes; os pacotes anexados são amostras. Referência verificável: [[packet:{hash}:{number}]]. Diferenças em relação ao baseline são indícios e exigem conferir filtro, período e ponto de coleta.",context.inspected_packets)},cx);
+            self.agent_event(
+                AgentEvent::Done {
+                    conversation: self.conversation,
+                    note: Some("Resposta fictícia. Nenhuma inferência enviada.".into()),
+                },
+                cx,
+            );
+            return true;
+        }
+        let Some(agent) = &self.agent else {
+            return false;
+        };
+        match agent.send(Command::PromptWithModel {
+            conversation: self.conversation,
+            text: prompt,
+            model: self.model.clone().unwrap(),
+        }) {
+            Ok(()) => {
+                self.begin_turn(Some(context), Some(sent_report), None);
+                self.status = "Analisando o contexto revisado…".into();
+                true
+            }
+            Err(error) => {
+                self.status = error.to_string();
+                false
+            }
+        }
+    }
+    fn begin_turn(
+        &mut self,
+        context: Option<EvidenceContext>,
+        report: Option<netlane_ai::report::Draft>,
+        free: Option<String>,
+    ) {
+        self.last_turn = None;
+        self.sent_context = context;
+        self.sent_report = report;
+        self.sent_free = free;
+        self.answer.clear();
+        self.preview = None;
+        self.answering = true;
+        self.history_page = None;
+        self.chat_scroll.scroll_to_bottom();
+    }
+    /// No capture attached: only the typed problem and question are sent.
+    fn send_free(&mut self, cx: &mut Context<Self>) {
+        let problem = self.problem.read(cx).text().to_owned();
+        let question = self.question.read(cx).text().to_owned();
+        let prompt = match netlane_ai::general_prompt(&problem, &question) {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                self.status = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
+        if self.demo {
+            self.begin_turn(None, None, Some(question));
+            self.agent_event(
+                AgentEvent::Text {
+                    conversation: self.conversation,
+                    text: "Demonstração: resposta fictícia a uma pergunta sem captura anexada. Para analisar tráfego, anexe pacotes em Pacotes.".into(),
+                },
+                cx,
+            );
             self.agent_event(
                 AgentEvent::Done {
                     conversation: self.conversation,
@@ -575,24 +681,82 @@ impl CodexView {
                 model: self.model.clone().unwrap(),
             }) {
                 Ok(()) => {
-                    self.last_turn = None;
-                    submitted = true;
-                    self.sent_context = Some(context.clone());
-                    self.sent_report = Some(sent_report);
-                    self.answer.clear();
-                    self.preview = None;
-                    self.answering = true;
-                    self.status = "Analisando o contexto revisado…".into();
+                    self.begin_turn(None, None, Some(question));
+                    self.status = "Pensando…".into();
                 }
-                Err(error) => self.status = error.to_string(),
+                Err(error) => {
+                    self.status = error.to_string();
+                    cx.notify();
+                    return;
+                }
             }
         }
-        if submitted {
-            self.history_page = None;
-            self.chat_scroll.scroll_to_bottom();
-            self.question.update(cx, |field, cx| field.set_text("", cx));
+        self.question.update(cx, |field, cx| field.set_text("", cx));
+        cx.notify();
+    }
+    pub fn following(&self) -> bool {
+        self.following && self.agent_ready && !self.answering
+    }
+    fn toggle_follow(&mut self, cx: &mut Context<Self>) {
+        if self.following {
+            self.following = false;
+            self.status = "Acompanhamento desligado.".into();
+        } else if !self.follow_confirmed {
+            self.follow_confirm = true;
+        } else {
+            self.start_following();
         }
         cx.notify();
+    }
+    fn start_following(&mut self) {
+        self.follow_confirm = false;
+        self.follow_confirmed = true;
+        self.following = true;
+        self.status = if !self.agent_ready {
+            "Acompanhamento ligado; conecte o Codex para começar."
+        } else if self.capture_active.load(Ordering::Relaxed) {
+            "Acompanhando: o primeiro resumo sai agora e depois a cada 30 s com pacotes novos; suas perguntas levam a foto mais recente."
+        } else {
+            "Acompanhamento ligado. Inicie uma captura em modo Diagnóstico em Pacotes."
+        }
+        .into();
+    }
+    /// Opt-in automatic turn while a diagnostic capture runs. The user confirmed
+    /// this mode once; the context is the same metadata-only shape as a manual send
+    /// and the turn is recorded in the notebook. Returns whether it was sent.
+    pub fn follow_snapshot(
+        &mut self,
+        context: EvidenceContext,
+        question: String,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !self.following() || !self.can_send() {
+            return false;
+        }
+        if let Err(error) = self.notebook.can_start() {
+            self.following = false;
+            self.status = format!("Acompanhamento pausado: {error}");
+            cx.notify();
+            return false;
+        }
+        let problem = self.problem.read(cx).text().to_owned();
+        let prompt = match context.prompt(&problem, &question) {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                self.status = format!("Resumo de acompanhamento recusado: {error}");
+                cx.notify();
+                return false;
+            }
+        };
+        // Same conversation across snapshots: each one has a new hash by design.
+        self.conversation_capture = Some(context.sha256.clone());
+        self.evidence = Some(context.clone());
+        let sent = self.submit(context, prompt, problem, question, cx);
+        if sent {
+            self.status = "Acompanhamento: resumo da captura enviado ao Codex.".into();
+        }
+        cx.notify();
+        sent
     }
     fn report_draft(
         &self,
@@ -671,10 +835,53 @@ impl CodexView {
             .as_ref()
             .and_then(|m| self.models.iter().position(|option| option.id == m.model))
             .map_or(0, |index| (index + 1) % self.models.len());
-        let selected = ModelChoice {
-            model: self.models[next].id.clone(),
-            effort: "medium".into(),
+        let option = &self.models[next];
+        // Keep the chosen effort when the next model supports it.
+        let effort = self
+            .model
+            .as_ref()
+            .map(|m| m.effort.clone())
+            .filter(|effort| option.efforts.contains(effort))
+            .unwrap_or_else(|| "medium".into());
+        self.request_model(
+            ModelChoice {
+                model: option.id.clone(),
+                effort,
+            },
+            cx,
+        );
+    }
+    fn cycle_effort(&mut self, cx: &mut Context<Self>) {
+        if self.answering || self.model_pending {
+            return;
+        }
+        let Some(current) = self.model.clone() else {
+            return;
         };
+        let Some(efforts) = self
+            .models
+            .iter()
+            .find(|option| option.id == current.model)
+            .map(|option| &option.efforts)
+            .filter(|efforts| !efforts.is_empty())
+        else {
+            return;
+        };
+        let next = efforts
+            .iter()
+            .position(|effort| *effort == current.effort)
+            .map_or(0, |index| (index + 1) % efforts.len());
+        let effort = efforts[next].clone();
+        self.request_model(
+            ModelChoice {
+                model: current.model,
+                effort,
+            },
+            cx,
+        );
+    }
+    /// The bridge confirms with a Models event; sending waits for it.
+    fn request_model(&mut self, selected: ModelChoice, cx: &mut Context<Self>) {
         if let Some(agent) = &self.agent {
             match agent.send(Command::SetModel(selected)) {
                 Ok(()) => {

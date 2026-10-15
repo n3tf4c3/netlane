@@ -14,7 +14,7 @@ e temas não foram incorporados ao NetLane.
 | One Dark Pro | Binaryify, MIT | `assets/themes/one-dark-pro/LICENSE` |
 | Ayu | Ike Ku, MIT | `assets/themes/ayu/LICENSE` |
 | Gruvbox | tema de origem morhetz/gruvbox, MIT | `assets/themes/gruvbox/LICENSE` |
-| Material Symbols | Google, Apache-2.0 | `assets/icons/LICENSE` |
+| Material Symbols e Material Icons (`play_arrow`, `save`, `folder_open`, `code`, `send`, `remove`, `crop_square`, `filter_none`, `auto_awesome`, `visibility`) | Google, Apache-2.0; `menu.svg` é desenho próprio | `assets/icons/LICENSE` |
 | JetBrains Mono | JetBrains, SIL OFL 1.1 | `assets/fonts/jetbrains-mono/OFL.txt` |
 | native-tls 0.2.18 | rust-native-tls, MIT ou Apache-2.0; MIT escolhida | `assets/licenses/native-tls-MIT.txt` |
 | schannel 0.1.29 | steffengy, MIT; TLS nativo Windows | `assets/licenses/schannel-MIT.txt` |

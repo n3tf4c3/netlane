@@ -6,6 +6,7 @@ mod demo;
 mod desktop;
 mod executable_icons;
 mod lifecycle;
+mod live_capture;
 #[cfg(feature = "gui-test")]
 mod loopback_qa;
 mod packet_view;

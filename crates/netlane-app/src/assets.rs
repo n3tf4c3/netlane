@@ -76,6 +76,50 @@ static ICONS: &[(&str, &[u8])] = &[
         include_bytes!("../../../assets/icons/tune.svg"),
     ),
     (
+        "icons/menu.svg",
+        include_bytes!("../../../assets/icons/menu.svg"),
+    ),
+    (
+        "icons/play_arrow.svg",
+        include_bytes!("../../../assets/icons/play_arrow.svg"),
+    ),
+    (
+        "icons/save.svg",
+        include_bytes!("../../../assets/icons/save.svg"),
+    ),
+    (
+        "icons/folder_open.svg",
+        include_bytes!("../../../assets/icons/folder_open.svg"),
+    ),
+    (
+        "icons/code.svg",
+        include_bytes!("../../../assets/icons/code.svg"),
+    ),
+    (
+        "icons/send.svg",
+        include_bytes!("../../../assets/icons/send.svg"),
+    ),
+    (
+        "icons/remove.svg",
+        include_bytes!("../../../assets/icons/remove.svg"),
+    ),
+    (
+        "icons/crop_square.svg",
+        include_bytes!("../../../assets/icons/crop_square.svg"),
+    ),
+    (
+        "icons/filter_none.svg",
+        include_bytes!("../../../assets/icons/filter_none.svg"),
+    ),
+    (
+        "icons/auto_awesome.svg",
+        include_bytes!("../../../assets/icons/auto_awesome.svg"),
+    ),
+    (
+        "icons/visibility.svg",
+        include_bytes!("../../../assets/icons/visibility.svg"),
+    ),
+    (
         "icons/arrow_downward.svg",
         include_bytes!("../../../assets/icons/arrow_downward.svg"),
     ),

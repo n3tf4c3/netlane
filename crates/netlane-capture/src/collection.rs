@@ -96,6 +96,12 @@ impl PacketBatch {
         self.ends.push(self.bytes.len());
         Ok(())
     }
+    /// Record `index` as (seconds, micros, original length, captured bytes).
+    pub fn record(&self, index: usize) -> (u32, u32, u32, &[u8]) {
+        let record = self.range(index, index + 1);
+        let value = |at: usize| u32::from_le_bytes(record[at..at + 4].try_into().unwrap());
+        (value(0), value(4), value(12), &record[16..])
+    }
     fn clear(&mut self) {
         self.bytes.clear();
         self.ends.clear();
@@ -965,5 +971,13 @@ mod tests {
         );
         assert_eq!(progress.driver_interface_dropped.load(Ordering::Relaxed), 9);
         assert_eq!(progress.driver_samples.load(Ordering::Relaxed), 2);
+    }
+    #[test]
+    fn batch_records_read_back_exactly_as_pushed() {
+        let mut batch = PacketBatch::default();
+        batch.push(10, 20, 64, &[1, 2, 3]).unwrap();
+        batch.push(11, 999_999, 9000, &[4; 40]).unwrap();
+        assert_eq!(batch.record(0), (10, 20, 64, &[1u8, 2, 3][..]));
+        assert_eq!(batch.record(1), (11, 999_999, 9000, &[4u8; 40][..]));
     }
 }

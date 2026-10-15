@@ -2,15 +2,19 @@
 use crate::{
     codex_view::{CodexView, bundle::InvestigationRestored},
     collection_view::{CollectionView, SegmentReady},
+    live_capture::{self, LiveCapture},
+    settings::AppSettings,
     text_input::TextInput,
     theme::{ActiveTheme, MONO_FONT},
+    ui::{Tip, icon, icon_button},
 };
 use gpui::{
-    App, Context, Entity, FontWeight, Render, Subscription, Window, div, prelude::*, px,
-    uniform_list,
+    App, Context, Entity, FontWeight, Render, Subscription, UniformListScrollHandle, Window, div,
+    prelude::*, px, uniform_list,
 };
 use netlane_capture::analysis::{Progress, Report, Scan};
-use netlane_capture::{CaptureFile, Summary, lookup::RecoveredPacket};
+use netlane_capture::{CaptureFile, Summary, collection::Record, lookup::RecoveredPacket};
+use netlane_windows::npcap::Device;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -86,6 +90,198 @@ impl Inspection {
             report: Some(scan.report),
             collection_note: None,
             source: scan.source,
+        }
+    }
+    /// Empty live capture; packets are appended as the worker delivers them.
+    fn live(link_type: u16, interface: String) -> Self {
+        Self {
+            capture: CaptureFile {
+                format: netlane_capture::Format::Pcap,
+                sha256: String::new(),
+                file_bytes: 24,
+                interfaces: vec![netlane_capture::Interface {
+                    section: 0,
+                    section_id: 0,
+                    link_type,
+                    snaplen: live_capture::SNAPLEN,
+                    name: interface,
+                    resolution: 6,
+                    offset_seconds: 0,
+                }],
+                packets: Vec::new(),
+                total_packets: 0,
+                omitted_packets: 0,
+                truncated_packets: 0,
+                auxiliary_blocks: 0,
+                retained_bytes: 0,
+            },
+            summaries: Vec::new(),
+            search: Vec::new(),
+            report: None,
+            collection_note: None,
+            source: None,
+            sample_count: 0,
+        }
+    }
+    /// Appends one record to the table and to the PCAP image `file`.
+    /// Returns false, without changes, once the memory bounds are reached.
+    fn push_live(&mut self, record: Record, file: &mut Vec<u8>) -> bool {
+        if self.capture.packets.len() >= live_capture::MAX_PACKETS
+            || self.capture.retained_bytes + record.bytes.len() > live_capture::MAX_BYTES
+        {
+            return false;
+        }
+        let file_offset = file.len() as u64;
+        for value in [
+            record.seconds,
+            record.micros,
+            record.bytes.len() as u32,
+            record.original_len,
+        ] {
+            file.extend(value.to_le_bytes());
+        }
+        file.extend(&record.bytes);
+        self.append(record, file_offset);
+        self.capture.file_bytes = file.len() as u64;
+        true
+    }
+    /// Long mode: the full capture is on disk, so the table keeps a window of the
+    /// most recent packets. Returns how many of the oldest rows were dropped.
+    fn push_window(&mut self, record: Record) -> usize {
+        self.append(record, 0);
+        let mut excess = self
+            .capture
+            .packets
+            .len()
+            .saturating_sub(live_capture::MAX_PACKETS);
+        let packets = &self.capture.packets;
+        let mut bytes = self.capture.retained_bytes
+            - packets[..excess]
+                .iter()
+                .map(|p| p.bytes.len())
+                .sum::<usize>();
+        // Always keep the newest packet, even if it alone exceeds the byte bound.
+        while bytes > live_capture::MAX_BYTES && excess + 1 < packets.len() {
+            bytes -= packets[excess].bytes.len();
+            excess += 1;
+        }
+        if excess > 0 {
+            let removed: usize = self
+                .capture
+                .packets
+                .drain(..excess)
+                .map(|p| p.bytes.len())
+                .sum();
+            self.summaries.drain(..excess);
+            self.search.drain(..excess);
+            self.capture.retained_bytes -= removed;
+            self.capture.omitted_packets += excess as u64;
+            self.sample_count = self.capture.packets.len();
+        }
+        excess
+    }
+    fn append(&mut self, record: Record, file_offset: u64) {
+        let number = self.capture.total_packets + 1;
+        let captured_len = record.bytes.len() as u32;
+        let packet = netlane_capture::Packet {
+            number,
+            file_offset,
+            interface: 0,
+            timestamp: Some(netlane_capture::Timestamp {
+                ticks: u64::from(record.seconds) * 1_000_000 + u64::from(record.micros),
+                resolution: 6,
+                offset_seconds: 0,
+            }),
+            original_len: record.original_len,
+            captured_len,
+            bytes: record.bytes,
+        };
+        let summary = packet.summary(self.capture.interfaces[0].link_type);
+        self.search.push(
+            format!(
+                "{} {} {} {} {} {} {}",
+                number,
+                summary.protocol,
+                summary.source,
+                summary.destination,
+                summary.info,
+                summary.service,
+                self.capture.interfaces[0].name
+            )
+            .to_lowercase(),
+        );
+        if packet.captured_len < packet.original_len {
+            self.capture.truncated_packets += 1;
+        }
+        self.capture.retained_bytes += packet.bytes.len();
+        self.capture.packets.push(packet);
+        self.summaries.push(summary);
+        self.capture.total_packets = number;
+        self.sample_count = self.capture.packets.len();
+    }
+    /// Reviewed-context shape sent to Codex: aggregates of the whole capture plus
+    /// metadata of the chosen rows. Never packet bytes or paths.
+    fn evidence(&self, indexes: &[usize], baseline: Option<&Report>) -> netlane_ai::Context {
+        let data = self;
+        netlane_ai::Context {
+            investigation_id: uuid::Uuid::new_v4().to_string(),
+            sha256: data.capture.sha256.clone(),
+            format: data.capture.format.label().into(),
+            total_packets: data.capture.total_packets,
+            inspected_packets: data
+                .report
+                .as_ref()
+                .map_or(data.capture.packets.len(), |r| r.packets as usize),
+            omitted_packets: if data.report.is_some() {
+                0
+            } else {
+                data.capture.omitted_packets
+            },
+            analysis: data
+                .report
+                .as_ref()
+                .map(|report| netlane_ai::AnalysisEvidence {
+                    summary: format!(
+                        "{}Período completo: {} a {} (UTC, nanossegundos Unix).\n{} pacote recuperado manualmente além das amostras distribuídas; até 2048 bytes retidos, sem payload no contexto.\n{}",
+                        report.summary_text(baseline),
+                        report.first_unix_nanos.as_deref().unwrap_or("ausente"),
+                        report.last_unix_nanos.as_deref().unwrap_or("ausente"),
+                        data.capture.packets.len().saturating_sub(data.sample_count),
+                        data.collection_note.as_deref().unwrap_or("")
+                    ),
+                    analyzed_packets: report.packets,
+                    sample_packets: report.sample_packets,
+                    baseline_sha256: baseline.map(|r| r.sha256.clone()),
+                    packet_references: baseline.map_or_else(Vec::new, |b| {
+                        report
+                            .compare(b)
+                            .into_iter()
+                            .flat_map(|f| f.packet_references)
+                            .take(24)
+                            .collect()
+                    }),
+                }),
+            packets: indexes
+                .iter()
+                .map(|&index| {
+                    let packet = &data.capture.packets[index];
+                    let summary = &data.summaries[index];
+                    let interface = &data.capture.interfaces[packet.interface];
+                    netlane_ai::PacketEvidence {
+                        number: packet.number,
+                        interface: interface.name.clone(),
+                        section: interface.section,
+                        link_type: interface.link_type,
+                        unix_nanos: packet.timestamp.map(|ts| ts.unix_nanos().to_string()),
+                        captured_bytes: packet.captured_len as usize,
+                        original_bytes: packet.original_len,
+                        protocol: summary.protocol.into(),
+                        source: summary.source.clone(),
+                        destination: summary.destination.clone(),
+                        observation: summary.info.clone(),
+                    }
+                })
+                .collect(),
         }
     }
     fn matches(&self, query: &str) -> Vec<usize> {
@@ -165,6 +361,25 @@ pub struct PacketView {
     collection: Entity<CollectionView>,
     collection_open: bool,
     capture_active: Arc<AtomicBool>,
+    devices: Vec<Device>,
+    device: Option<usize>,
+    picker: bool,
+    listing: bool,
+    bpf: Entity<TextInput>,
+    live: Option<LiveCapture>,
+    /// PCAP image of the live capture, kept for analysis and "Salvar captura".
+    live_file: Vec<u8>,
+    list_scroll: UniformListScrollHandle,
+    follow: bool,
+    /// Long mode records to `captures` for the chosen duration.
+    long_mode: bool,
+    duration_index: usize,
+    captures: std::path::PathBuf,
+    last_recording: Option<std::path::PathBuf>,
+    /// Codex following: last snapshot time, packets covered, snapshot in progress.
+    follow_at: Option<std::time::Instant>,
+    follow_seen: u64,
+    follow_busy: bool,
     _subscription: Subscription,
     _collection_subscription: Subscription,
     _bundle_subscription: Subscription,
@@ -191,6 +406,7 @@ impl PacketView {
             this.refilter(cx);
             cx.notify();
         });
+        let captures = profile.join("captures");
         let collection = cx.new(|cx| {
             CollectionView::new(demo, profile, dialog.clone(), capture_active.clone(), cx)
         });
@@ -204,6 +420,11 @@ impl PacketView {
         });
         let bundle_subscription = cx.subscribe(&codex, |this, _, event: &InvestigationRestored, cx| {
             if let Some(ready) = event.0.borrow_mut().take() {
+                if this.live.is_some() {
+                    this.status = "Pare a captura antes de reabrir uma investigação.".into();
+                    cx.notify();
+                    return;
+                }
                 this.cancel();
                 let mut data = Inspection::scan(ready.scan);
                 data.collection_note = ready.provenance.or_else(|| Some("Origem: dump integral reaberto de uma investigação conferida.\n".into()));
@@ -226,7 +447,8 @@ impl PacketView {
             demo,
             data: None,
             label: String::new(),
-            status: "Abra uma captura PCAP/PCAPNG ou explore o exemplo fictício.".into(),
+            status: "Escolha a interface e inicie a captura, ou abra um arquivo PCAP/PCAPNG."
+                .into(),
             filter,
             packet_number,
             lookup_number: None,
@@ -245,6 +467,22 @@ impl PacketView {
             collection,
             collection_open: false,
             capture_active,
+            devices: Vec::new(),
+            device: None,
+            picker: false,
+            listing: false,
+            bpf: cx.new(|cx| TextInput::new("", "Filtro BPF (ex.: tcp port 443)", cx)),
+            live: None,
+            live_file: Vec::new(),
+            list_scroll: UniformListScrollHandle::new(),
+            follow: false,
+            long_mode: false,
+            duration_index: 1,
+            captures,
+            last_recording: None,
+            follow_at: None,
+            follow_seen: 0,
+            follow_busy: false,
             _subscription: subscription,
             _collection_subscription: collection_subscription,
             _bundle_subscription: bundle_subscription,
@@ -301,6 +539,7 @@ impl PacketView {
         }
         self.cancel();
         self.data = None;
+        self.live_file = Vec::new();
         self.matching.clear();
         self.label.clear();
         self.selected = None;
@@ -312,6 +551,472 @@ impl PacketView {
         }
         .into();
         cx.notify();
+    }
+    fn toggle_picker(&mut self, cx: &mut Context<Self>) {
+        if self.live.is_some() {
+            return;
+        }
+        self.picker = !self.picker;
+        if self.picker && self.devices.is_empty() {
+            self.list_devices(cx);
+        }
+        cx.notify();
+    }
+    fn list_devices(&mut self, cx: &mut Context<Self>) {
+        if self.listing || self.live.is_some() {
+            return;
+        }
+        if self.demo {
+            self.devices = vec![Device {
+                name: "synthetic-no-network".into(),
+                description: "Interface fictícia · sem rede".into(),
+            }];
+            self.device = Some(0);
+            return;
+        }
+        self.listing = true;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async { netlane_windows::npcap::devices() })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.listing = false;
+                match result {
+                    Ok(devices) => {
+                        this.device = (devices.len() == 1).then_some(0);
+                        this.status = if devices.is_empty() {
+                            "Nenhuma interface Npcap disponível.".into()
+                        } else {
+                            "Escolha a interface. A captura ainda não foi iniciada.".into()
+                        };
+                        this.devices = devices;
+                    }
+                    Err(e) => {
+                        this.picker = false;
+                        this.status = format!("Interfaces indisponíveis: {e:#}");
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    fn start_live(&mut self, cx: &mut Context<Self>) {
+        if self.live.is_some()
+            || self.busy
+            || self.dialog.load(Ordering::Relaxed)
+            || self.capture_active.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let Some(device) = self.device.and_then(|i| self.devices.get(i)).cloned() else {
+            self.status = "Escolha a interface de captura.".into();
+            self.toggle_picker(cx);
+            return;
+        };
+        let filter = self.bpf.read(cx).text().trim().to_owned();
+        let minutes = live_capture::DURATIONS[self.duration_index];
+        let started = if self.long_mode {
+            // A new folder per capture; earlier captures are never touched.
+            let directory = self
+                .captures
+                .join(format!("NetLane-{}", uuid::Uuid::new_v4()));
+            let options = netlane_capture::collection::Options {
+                interface: device.name.clone(),
+                filter: filter.clone(),
+                snaplen: live_capture::SNAPLEN,
+                duration_seconds: minutes * 60,
+                ..Default::default()
+            };
+            std::fs::create_dir_all(&self.captures)
+                .map_err(anyhow::Error::from)
+                .and_then(|()| {
+                    if self.demo {
+                        LiveCapture::record(directory, options, || {
+                            Ok(live_capture::Synthetic::new())
+                        })
+                    } else {
+                        let (name, filter) = (device.name.clone(), filter.clone());
+                        LiveCapture::record(directory, options, move || {
+                            netlane_windows::npcap::Capture::open(
+                                &name,
+                                &filter,
+                                live_capture::SNAPLEN,
+                            )
+                        })
+                    }
+                })
+        } else if self.demo {
+            LiveCapture::start(|| Ok(live_capture::Synthetic::new()))
+        } else {
+            let (name, filter) = (device.name.clone(), filter.clone());
+            LiveCapture::start(move || {
+                netlane_windows::npcap::Capture::open(&name, &filter, live_capture::SNAPLEN)
+            })
+        };
+        let live = match started {
+            Ok(live) => live,
+            Err(e) => {
+                self.status = format!("Não foi possível iniciar a captura: {e:#}");
+                cx.notify();
+                return;
+            }
+        };
+        self.cancel();
+        self.live = Some(live);
+        self.capture_active.store(true, Ordering::Relaxed);
+        self.data = None;
+        self.live_file = Vec::new();
+        self.matching.clear();
+        self.selected = None;
+        self.show_bytes = false;
+        self.picker = false;
+        self.follow = true;
+        self.follow_at = None;
+        self.follow_seen = 0;
+        self.last_recording = self
+            .live
+            .as_ref()
+            .and_then(|l| l.recording.as_ref())
+            .map(|r| r.directory.clone());
+        self.label = if self.long_mode {
+            format!(
+                "Captura longa · {} · até {}",
+                device.description,
+                live_capture::duration_label(minutes)
+            )
+        } else {
+            format!("Captura ao vivo · {}", device.description)
+        };
+        self.status = "Abrindo interface e aplicando filtro…".into();
+        let note = format!(
+            "Origem: captura ao vivo {} {}. Interface {:?}; filtro BPF {:?}; até {} bytes por pacote; sem modo promíscuo.\n",
+            if self.demo {
+                "fictícia"
+            } else {
+                "Windows/Npcap"
+            },
+            if self.long_mode {
+                "gravada em disco; a tabela mostra os pacotes mais recentes"
+            } else {
+                "em memória"
+            },
+            device.description,
+            filter,
+            live_capture::SNAPLEN
+        );
+        // Only drain_live clears `live`, and it ends this loop in the same call.
+        cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(80))
+                    .await;
+                let keep = this
+                    .update(cx, |this, cx| this.drain_live(&device, &note, cx))
+                    .unwrap_or(false);
+                if !keep {
+                    break;
+                }
+            }
+        })
+        .detach();
+        cx.notify();
+    }
+    fn stop_live(&mut self, cx: &mut Context<Self>) {
+        if let Some(live) = &self.live {
+            live.stop();
+            self.status = "Encerrando captura…".into();
+            cx.notify();
+        }
+    }
+    /// Moves delivered packets into the table. Returns false when the capture ended.
+    fn drain_live(&mut self, device: &Device, note: &str, cx: &mut Context<Self>) -> bool {
+        let Some(live) = self.live.take() else {
+            return false;
+        };
+        let recording = live.recording.is_some();
+        let mut added = false;
+        let mut ended = None;
+        for _ in 0..64 {
+            match live.events.try_recv() {
+                Ok(live_capture::Event::Started { link_type }) => {
+                    let mut data = Inspection::live(link_type, device.description.clone());
+                    data.collection_note = Some(note.to_owned());
+                    self.data = Some(data);
+                    // Long mode keeps no in-memory image: the PCAP files are on disk.
+                    if !recording {
+                        self.live_file =
+                            live_capture::pcap_header(link_type, live_capture::SNAPLEN);
+                    }
+                    self.status = if recording {
+                        "Gravando nesta interface…"
+                    } else {
+                        "Capturando nesta interface…"
+                    }
+                    .into();
+                }
+                Ok(live_capture::Event::Packets(records)) => {
+                    let Some(data) = self.data.as_mut() else {
+                        continue;
+                    };
+                    if recording {
+                        let mut dropped = 0;
+                        for record in records {
+                            dropped += data.push_window(record);
+                        }
+                        self.selected = self.selected.and_then(|i| i.checked_sub(dropped));
+                        added = true;
+                        continue;
+                    }
+                    for record in records {
+                        if !data.push_live(record, &mut self.live_file) {
+                            live.stop();
+                            self.status = format!(
+                                "Limite de {} pacotes ou {} MiB atingido; encerrando a captura…",
+                                live_capture::MAX_PACKETS,
+                                live_capture::MAX_BYTES / 1024 / 1024
+                            );
+                            break;
+                        }
+                        added = true;
+                    }
+                }
+                Ok(live_capture::Event::Finished { reason, driver }) => {
+                    let driver = driver.map_or_else(
+                        || "perdas do driver indisponíveis".into(),
+                        |d| {
+                            format!(
+                                "driver: {} descartados no buffer, {} na interface",
+                                d.dropped, d.interface_dropped
+                            )
+                        },
+                    );
+                    ended = Some(format!("{reason} {driver}"));
+                    break;
+                }
+                Ok(live_capture::Event::Failed(e)) => {
+                    ended = Some(format!("A captura não foi concluída: {e}"));
+                    break;
+                }
+                Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                    ended = Some("Tarefa de captura encerrada.".into());
+                    break;
+                }
+            }
+        }
+        if added {
+            self.refilter(cx);
+            if self.follow {
+                self.list_scroll.scroll_to_bottom();
+            }
+        }
+        let dropped = live.queue_dropped.load(Ordering::Relaxed);
+        match ended {
+            Some(reason) if recording => {
+                self.capture_active.store(false, Ordering::Relaxed);
+                self.follow = false;
+                let shown = if dropped > 0 {
+                    format!(" {dropped} pacotes gravados não couberam na tabela.")
+                } else {
+                    String::new()
+                };
+                self.status = format!(
+                    "{reason}{shown} Use Abrir pasta para ver os arquivos; Abrir PCAP analisa cada um."
+                );
+            }
+            Some(reason) => self.finish_live(reason, dropped, cx),
+            None => {
+                self.live = Some(live);
+                if !recording {
+                    self.follow_snapshot(cx);
+                }
+            }
+        }
+        cx.notify();
+        self.live.is_some()
+    }
+    /// While Codex follows a diagnostic capture: every 30 s with new packets, hash
+    /// and analyze the in-memory image in the background and hand Codex the same
+    /// metadata-only context a manual send uses (aggregates + newest samples).
+    fn follow_snapshot(&mut self, cx: &mut Context<Self>) {
+        const EVERY: std::time::Duration = std::time::Duration::from_secs(30);
+        if self.follow_busy
+            || !self.codex.read(cx).following()
+            || self.follow_at.is_some_and(|at| at.elapsed() < EVERY)
+        {
+            return;
+        }
+        let Some(data) = &self.data else {
+            return;
+        };
+        let total = data.capture.total_packets;
+        if total <= self.follow_seen {
+            return;
+        }
+        self.follow_busy = true;
+        self.follow_at = Some(std::time::Instant::now());
+        let previous = self.follow_seen;
+        let note = data.collection_note.clone();
+        let file = self.live_file.clone();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    netlane_capture::analysis::read_dump(
+                        std::io::Cursor::new(file),
+                        &AtomicBool::new(false),
+                        &Progress::default(),
+                    )
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.follow_busy = false;
+                let Ok(scan) = result else {
+                    return;
+                };
+                let mut snapshot = Inspection::scan(scan);
+                snapshot.collection_note = note;
+                let samples = snapshot.capture.packets.len();
+                let newest: Vec<usize> = (samples.saturating_sub(8)..samples).collect();
+                if newest.is_empty() {
+                    return;
+                }
+                let context = snapshot.evidence(&newest, None);
+                let question = format!(
+                    "Acompanhamento automático da captura ao vivo: {total} pacotes até agora, {} novos desde o último resumo. O que mudou? Aponte anomalias, hipóteses e o que conferir em seguida. Seja breve.",
+                    total - previous
+                );
+                if this
+                    .codex
+                    .update(cx, |codex, cx| codex.follow_snapshot(context, question, cx))
+                {
+                    this.follow_seen = total;
+                }
+            });
+        })
+        .detach();
+    }
+    /// Hashes and analyzes the PCAP image so references, Codex and export work
+    /// as for an imported file. The table keeps every captured packet.
+    fn finish_live(&mut self, reason: String, dropped: u64, cx: &mut Context<Self>) {
+        self.capture_active.store(false, Ordering::Relaxed);
+        self.follow = false;
+        let packets = self.data.as_ref().map_or(0, |d| d.capture.packets.len());
+        let queue = if dropped > 0 {
+            format!(" {dropped} pacotes descartados porque a tabela não acompanhou.")
+        } else {
+            String::new()
+        };
+        if packets == 0 {
+            self.data = None;
+            self.live_file = Vec::new();
+            self.status = format!("{reason}{queue} Nenhum pacote capturado.");
+            return;
+        }
+        if let Some(note) = self.data.as_mut().and_then(|d| d.collection_note.as_mut()) {
+            note.push_str(&format!("{reason}{queue}\n"));
+        }
+        self.status = format!("{reason}{queue} Analisando {packets} pacotes…");
+        let file = self.live_file.clone();
+        let generation = self.generation;
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    netlane_capture::analysis::read_dump(
+                        std::io::Cursor::new(file),
+                        &AtomicBool::new(false),
+                        &Progress::default(),
+                    )
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                if this.generation != generation {
+                    return;
+                }
+                let Some(data) = this.data.as_mut() else {
+                    return;
+                };
+                match result {
+                    Ok(scan) => {
+                        data.capture.sha256 = scan.capture.sha256;
+                        data.report = Some(scan.report);
+                        this.status = format!(
+                            "{reason}{queue} {packets} pacotes em memória. Use Salvar captura para guardar o PCAP."
+                        );
+                    }
+                    Err(e) => {
+                        this.status = format!("{reason}{queue} Análise não concluída: {e:#}")
+                    }
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+    fn save_live(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.live.is_some() || self.live_file.len() <= 24 || self.dialog.load(Ordering::Relaxed)
+        {
+            return;
+        }
+        let file = self.live_file.clone();
+        let generation = self.generation;
+        let directory = std::env::var_os("USERPROFILE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| ".".into());
+        self.dialog.store(true, Ordering::Relaxed);
+        let target = cx.prompt_for_new_path(&directory, Some("netlane-captura.pcap"));
+        cx.spawn_in(window, async move |this, cx| {
+            let path = match target.await {
+                Ok(Ok(Some(path))) => path,
+                _ => {
+                    let _ = this.update(cx, |this, cx| {
+                        this.dialog.store(false, Ordering::Relaxed);
+                        cx.notify();
+                    });
+                    return;
+                }
+            };
+            let destination = path.clone();
+            let result = cx
+                .background_executor()
+                .spawn(async move {
+                    use std::io::Write;
+                    // create_new never replaces a file chosen between prompt and write.
+                    let mut out = std::fs::OpenOptions::new()
+                        .write(true)
+                        .create_new(true)
+                        .open(&destination)?;
+                    let result = out.write_all(&file).and_then(|()| out.sync_all());
+                    if result.is_err() {
+                        drop(out);
+                        let _ = std::fs::remove_file(&destination);
+                    }
+                    result
+                })
+                .await;
+            let _ = this.update(cx, |this, cx| {
+                this.dialog.store(false, Ordering::Relaxed);
+                this.status = match result {
+                    Ok(()) => {
+                        if this.generation == generation
+                            && let Some(data) = this.data.as_mut()
+                        {
+                            data.source = Some(path.clone());
+                        }
+                        format!("Captura salva em {}.", path.display())
+                    }
+                    Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                        "O arquivo já existe. Escolha outro nome.".into()
+                    }
+                    Err(e) => format!("Não foi possível salvar a captura: {e}"),
+                };
+                cx.notify();
+            });
+        })
+        .detach();
     }
     pub fn prepare_codex(&mut self, cx: &mut Context<Self>) {
         self.prepare_codex_selection(false, cx);
@@ -409,61 +1114,7 @@ impl PacketView {
         else {
             return;
         };
-        let packet = &data.capture.packets[index];
-        let summary = &data.summaries[index];
-        let interface = &data.capture.interfaces[packet.interface];
-        let context = netlane_ai::Context {
-            investigation_id: uuid::Uuid::new_v4().to_string(),
-            sha256: data.capture.sha256.clone(),
-            format: data.capture.format.label().into(),
-            total_packets: data.capture.total_packets,
-            inspected_packets: data
-                .report
-                .as_ref()
-                .map_or(data.capture.packets.len(), |r| r.packets as usize),
-            omitted_packets: if data.report.is_some() {
-                0
-            } else {
-                data.capture.omitted_packets
-            },
-            analysis: data
-                .report
-                .as_ref()
-                .map(|report| netlane_ai::AnalysisEvidence {
-                    summary: format!(
-                        "{}Período completo: {} a {} (UTC, nanossegundos Unix).\n{} pacote recuperado manualmente além das amostras distribuídas; até 2048 bytes retidos, sem payload no contexto.\n{}",
-                        report.summary_text(self.baseline.as_ref()),
-                        report.first_unix_nanos.as_deref().unwrap_or("ausente"),
-                        report.last_unix_nanos.as_deref().unwrap_or("ausente"),
-                        data.capture.packets.len().saturating_sub(data.sample_count),
-                        data.collection_note.as_deref().unwrap_or("")
-                    ),
-                    analyzed_packets: report.packets,
-                    sample_packets: report.sample_packets,
-                    baseline_sha256: self.baseline.as_ref().map(|r| r.sha256.clone()),
-                    packet_references: self.baseline.as_ref().map_or_else(Vec::new, |b| {
-                        report
-                            .compare(b)
-                            .into_iter()
-                            .flat_map(|f| f.packet_references)
-                            .take(24)
-                            .collect()
-                    }),
-                }),
-            packets: vec![netlane_ai::PacketEvidence {
-                number: packet.number,
-                interface: interface.name.clone(),
-                section: interface.section,
-                link_type: interface.link_type,
-                unix_nanos: packet.timestamp.map(|ts| ts.unix_nanos().to_string()),
-                captured_bytes: packet.captured_len as usize,
-                original_bytes: packet.original_len,
-                protocol: summary.protocol.into(),
-                source: summary.source.clone(),
-                destination: summary.destination.clone(),
-                observation: summary.info.clone(),
-            }],
-        };
+        let context = data.evidence(&[index], self.baseline.as_ref());
         let source = data.source();
         let baseline = self.baseline_source.clone();
         self.codex.update(cx, |panel, cx| {
@@ -827,140 +1478,385 @@ impl PacketView {
 impl Render for PacketView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let t = cx.theme().clone();
+        let compact = AppSettings::get(cx).compact;
+        let capturing = self.live.is_some();
+        let device = self
+            .device
+            .and_then(|i| self.devices.get(i))
+            .map_or("Escolher interface", |d| d.description.as_str());
+        // One compact row: capture controls, then file and analysis tools as icons.
+        let chip = |id: &'static str, label: String, cx: &App| {
+            div()
+                .id(id)
+                .h(px(28.))
+                .px(px(8.))
+                .flex()
+                .flex_none()
+                .items_center()
+                .gap(px(4.))
+                .rounded(px(4.))
+                .border_1()
+                .border_color(t.border)
+                .bg(t.elevated)
+                .text_size(px(12.5))
+                .cursor_pointer()
+                .hover(|d| d.bg(cx.theme().hover))
+                .when(capturing, |d| d.opacity(0.6))
+                .child(label)
+        };
+        let divider = || div().w(px(1.)).h(px(18.)).mx(px(4.)).bg(t.border);
+        let hashed = !capturing
+            && self
+                .data
+                .as_ref()
+                .is_some_and(|d| !d.capture.sha256.is_empty());
+        let toolbar = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(4.))
+            .child(
+                chip("capture-interface", format!("{device} ▾"), cx)
+                    .max_w(px(280.))
+                    .truncate()
+                    .on_click(cx.listener(|this, _, _, cx| this.toggle_picker(cx))),
+            )
+            .child(
+                div()
+                    .w(px(220.))
+                    .h(px(28.))
+                    .px(px(8.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(t.border)
+                    .bg(t.editor)
+                    .overflow_hidden()
+                    .child(self.bpf.clone()),
+            )
+            .child(
+                chip(
+                    "capture-mode",
+                    if self.long_mode {
+                        "Longa (disco) ▾".into()
+                    } else {
+                        "Diagnóstico ▾".into()
+                    },
+                    cx,
+                )
+                .tooltip(|_, cx| {
+                    cx.new(|_| {
+                        Tip("Diagnóstico: em memória, análise ao parar. Longa: grava em disco pelo período escolhido.".into())
+                    })
+                    .into()
+                })
+                .on_click(cx.listener(|this, _, _, cx| {
+                    if this.live.is_none() {
+                        this.long_mode = !this.long_mode;
+                        cx.notify();
+                    }
+                })),
+            )
+            .when(self.long_mode, |row| {
+                row.child(
+                    chip(
+                        "capture-duration",
+                        format!(
+                            "{} ▾",
+                            live_capture::duration_label(
+                                live_capture::DURATIONS[self.duration_index]
+                            )
+                        ),
+                        cx,
+                    )
+                    .tooltip(|_, cx| cx.new(|_| Tip("Por quanto tempo gravar".into())).into())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if this.live.is_none() {
+                            this.duration_index =
+                                (this.duration_index + 1) % live_capture::DURATIONS.len();
+                            cx.notify();
+                        }
+                    })),
+                )
+            })
+            .child(if capturing {
+                div()
+                    .id("capture-stop")
+                    .h(px(28.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .rounded(px(4.))
+                    .border_1()
+                    .border_color(t.warning)
+                    .text_size(px(12.5))
+                    .cursor_pointer()
+                    .hover(|d| d.bg(t.hover))
+                    .child(icon("stop", 16., t.warning))
+                    .child("Parar")
+                    .on_click(cx.listener(|this, _, _, cx| this.stop_live(cx)))
+            } else {
+                div()
+                    .id("capture-start")
+                    .h(px(28.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .gap(px(4.))
+                    .rounded(px(4.))
+                    .bg(t.accent)
+                    .text_color(t.text_on_accent)
+                    .text_size(px(12.5))
+                    .cursor_pointer()
+                    .child(icon("play_arrow", 16., t.text_on_accent))
+                    .child("Capturar")
+                    .on_click(cx.listener(|this, _, _, cx| this.start_live(cx)))
+            })
+            .child(divider())
+            .when(!capturing && self.live_file.len() > 24, |row| {
+                row.child(
+                    icon_button("capture-save", "save", "Salvar captura (PCAP)", false, cx)
+                        .on_click(cx.listener(|this, _, w, cx| this.save_live(w, cx))),
+                )
+            })
+            .when_some(self.last_recording.clone(), |row, directory| {
+                row.child(
+                    icon_button(
+                        "capture-folder",
+                        "folder_open",
+                        "Abrir pasta da captura longa",
+                        false,
+                        cx,
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if directory.is_dir() {
+                            cx.open_with_system(&directory);
+                        } else {
+                            this.status = "A pasta da captura ainda não existe.".into();
+                            cx.notify();
+                        }
+                    })),
+                )
+            })
+            .child(
+                icon_button("import-capture", "add", "Abrir arquivo PCAP/PCAPNG", false, cx)
+                    .on_click(cx.listener(|this, _, w, cx| this.import(w, cx))),
+            )
+            .child(
+                icon_button("example-capture", "info", "Exemplo fictício", false, cx)
+                    .on_click(cx.listener(|this, _, _, cx| this.example(cx))),
+            )
+            .child(
+                icon_button("clear-capture", "delete", "Limpar", false, cx)
+                    .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
+            )
+            .child(
+                icon_button(
+                    "packets-raw",
+                    "code",
+                    if self.raw {
+                        "RAW: exibindo o payload imprimível"
+                    } else {
+                        "RAW: mostrar o payload imprimível"
+                    },
+                    self.raw,
+                    cx,
+                )
+                .on_click(cx.listener(|this, _, _, cx| {
+                    this.raw = !this.raw;
+                    cx.notify();
+                })),
+            )
+            .when(self.busy, |row| {
+                row.child(
+                    icon_button("cancel-capture-import", "stop", "Cancelar leitura", false, cx)
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.cancel();
+                            this.status = "Encerrando a leitura…".into();
+                            cx.notify();
+                        })),
+                )
+            })
+            // Analysis needs a hashed capture: imported files and stopped diagnostic captures.
+            .when(hashed, |row| {
+                row.child(divider())
+                    .child(
+                        icon_button(
+                            "prepare-dump-codex",
+                            "send",
+                            "Preparar análise para Codex",
+                            false,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.prepare_codex(cx))),
+                    )
+                    .child(
+                        icon_button(
+                            "packets-baseline",
+                            "check",
+                            "Usar como referência para comparar",
+                            self.baseline.is_some(),
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| {
+                            this.baseline =
+                                this.data.as_ref().and_then(|data| data.report.clone());
+                            this.baseline_source =
+                                this.data.as_ref().and_then(Inspection::source);
+                            cx.notify();
+                        })),
+                    )
+                    .when(self.baseline.is_some(), |row| {
+                        row.child(
+                            icon_button("clear-baseline", "close", "Remover referência", false, cx)
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.baseline = None;
+                                    this.baseline_source = None;
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .child(
+                        icon_button(
+                            "export-pcapng",
+                            "arrow_downward",
+                            "Exportar seleção em PCAPNG",
+                            false,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, w, cx| {
+                            this.export_selection(netlane_capture::Format::PcapNg, w, cx)
+                        })),
+                    )
+                    .child(
+                        icon_button(
+                            "export-pcap",
+                            "save",
+                            "Exportar seleção em PCAP",
+                            false,
+                            cx,
+                        )
+                        .on_click(cx.listener(|this, _, w, cx| {
+                            this.export_selection(netlane_capture::Format::Pcap, w, cx)
+                        })),
+                    )
+            });
+        let picker = self.picker.then(|| {
+            let mut list = div()
+                .id("capture-interfaces")
+                .max_h(px(180.))
+                .overflow_y_scroll()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(t.border)
+                .bg(t.panel);
+            if self.listing {
+                list = list.child(
+                    div()
+                        .px(px(10.))
+                        .py(px(6.))
+                        .text_color(t.text_muted)
+                        .child("Consultando interfaces…"),
+                );
+            }
+            for (index, d) in self.devices.iter().enumerate() {
+                list = list.child(
+                    div()
+                        .id(("capture-if", index))
+                        .px(px(10.))
+                        .py(px(5.))
+                        .flex()
+                        .items_center()
+                        .gap(px(8.))
+                        .cursor_pointer()
+                        .when(self.device == Some(index), |row| row.bg(t.selected))
+                        .hover(|row| row.bg(t.hover))
+                        .child(d.description.clone())
+                        .child(
+                            div()
+                                .min_w_0()
+                                .truncate()
+                                .text_size(px(11.))
+                                .text_color(t.text_muted)
+                                .child(d.name.clone()),
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.device = Some(index);
+                            this.picker = false;
+                            cx.notify();
+                        })),
+                );
+            }
+            list
+        });
+        let status = if let Some(recording) = self.live.as_ref().and_then(|l| l.recording.as_ref())
+        {
+            let p = &recording.progress;
+            format!(
+                "● {} · {} pacotes · {:.1} MiB gravados em {} arquivos · até {} · tabela com os {} mais recentes",
+                self.status,
+                p.seen.load(Ordering::Relaxed),
+                p.bytes.load(Ordering::Relaxed) as f64 / 1_048_576.,
+                p.segments.load(Ordering::Relaxed),
+                live_capture::duration_label(recording.minutes),
+                live_capture::MAX_PACKETS
+            )
+        } else if capturing {
+            format!(
+                "● {} · {} pacotes · {:.1} MiB",
+                self.status,
+                self.data.as_ref().map_or(0, |d| d.capture.total_packets),
+                self.live_file.len() as f64 / 1_048_576.
+            )
+        } else {
+            self.status.clone()
+        };
         let mut root = div()
             .flex()
             .flex_col()
-            .gap(px(14.))
+            .gap(px(if compact { 8. } else { 14. }))
             .min_w_0()
-            .child(
-                div()
-                    .text_size(px(24.))
-                    .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(t.text_strong)
-                    .child("Pacotes"),
-            )
-            .child(
-                div()
-                    .text_color(t.text_muted)
-                    .child("Inspecione uma captura de rede. A análise permanece neste computador."),
-            )
             .child(
                 div()
                     .flex()
                     .flex_wrap()
-                    .gap(px(8.))
+                    .items_baseline()
+                    .gap(px(10.))
                     .child(
-                        Self::button("import-capture", "Abrir PCAP / PCAPNG", cx)
-                            .on_click(cx.listener(|this, _, w, cx| this.import(w, cx))),
+                        div()
+                            .text_size(px(if compact { 20. } else { 24. }))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(t.text_strong)
+                            .child("Pacotes"),
                     )
-                    .child(
-                        Self::button("example-capture", "Exemplo fictício", cx)
-                            .on_click(cx.listener(|this, _, _, cx| this.example(cx))),
-                    )
-                    .child(
-                        Self::button("clear-capture", "Limpar", cx)
-                            .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
-                    )
-                    .child(
-                        Self::button(
-                            "collection-toggle",
-                            if self.collection_open {
-                                "Ocultar coleta longa"
-                            } else {
-                                "Captura longa"
-                            },
-                            cx,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.collection_open = !this.collection_open;
-                            cx.notify();
-                        })),
-                    )
-                    .child(
-                        Self::button(
-                            "packets-raw",
-                            if self.raw {
-                                "RAW: exibindo"
-                            } else {
-                                "RAW: oculto"
-                            },
-                            cx,
-                        )
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.raw = !this.raw;
-                            cx.notify();
-                        })),
-                    )
-                    .when(self.data.is_some(), |row| {
-                        row.child(
-                            Self::button("packets-baseline", "Usar como referência", cx).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.baseline =
-                                        this.data.as_ref().and_then(|data| data.report.clone());
-                                    this.baseline_source =
-                                        this.data.as_ref().and_then(Inspection::source);
-                                    cx.notify();
-                                }),
-                            ),
-                        )
-                        .child(
-                            Self::button("prepare-dump-codex", "Preparar análise para Codex", cx)
-                                .on_click(cx.listener(|this, _, _, cx| this.prepare_codex(cx))),
-                        )
-                        .child(
-                            Self::button("export-pcapng", "Exportar PCAPNG", cx).on_click(
-                                cx.listener(|this, _, w, cx| {
-                                    this.export_selection(netlane_capture::Format::PcapNg, w, cx)
-                                }),
-                            ),
-                        )
-                        .child(
-                            Self::button("export-pcap", "Exportar PCAP", cx).on_click(cx.listener(
-                                |this, _, w, cx| {
-                                    this.export_selection(netlane_capture::Format::Pcap, w, cx)
-                                },
-                            )),
-                        )
-                    })
-                    .when(self.baseline.is_some(), |row| {
-                        row.child(
-                            Self::button("clear-baseline", "Remover referência", cx).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.baseline = None;
-                                    this.baseline_source = None;
-                                    cx.notify();
-                                }),
-                            ),
-                        )
-                    })
-                    .when(self.busy, |row| {
-                        row.child(
-                            Self::button("cancel-capture-import", "Cancelar leitura", cx).on_click(
-                                cx.listener(|this, _, _, cx| {
-                                    this.cancel();
-                                    this.status = "Encerrando a leitura…".into();
-                                    cx.notify();
-                                }),
-                            ),
-                        )
-                    }),
+                    .child(div().text_size(px(12.)).text_color(t.text_muted).child(
+                        "Capture ao vivo ou abra um arquivo. A análise fica neste computador.",
+                    )),
             )
-            .child(div().text_color(t.text_muted).child(self.status.clone()));
-        if self.collection_open || self.capture_active.load(Ordering::Relaxed) {
+            .child(toolbar)
+            .children(picker)
+            .child(
+                div()
+                    .text_color(if capturing { t.ok } else { t.text_muted })
+                    .child(status),
+            );
+        // Segmented long collection stays available to the QA scripts only.
+        if self.collection_open {
             root = root.child(self.collection.clone());
         }
         let Some(data) = &self.data else {
-            return root.child(div().p(px(24.)).rounded(px(6.)).bg(t.panel).child(
-                "Escolha uma captura para começar ou explore os pacotes do exemplo fictício.",
+            return root.child(div().p(px(20.)).rounded(px(6.)).bg(t.panel).text_color(t.text_muted).child(
+                "Nenhum pacote ainda. Escolha a interface e clique em Iniciar captura, ou abra um arquivo PCAP/PCAPNG.",
             ));
         };
         let capture = &data.capture;
-        root=root.child(div().text_size(px(11.)).text_color(t.text_muted).child(
-            "Exportação: pacote selecionado, ou amostras da busca se não houver seleção. Inclui os bytes retidos (até 2 KiB por amostra), em uma pasta nova com recibo; não copia o dump inteiro."));
-        root=root.child(div().p(px(14.)).bg(t.panel).rounded(px(6.)).flex().flex_col().gap(px(5.))
-            .child(div().font_weight(FontWeight::SEMIBOLD).child(self.label.clone()))
-            .child(format!("{} · {} pacotes · {} interfaces · {} bytes",capture.format.label(),capture.total_packets,capture.interfaces.len(),capture.file_bytes))
-            .child(div().font_family(MONO_FONT).text_size(px(11.)).child(format!("SHA-256 {}",capture.sha256)))
+        root=root.child(div().px(px(12.)).py(px(8.)).bg(t.panel).rounded(px(6.)).flex().flex_col().gap(px(4.))
+            .child(div().flex().flex_wrap().items_baseline().gap(px(10.))
+                .child(div().font_weight(FontWeight::SEMIBOLD).child(self.label.clone()))
+                .child(div().text_size(px(12.)).text_color(t.text_muted).child(format!("{} · {} pacotes · {} interfaces · {} bytes",capture.format.label(),capture.total_packets,capture.interfaces.len(),capture.file_bytes))))
+            .when(!capture.sha256.is_empty(),|d|d.child(div().font_family(MONO_FONT).text_size(px(11.)).text_color(t.text_muted).child(format!("SHA-256 {}",capture.sha256))))
             .when(capture.limited(),|d|d.child(div().text_color(t.warning).child(format!("Amostragem: {} pacotes na tabela; {} adicionais entraram nos totais. Até 2048 bytes por amostra. O hash identifica o dump inteiro.",data.sample_count,capture.total_packets-data.sample_count as u64))))
             .when(capture.truncated_packets>0,|d|d.child(format!("{} pacotes têm menos bytes capturados que o tamanho original.",capture.truncated_packets)))
             .when(capture.auxiliary_blocks>0,|d|d.child(format!("{} blocos auxiliares/não reconhecidos não foram interpretados.",capture.auxiliary_blocks))));
@@ -1009,21 +1905,43 @@ impl Render for PacketView {
                 }
             }
         }
-        root = root.child(self.filter.clone());
-        root = root.child(div().flex().flex_wrap().items_center().gap(px(8.))
-            .child(div().w(px(260.)).child(self.packet_number.clone()))
-            .child(Self::button("recover-packet-number", "Abrir por número", cx)
-                .on_click(cx.listener(|this, _, _, cx| this.recover_input(cx))))
-            .child(div().text_size(px(11.)).text_color(t.text_muted)
-                .child("Fora da amostra: confere o dump original em segundo plano; leitura cancelável.")));
+        let input = |child: Entity<TextInput>| {
+            div()
+                .h(px(30.))
+                .px(px(8.))
+                .flex()
+                .items_center()
+                .rounded(px(4.))
+                .border_1()
+                .border_color(t.border)
+                .bg(t.editor)
+                .overflow_hidden()
+                .child(child)
+        };
+        // Search, out-of-sample recovery and match count share one row.
+        root = root.child(
+            div()
+                .flex()
+                .flex_wrap()
+                .items_center()
+                .gap(px(6.))
+                .child(input(self.filter.clone()).flex_1().min_w(px(260.)))
+                .child(input(self.packet_number.clone()).w(px(190.)))
+                .child(
+                    Self::button("recover-packet-number", "Abrir por número", cx)
+                        .on_click(cx.listener(|this, _, _, cx| this.recover_input(cx))),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(t.text_muted)
+                        .child(format!("{} na busca", self.matching.len())),
+                ),
+        );
         if capture.packets.len() > data.sample_count {
             root = root.child(div().text_size(px(11.)).text_color(t.text_muted)
                 .child("1 pacote recuperado fora da amostra, exibido nos detalhes. A busca e a exportação sem seleção continuam usando as amostras distribuídas."));
         }
-        root = root.child(div().text_color(t.text_muted).child(format!(
-            "{} amostras correspondem à busca · rolagem virtualizada · serviço estimado pela porta",
-            self.matching.len()
-        )));
         let cell = |text: String, width: f32, color: gpui::Hsla| {
             div()
                 .w(px(width))
@@ -1034,7 +1952,7 @@ impl Render for PacketView {
         };
         let table = div()
             .id("packet-table-scroll")
-            .h(px(220.))
+            .h(px(if self.selected.is_some() { 300. } else { 420. }))
             .min_w_0()
             .overflow_x_scroll()
             .border_1()
@@ -1102,6 +2020,8 @@ impl Render for PacketView {
                                             .cursor_pointer()
                                             .hover(|d| d.bg(t.hover))
                                             .on_click(cx.listener(move |this, _, _, cx| {
+                                                // Keep the chosen row in view while packets arrive.
+                                                this.follow = false;
                                                 this.selected = Some(index);
                                                 this.show_bytes = false;
                                                 cx.notify();
@@ -1150,6 +2070,7 @@ impl Render for PacketView {
                                     .collect()
                             }),
                         )
+                        .track_scroll(&self.list_scroll)
                         .flex_1()
                         .min_h_0(),
                     ),
@@ -1233,13 +2154,152 @@ impl Render for PacketView {
             }
             root = root.child(details);
         }
-        root.child(div().text_size(px(11.)).text_color(t.text_muted).child("¹ Serviço estimado pela porta. RAW exibe até 96 bytes imprimíveis do payload retido. Sem remontagem ou decifração TLS; comparar capturas com pontos/filtros diferentes exige revisão."))
+        root.child(div().text_size(px(11.)).text_color(t.text_muted).child(format!("¹ Serviço estimado pela porta. Captura ao vivo: até {} pacotes / {} MiB em memória, {} bytes por pacote, sem modo promíscuo. RAW exibe até 96 bytes imprimíveis do payload retido; sem remontagem ou decifração TLS. Captura longa: grava tudo em arquivos PCAP de até 64 MiB ou 60 s, numa pasta nova em {}, até o fim do período ou 4 GiB. Exportar seleção: pacote selecionado, ou até 512 amostras da busca, em pasta nova com recibo.", live_capture::MAX_PACKETS, live_capture::MAX_BYTES / 1024 / 1024, live_capture::SNAPLEN, self.captures.display())))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn live_packets_build_the_same_pcap_the_analyzer_reads_and_stop_at_the_bound() {
+        let example = netlane_capture::example();
+        let mut data = Inspection::live(1, "Interface de teste".into());
+        let mut file = live_capture::pcap_header(1, live_capture::SNAPLEN);
+        for (i, packet) in example.packets.iter().enumerate() {
+            let record = Record {
+                seconds: 1_791_590_400,
+                micros: i as u32 * 1000,
+                original_len: packet.original_len + 10,
+                bytes: packet.bytes.clone(),
+            };
+            assert!(data.push_live(record, &mut file));
+        }
+        assert_eq!(data.capture.total_packets, 6);
+        assert_eq!(data.sample_count, 6);
+        assert_eq!(data.capture.truncated_packets, 6);
+        assert_eq!(data.matches("udp").len(), 6);
+        let scan = netlane_capture::analysis::read_dump(
+            std::io::Cursor::new(file.clone()),
+            &AtomicBool::new(false),
+            &Progress::default(),
+        )
+        .unwrap();
+        assert_eq!(scan.report.packets, 6);
+        for (live, read) in data.capture.packets.iter().zip(&scan.capture.packets) {
+            assert_eq!(
+                (live.number, live.file_offset, live.timestamp, &live.bytes),
+                (read.number, read.file_offset, read.timestamp, &read.bytes)
+            );
+            assert_eq!(
+                (live.captured_len, live.original_len),
+                (read.captured_len, read.original_len)
+            );
+        }
+        // At the packet bound nothing is appended: table and PCAP image stay consistent.
+        while data.capture.packets.len() < live_capture::MAX_PACKETS {
+            let bytes = example.packets[0].bytes.clone();
+            assert!(data.push_live(
+                Record {
+                    seconds: 1_791_590_401,
+                    micros: 0,
+                    original_len: bytes.len() as u32,
+                    bytes,
+                },
+                &mut file,
+            ));
+        }
+        let before = file.len();
+        let extra = Record {
+            seconds: 1_791_590_402,
+            micros: 0,
+            original_len: 42,
+            bytes: vec![0; 42],
+        };
+        assert!(!data.push_live(extra, &mut file));
+        assert_eq!(file.len(), before);
+        assert_eq!(data.capture.total_packets, live_capture::MAX_PACKETS as u64);
+        assert_eq!(data.capture.file_bytes, before as u64);
+    }
+    #[test]
+    fn follow_snapshot_context_from_a_live_capture_is_valid_and_metadata_only() {
+        let example = netlane_capture::example();
+        let mut data = Inspection::live(1, "Interface de teste".into());
+        data.collection_note = Some("Origem: captura ao vivo de teste.\n".into());
+        let mut file = live_capture::pcap_header(1, live_capture::SNAPLEN);
+        // Larger than the analyzer's 512 distributed samples.
+        for i in 0..1500u32 {
+            let mut bytes = example.packets[(i % 6) as usize].bytes.clone();
+            bytes.extend(b"payload-secreto");
+            let record = Record {
+                seconds: 1_791_590_400 + i / 10,
+                micros: i % 10 * 1000,
+                original_len: bytes.len() as u32,
+                bytes,
+            };
+            assert!(data.push_live(record, &mut file));
+        }
+        let scan = netlane_capture::analysis::read_dump(
+            std::io::Cursor::new(file),
+            &AtomicBool::new(false),
+            &Progress::default(),
+        )
+        .unwrap();
+        let mut snapshot = Inspection::scan(scan);
+        snapshot.collection_note = data.collection_note.clone();
+        let samples = snapshot.capture.packets.len();
+        let newest: Vec<usize> = (samples.saturating_sub(8)..samples).collect();
+        let context = snapshot.evidence(&newest, None);
+        context.validate().unwrap();
+        assert_eq!(context.total_packets, 1500);
+        assert_eq!(context.packets.len(), 8);
+        assert_eq!(context.packets.last().unwrap().number, 1500);
+        let prompt = context
+            .prompt("", "Acompanhamento automático: o que mudou?")
+            .unwrap();
+        assert!(!prompt.contains("payload-secreto"));
+    }
+    #[test]
+    fn long_mode_window_keeps_the_newest_packets_and_counts_the_rest() {
+        let bytes = netlane_capture::example().packets[0].bytes.clone();
+        let mut data = Inspection::live(1, "Interface de teste".into());
+        let total = live_capture::MAX_PACKETS + 25;
+        let mut dropped = 0;
+        for i in 0..total {
+            dropped += data.push_window(Record {
+                seconds: 1_791_590_400 + i as u32,
+                micros: 0,
+                original_len: bytes.len() as u32,
+                bytes: bytes.clone(),
+            });
+        }
+        assert_eq!(dropped, 25);
+        assert_eq!(data.capture.packets.len(), live_capture::MAX_PACKETS);
+        assert_eq!(data.capture.total_packets, total as u64);
+        assert_eq!(data.capture.omitted_packets, 25);
+        assert_eq!(data.capture.packets[0].number, 26);
+        assert_eq!(data.capture.packets.last().unwrap().number, total as u64);
+        assert_eq!(data.summaries.len(), data.capture.packets.len());
+        assert_eq!(data.matches("").len(), live_capture::MAX_PACKETS);
+        assert_eq!(
+            data.capture.retained_bytes,
+            live_capture::MAX_PACKETS * bytes.len()
+        );
+        // The byte bound also trims, but always keeps the newest packet.
+        let mut big = Inspection::live(1, "Interface de teste".into());
+        let large = vec![0u8; 16 * 1024 * 1024];
+        for _ in 0..3 {
+            big.push_window(Record {
+                seconds: 1_791_590_400,
+                micros: 0,
+                original_len: large.len() as u32,
+                bytes: large.clone(),
+            });
+        }
+        assert_eq!(big.capture.packets.len(), 2);
+        assert!(big.capture.retained_bytes <= live_capture::MAX_BYTES);
+        assert_eq!(big.capture.packets[0].number, 2);
+    }
     #[test]
     fn search_indexes_metadata_and_excludes_packet_payloads() {
         let mut capture = netlane_capture::example();

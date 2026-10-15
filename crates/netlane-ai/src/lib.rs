@@ -18,6 +18,25 @@ pub const MAX_PACKETS: usize = 16;
 pub const MAX_CONTEXT_BYTES: usize = 32 * 1024;
 pub const MAX_PROBLEM_BYTES: usize = 4096;
 
+/// A question with no capture attached: only the user's own text is sent.
+pub fn general_prompt(problem: &str, question: &str) -> Result<String> {
+    ensure!(
+        problem.len() <= MAX_PROBLEM_BYTES && question.len() <= MAX_PROBLEM_BYTES,
+        "Problema ou pergunta excede 4 KiB."
+    );
+    ensure!(!question.trim().is_empty(), "Escreva a pergunta.");
+    let problem = problem.trim();
+    Ok(format!(
+        "Responda em português, como assistente de diagnóstico de rede. Nenhuma captura foi anexada a esta pergunta: não presuma evidências, endereços ou resultados que o usuário não informou, e deixe claro quando algo depender de observar o tráfego. Não execute comandos, capture tráfego nem altere o computador.\n\n{}Pergunta (texto do usuário):\n{}\n",
+        if problem.is_empty() {
+            String::new()
+        } else {
+            format!("Problema relatado (texto do usuário):\n{problem}\n\n")
+        },
+        question.trim()
+    ))
+}
+
 /// Contains no path, packet bytes, credential, process or environment fields.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PacketEvidence {

@@ -70,7 +70,34 @@ pub struct CodexInfo {
 }
 impl CodexInfo {
     fn label(&self) -> String {
-        format!("Codex CLI {} · login ChatGPT", self.version)
+        if validated_version(&self.version) {
+            format!("Codex CLI {} · login ChatGPT", self.version)
+        } else {
+            format!(
+                "Codex CLI {} (correção não testada da série validada {CODEX_VERSION}) · login ChatGPT",
+                self.version
+            )
+        }
+    }
+}
+/// Patch releases of the validated series share its app-server protocol; the
+/// isolation checks (config, tools, MCP) still run on every start.
+fn accepted_version(reported: &str) -> bool {
+    if validated_version(reported) {
+        return true;
+    }
+    let series = |v: &str| {
+        v.rsplit_once('.')
+            .map(|(series, patch)| (series.to_owned(), patch.to_owned()))
+    };
+    match (series(reported), series(CODEX_VERSION)) {
+        (Some((found, patch)), Some((validated, _))) => {
+            found == validated
+                && !patch.is_empty()
+                && patch.len() <= 4
+                && patch.bytes().all(|b| b.is_ascii_digit())
+        }
+        _ => false,
     }
 }
 pub fn start(
@@ -100,14 +127,11 @@ pub fn start(
         .name("netlane-codex".into())
         .spawn(move || {
             let result = runtime.block_on(run(&info, &home, &workdir, rx, events.clone()));
-            let message = if result.is_ok() {
-                "Conexão Codex encerrada."
-            } else {
-                "Conexão Codex encerrada após erro ou prazo. A causa não foi confirmada; confira o estado antes de reconectar."
+            let message = match result {
+                Ok(()) => "Conexão Codex encerrada.".to_owned(),
+                Err(stage) => format!("Conexão Codex encerrada: {stage}"),
             };
-            let _ = events.blocking_send(Event::Closed {
-                message: message.into(),
-            });
+            let _ = events.blocking_send(Event::Closed { message });
         })
         .map_err(|e| AcpError::Start(e.to_string()))?;
     Ok(AgentHandle { commands })
@@ -144,33 +168,48 @@ struct Rpc {
     next_id: u64,
 }
 impl Rpc {
-    async fn launch(info: &CodexInfo, home: &Path, workdir: &Path) -> Result<Self, ()> {
+    /// Returns the process and the version it reported.
+    async fn launch(
+        info: &CodexInfo,
+        home: &Path,
+        workdir: &Path,
+    ) -> Result<(Self, String), String> {
         let mut version = native_command(info, home, workdir);
         version.arg("--version").stdout(Stdio::piped());
         let version = tokio::time::timeout(Duration::from_secs(5), version.output())
             .await
-            .map_err(|_| ())?
-            .map_err(|_| ())?;
-        if !version.status.success()
-            || String::from_utf8_lossy(&version.stdout).trim()
-                != format!("codex-cli {}", info.version)
-        {
-            return Err(());
+            .map_err(|_| "o Codex não respondeu a --version em 5 s.".to_owned())?
+            .map_err(|e| format!("não foi possível executar o Codex ({e})."))?;
+        let stdout = String::from_utf8_lossy(&version.stdout);
+        let reported = stdout.trim();
+        let found = reported.strip_prefix("codex-cli ").unwrap_or_default();
+        if !version.status.success() || !accepted_version(found) {
+            let shown: String = reported.chars().take(64).collect();
+            return Err(format!(
+                "versão encontrada {shown:?}; o NetLane aceita a série validada {CODEX_VERSION}. Instale com npm i -g @openai/codex@{CODEX_VERSION}."
+            ));
         }
+        let found = found.to_owned();
         let mut cmd = native_command(info, home, workdir);
         cmd.args(["--strict-config", "app-server", "--listen", "stdio://"])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|_| ())?;
-        let input = child.stdin.take().ok_or(())?;
-        let output = BufReader::new(child.stdout.take().ok_or(())?);
-        Ok(Self {
-            child: Some(child),
-            input: Box::new(input),
-            output: Box::new(output),
-            buffer: Vec::new(),
-            next_id: 0,
-        })
+        let mut child = cmd
+            .spawn()
+            .map_err(|e| format!("não foi possível iniciar o servidor do Codex ({e})."))?;
+        let unavailable = || "o servidor do Codex não abriu a comunicação.".to_owned();
+        let input = child.stdin.take().ok_or_else(unavailable)?;
+        let output = BufReader::new(child.stdout.take().ok_or_else(unavailable)?);
+        Ok((
+            Self {
+                child: Some(child),
+                input: Box::new(input),
+                output: Box::new(output),
+                buffer: Vec::new(),
+                next_id: 0,
+            },
+            found,
+        ))
     }
     async fn write(&mut self, value: Value) -> Result<(), ()> {
         let mut bytes = serde_json::to_vec(&value).map_err(|_| ())?;
@@ -336,41 +375,52 @@ async fn begin_turn(
     Ok(())
 }
 
-async fn bootstrap(info: &CodexInfo, home: &Path, workdir: &Path) -> Result<(Rpc, Value), ()> {
-    let mut rpc = Rpc::launch(info, home, workdir).await?;
-    let result=async {
-    let init = rpc.request("initialize", json!({"clientInfo":{"name":"netlane","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}})).await?;
-    if !init.is_object() {
-        return Err(());
+/// Each failing stage is named so the user can act on it; replies stay unread.
+async fn bootstrap(
+    info: &CodexInfo,
+    home: &Path,
+    workdir: &Path,
+) -> Result<(Rpc, Value, String), String> {
+    let (mut rpc, version) = Rpc::launch(info, home, workdir).await?;
+    let result = async {
+        let init = rpc
+            .request("initialize", json!({"clientInfo":{"name":"netlane","version":env!("CARGO_PKG_VERSION")},"capabilities":{"experimentalApi":false}}))
+            .await
+            .map_err(|()| "o servidor do Codex não concluiu a inicialização.")?;
+        if !init.is_object() {
+            return Err("o servidor do Codex respondeu à inicialização em formato inesperado.");
+        }
+        rpc.write(json!({"method":"initialized","params":{}}))
+            .await
+            .map_err(|()| "o servidor do Codex fechou a comunicação.")?;
+        let config = rpc
+            .request("config/read", json!({"includeLayers":false}))
+            .await
+            .map_err(|()| "o Codex não informou a configuração.")?;
+        if !safe_config(&config["config"], home) {
+            return Err("a configuração isolada (somente leitura, sem ferramentas) não foi confirmada pelo Codex.");
+        }
+        let mcp = rpc
+            .request("mcpServerStatus/list", json!({"limit":100}))
+            .await
+            .map_err(|()| "o Codex não informou os servidores MCP.")?;
+        if !mcp["data"].as_array().is_some_and(|data| data.is_empty())
+            || mcp
+                .get("nextCursor")
+                .is_some_and(|cursor| !cursor.is_null())
+        {
+            return Err("há servidores MCP ativos no perfil do NetLane; a conversa exige nenhum.");
+        }
+        rpc.request("account/read", json!({"refreshToken":false}))
+            .await
+            .map_err(|()| "o Codex não informou o estado da conta.")
     }
-    rpc.write(json!({"method":"initialized","params":{}}))
-        .await?;
-    let config = rpc
-        .request("config/read", json!({"includeLayers":false}))
-        .await?;
-    if !safe_config(&config["config"], home) {
-        return Err(());
-    }
-    let mcp = rpc
-        .request("mcpServerStatus/list", json!({"limit":100}))
-        .await?;
-    if !mcp["data"].as_array().is_some_and(|data| data.is_empty())
-        || mcp
-            .get("nextCursor")
-            .is_some_and(|cursor| !cursor.is_null())
-    {
-        return Err(());
-    }
-    let account = rpc
-        .request("account/read", json!({"refreshToken":false}))
-        .await?;
-        Ok(account)
-    }.await;
+    .await;
     match result {
-        Ok(account) => Ok((rpc, account)),
-        Err(()) => {
+        Ok(account) => Ok((rpc, account, version)),
+        Err(stage) => {
             let _ = rpc.close().await;
-            Err(())
+            Err(stage.to_owned())
         }
     }
 }
@@ -386,7 +436,7 @@ async fn logout(rpc: &mut Rpc, info: &CodexInfo, home: &Path, workdir: &Path) ->
         return Err(());
     }
     rpc.close().await?;
-    let (fresh, account) = bootstrap(info, home, workdir).await?;
+    let (fresh, account, _) = bootstrap(info, home, workdir).await.map_err(|_| ())?;
     if !account.get("account").is_some_and(Value::is_null) {
         return Err(());
     }
@@ -400,20 +450,26 @@ async fn run(
     workdir: &Path,
     mut commands: mpsc::Receiver<Command>,
     events: mpsc::Sender<Event>,
-) -> Result<(), ()> {
-    let (mut rpc, account) = bootstrap(info, home, workdir).await?;
+) -> Result<(), String> {
+    let (mut rpc, account, version) = bootstrap(info, home, workdir).await?;
+    // The label shows the version actually running, with a note if untested.
+    let info = CodexInfo {
+        version,
+        ..info.clone()
+    };
     let result = serve(
         &mut rpc,
         account,
-        info,
+        &info,
         home,
         workdir,
         &mut commands,
         &events,
     )
     .await;
-    rpc.close().await?;
-    result
+    let closed = rpc.close().await;
+    result.map_err(|()| "a conversa foi interrompida por erro ou prazo do Codex.".to_owned())?;
+    closed.map_err(|()| "o processo do Codex não confirmou o encerramento.".to_owned())
 }
 async fn serve(
     rpc: &mut Rpc,
@@ -822,7 +878,7 @@ pub fn verify_profile(info: &CodexInfo, home: PathBuf, workdir: PathBuf) -> Resu
         .build()
         .map_err(|e| AcpError::Start(e.to_string()))?;
     runtime.block_on(async {
-        let (mut rpc, account) = bootstrap(info, &home, &workdir)
+        let (mut rpc, account, _) = bootstrap(info, &home, &workdir)
             .await
             .map_err(|_| AcpError::Start("Configuração isolada não confirmada.".into()))?;
         let result = async {
@@ -857,6 +913,30 @@ mod tests {
     use super::*;
     use crate::protocol::JsonLines;
     use tokio::io::{DuplexStream, duplex, split};
+
+    #[test]
+    fn only_patch_releases_of_the_validated_series_are_accepted() {
+        let (series, _) = CODEX_VERSION.rsplit_once('.').unwrap();
+        assert!(accepted_version(CODEX_VERSION));
+        assert!(accepted_version(&format!("{series}.1")));
+        assert!(accepted_version(&format!("{series}.12")));
+        for refused in [
+            "",
+            "0.163.0",
+            "1.162.0",
+            &format!("{series}."),
+            &format!("{series}.1-alpha"),
+            &format!("{series}.99999"),
+            &format!("{series}.1 extra"),
+        ] {
+            assert!(!accepted_version(refused), "{refused:?}");
+        }
+        let untested = CodexInfo {
+            executable: PathBuf::new(),
+            version: format!("{series}.1"),
+        };
+        assert!(untested.label().contains("não testada"));
+    }
 
     async fn write_json(writer: &mut (impl AsyncWrite + Unpin), value: Value) {
         let mut bytes = serde_json::to_vec(&value).unwrap();
