@@ -5,6 +5,7 @@ use crate::{
     executable_icons::ExecutableIcons,
     lifecycle::{ExitDecision, exit_decision},
     packet_view::PacketView,
+    scrollbar::ScrollbarExt,
     settings::{AppSettings, Settings},
     text_input::{TextInput, TextInputEvent},
     theme::{ActiveTheme, MONO_FONT, Themes, UI_FONT},
@@ -1641,8 +1642,22 @@ impl Workspace {
             .flex()
             .flex_wrap()
             .gap(px(if compact { 10. } else { 18. }))
-            .child(div().flex_1().min_w(px(380.)).child(self.default_panel(cx)))
-            .child(div().flex_1().min_w(px(380.)).child(self.quality_panel(cx)));
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(380.))
+                    .child(self.default_panel(cx)),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_col()
+                    .flex_1()
+                    .min_w(px(380.))
+                    .child(self.quality_panel(cx)),
+            );
         div()
             .flex()
             .flex_col()
@@ -2663,7 +2678,8 @@ impl Render for Workspace {
                             .when_some(self.notice.clone(), |d, notice| {
                                 d.child(div().p(px(12.)).text_color(t.ok).child(notice))
                             })
-                            .child(content),
+                            .child(content)
+                            .with_scrollbar(cx),
                     )
                     // Codex chat docked on the right, available on every page.
                     .when(self.chat_open, |d| {

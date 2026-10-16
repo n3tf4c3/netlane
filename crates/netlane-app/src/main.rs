@@ -12,6 +12,7 @@ mod loopback_qa;
 mod packet_view;
 #[cfg(feature = "gui-test")]
 mod proof;
+mod scrollbar;
 mod settings;
 mod text_input;
 mod theme;

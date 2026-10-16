@@ -381,7 +381,7 @@ impl Workspace {
         div()
             .w_full()
             .min_w_0()
-            .flex_none()
+            .flex_1()
             .p(px(16.))
             .rounded(px(8.))
             .bg(t.panel)

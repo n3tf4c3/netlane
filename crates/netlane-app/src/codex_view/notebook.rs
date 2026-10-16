@@ -1,4 +1,5 @@
 use super::*;
+use crate::scrollbar::{Scrollbar, ScrollbarExt};
 use netlane_ai::investigation::MAX_NOTE_BYTES;
 
 fn excerpt(text: &str, limit: usize) -> &str {
@@ -201,7 +202,7 @@ impl CodexView {
     }
     /// Chat bubbles: your question on the right, the answer below it on the left.
     /// Each turn keeps its capture reference and the note/copy actions.
-    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+    pub(super) fn render_conversation(&self, cx: &mut Context<Self>) -> Scrollbar {
         let t = cx.theme().clone();
         let question = |text: String| {
             div().flex().justify_end().child(
@@ -239,7 +240,6 @@ impl CodexView {
             .flex_1()
             .min_h_0()
             .overflow_y_scroll()
-            .track_scroll(&self.chat_scroll)
             .flex()
             .flex_col()
             .gap(px(8.))
@@ -400,7 +400,7 @@ impl CodexView {
                     )),
             );
         }
-        list
+        list.with_scrollbar_for(&self.chat_scroll, cx)
     }
     pub(super) fn render_notes(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();

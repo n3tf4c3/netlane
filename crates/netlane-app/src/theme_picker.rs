@@ -7,6 +7,7 @@ use gpui::{
 };
 
 use crate::{
+    scrollbar::ScrollbarExt,
     text_input::{TextInput, TextInputEvent},
     theme::{ActiveTheme, Themes},
     ui::icon,
@@ -206,7 +207,7 @@ impl Render for ThemePicker {
                     .border_color(t.divider)
                     .child(self.filter.clone()),
             )
-            .child(list)
+            .child(list.with_scrollbar(cx))
             .child(
                 div()
                     .h(px(34.))

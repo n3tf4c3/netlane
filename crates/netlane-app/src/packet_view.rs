@@ -3,6 +3,7 @@ use crate::{
     codex_view::{CodexView, bundle::InvestigationRestored},
     collection_view::{CollectionView, SegmentReady},
     live_capture::{self, LiveCapture},
+    scrollbar::ScrollbarExt,
     settings::AppSettings,
     text_input::TextInput,
     theme::{ActiveTheme, MONO_FONT},
@@ -1789,7 +1790,7 @@ impl Render for PacketView {
                         })),
                 );
             }
-            list
+            list.with_scrollbar(cx)
         });
         let status = if let Some(recording) = self.live.as_ref().and_then(|l| l.recording.as_ref())
         {

@@ -1,4 +1,5 @@
 use super::*;
+use crate::scrollbar::ScrollbarExt;
 use crate::ui::{Tip, icon, icon_button};
 
 /// Reasoning effort names reported by the Codex catalog, in Portuguese.
@@ -323,6 +324,7 @@ impl Render for CodexView {
                 .overflow_y_scroll()
                 .p(px(10.))
                 .child(self.render_notes(cx))
+                .with_scrollbar(cx)
         } else {
             self.render_conversation(cx)
         };
@@ -351,7 +353,8 @@ impl Render for CodexView {
                         .overflow_y_scroll()
                         .font_family(MONO_FONT)
                         .text_size(px(11.))
-                        .child(preview.clone()),
+                        .child(preview.clone())
+                        .with_scrollbar(cx),
                 )
                 .child(
                     div()
