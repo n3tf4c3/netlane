@@ -59,6 +59,44 @@ fn mix(a: Hsla, b: Hsla, t: f32) -> Hsla {
     }
     .into()
 }
+/// WCAG 2.x minimum for normal-size text (1.4.3).
+const MIN_TEXT_CONTRAST: f32 = 4.5;
+fn luminance(color: Hsla) -> f32 {
+    let c = color.to_rgb();
+    let lin = |v: f32| {
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(c.r) + 0.7152 * lin(c.g) + 0.0722 * lin(c.b)
+}
+fn contrast(a: Hsla, b: Hsla) -> f32 {
+    let (a, b) = (luminance(a), luminance(b));
+    (a.max(b) + 0.05) / (a.min(b) + 0.05)
+}
+/// Darkens (light themes) or lightens (dark themes) `fg` only as much as needed
+/// to reach `MIN_TEXT_CONTRAST` on every surface; compliant colors are kept as is.
+fn readable(fg: Hsla, surfaces: &[Hsla], appearance: Appearance) -> Hsla {
+    let target = match appearance {
+        Appearance::Light => hex(0x000000),
+        Appearance::Dark => hex(0xFFFFFF),
+    };
+    let worst = |c: Hsla| {
+        surfaces
+            .iter()
+            .map(|&bg| contrast(c, bg))
+            .fold(f32::INFINITY, f32::min)
+    };
+    if worst(fg) >= MIN_TEXT_CONTRAST {
+        return fg;
+    }
+    (1..=50)
+        .map(|step| mix(fg, target, step as f32 / 50.))
+        .find(|&c| worst(c) >= MIN_TEXT_CONTRAST)
+        .unwrap_or(target)
+}
 pub fn parse_family(json: &str) -> Result<Vec<Theme>> {
     if json.len() > 512 * 1024 {
         bail!("Tema maior que 512 KiB.");
@@ -92,28 +130,36 @@ pub fn parse_family(json: &str) -> Result<Vec<Theme>> {
             let border = color(&["border"]).unwrap_or_else(|| mix(panel, text, 0.2));
             let accent =
                 color(&["text.accent", "icon.accent", "border.focused"]).unwrap_or(hex(0x5AA0F2));
+            let appearance = match entry.appearance.as_str() {
+                "dark" => Appearance::Dark,
+                "light" => Appearance::Light,
+                _ => bail!("Aparência de tema inválida."),
+            };
+            let chrome =
+                color(&["title_bar.background", "status_bar.background"]).unwrap_or(background);
+            let elevated =
+                color(&["elevated_surface.background", "surface.background"]).unwrap_or(panel);
+            let surfaces = [chrome, editor, panel, elevated];
             Ok(Theme {
                 name: entry.name.clone().into(),
-                appearance: match entry.appearance.as_str() {
-                    "dark" => Appearance::Dark,
-                    "light" => Appearance::Light,
-                    _ => bail!("Aparência de tema inválida."),
-                },
-                chrome: color(&["title_bar.background", "status_bar.background"])
-                    .unwrap_or(background),
+                appearance,
+                chrome,
                 editor,
                 panel,
-                elevated: color(&["elevated_surface.background", "surface.background"])
-                    .unwrap_or(panel),
+                elevated,
                 hover: color(&["ghost_element.hover", "element.hover"])
                     .unwrap_or_else(|| mix(panel, text, 0.06)),
                 selected: color(&["ghost_element.selected", "element.selected"])
                     .unwrap_or_else(|| mix(panel, text, 0.12)),
                 border,
                 divider: color(&["border.variant"]).unwrap_or(border),
-                text,
+                text: readable(text, &surfaces, appearance),
                 text_strong: color(&["termiax.text.strong"]).unwrap_or(text),
-                text_muted: color(&["text.muted"]).unwrap_or_else(|| mix(text, panel, 0.35)),
+                text_muted: readable(
+                    color(&["text.muted"]).unwrap_or_else(|| mix(text, panel, 0.35)),
+                    &surfaces,
+                    appearance,
+                ),
                 text_faint: color(&["text.placeholder"]).unwrap_or_else(|| mix(text, panel, 0.55)),
                 text_disabled: color(&["text.disabled"]).unwrap_or_else(|| mix(text, panel, 0.55)),
                 text_on_accent: color(&["termiax.text.on_accent"]).unwrap_or_else(|| {
@@ -183,6 +229,40 @@ mod tests {
         let names: std::collections::HashSet<_> =
             themes.all.iter().map(|t| t.name.clone()).collect();
         assert_eq!(names.len(), themes.all.len());
+    }
+    #[test]
+    fn functional_text_meets_wcag_contrast_on_every_surface() {
+        let mut failures = Vec::new();
+        for t in Themes::load_embedded().all {
+            for (label, fg) in [("text", t.text), ("text_muted", t.text_muted)] {
+                for (surface, bg) in [
+                    ("chrome", t.chrome),
+                    ("editor", t.editor),
+                    ("panel", t.panel),
+                    ("elevated", t.elevated),
+                ] {
+                    let ratio = contrast(fg, bg);
+                    if ratio < MIN_TEXT_CONTRAST {
+                        failures.push(format!("{} {label}/{surface} {ratio:.2}:1", t.name));
+                    }
+                }
+            }
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
+    }
+    #[test]
+    fn readable_keeps_compliant_colors_and_fixes_imported_themes() {
+        let compliant = hex(0x5c6166);
+        assert_eq!(
+            readable(compliant, &[hex(0xfcfcfc)], Appearance::Light),
+            compliant
+        );
+        let theme = &parse_family(
+            r##"{"themes":[{"name":"x","appearance":"light","style":{"text":"#5c6166ff","text.muted":"#8b8e92ff","background":"#ececedff"}}]}"##,
+        )
+        .unwrap()[0];
+        assert!(contrast(theme.text_muted, theme.panel) >= MIN_TEXT_CONTRAST);
+        assert_eq!(theme.text, compliant);
     }
     #[test]
     fn imported_data_is_bounded_and_cannot_load_code() {
