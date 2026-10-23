@@ -3125,7 +3125,7 @@ dependencies = [
 
 [[package]]
 name = "netlane-agent"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "embed-resource",
@@ -3139,7 +3139,7 @@ dependencies = [
 
 [[package]]
 name = "netlane-ai"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "netlane-capture",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "netlane-app"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "embed-resource",
@@ -3174,7 +3174,7 @@ dependencies = [
 
 [[package]]
 name = "netlane-capture"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -3186,7 +3186,7 @@ dependencies = [
 
 [[package]]
 name = "netlane-core"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "serde",
@@ -3200,7 +3200,7 @@ dependencies = [
 
 [[package]]
 name = "netlane-windows"
-version = "1.0.0"
+version = "1.0.1"
 dependencies = [
  "anyhow",
  "httparse",
