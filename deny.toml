@@ -8,4 +8,10 @@ ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste: unmaintained, compile-time macro only; transitive via the pinned GPUI revision. Revisit on GPUI update." },
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz: unmaintained; text shaping of bundled fonts only, transitive via the pinned GPUI revision. Revisit on GPUI update." },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser: unmaintained; parses bundled fonts only, transitive via the pinned GPUI revision. Revisit on GPUI update." },
+    # zbus 5 split crates folded into zbus 6; no safe upgrade yet. Linux-only chain
+    # (gpui_platform -> gpui_linux -> accesskit_unix/oo7/notify-rust); absent from the
+    # x86_64-pc-windows-msvc graph. Accepted 2026-10-23; revisit with the GPUI revision or by 2027-04-01.
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained (merged into zbus 6); Linux-only via gpui_linux, not in the Windows binary. Revisit on GPUI update." },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained (merged into zbus 6); Linux-only via gpui_linux, not in the Windows binary. Revisit on GPUI update." },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained (merged into zbus 6); Linux-only via gpui_linux, not in the Windows binary. Revisit on GPUI update." },
 ]
