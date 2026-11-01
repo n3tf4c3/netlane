@@ -18,7 +18,21 @@ Status: `ABERTO`, `PARCIAL`, `RESOLVIDO`, `REVISAR`, `ABERTO (aceito)`, `ADIADO`
 | 10 | Impersonação do cliente elevado pelo pipe de controle — `SECURITY_ANONYMOUS`, ACL explícita, `first_pipe_instance` e PID + horário de criação verificados | — | FALSO POSITIVO (justificado) | auditoria-2026-10-11-044843 |
 | 11 | Novos avisos unmaintained de zvariant, zvariant_derive e zbus_names fazem falhar cargo deny | Baixa | RESOLVIDO | 2026-10-21: RUSTSEC-2026-0370/0371/0372; cadeia GPUI Linux. Relatório externo auditoria-2026-10-21.md. 2026-10-23: uma exceção específica por aviso em `deny.toml`, com cadeia, motivo e prazo (revisão do GPUI ou 2027-04-01); sem liberação global de `unmaintained`. Não há atualização segura (crates incorporadas ao zbus 6). A cadeia `gpui_platform → gpui_linux` tem 0 ocorrências no grafo `x86_64-pc-windows-msvc`. `cargo deny check advisories` aprovado localmente e na CI 39914969286 (job advisories, que tinha falhado no run 39765994279) |
 | 12 | Contraste baixo de texto auxiliar nos temas opcionais Ayu Light e Ayu Mirage | Baixa | RESOLVIDO | 2026-10-21: text.muted/panel 2,79:1 e 4,09:1; cabeçalho funcional de 11,5 px em packet_view.rs:1967–1985. 2026-10-23: `theme.rs` ajusta `text`/`text_muted` na carga até 4,5:1 sobre chrome, editor, painel e superfície elevada (JSON dos temas intacto; vale também para temas importados). O teste `functional_text_meets_wcag_contrast_on_every_surface` falhou sem a correção em 11 pares (inclui Ayu Dark e Gruvbox Light sobre chrome) e passa com ela. QA visual na VM aprovado pelo titular em 2026-10-23 |
+| 13 | Atualização preventiva de Tokio pendente no lock (RUSTSEC-2026-0386, só `unix::AsyncFd`) | Baixa | RESOLVIDO | Auditoria de 30/10/2026. 2026-10-31: `cargo update -p tokio --precise 1.53.3` (último patch da linha 1.53, sem subir de minor). `cargo clippy --workspace --all-targets --locked -D warnings`, `cargo test --workspace --locked` (178 aprovados) e `cargo build --workspace --release --locked` OK no host, sem executar o NetLane. Aceite do #11 (DBus fora do Windows) segue até a revisão do GPUI ou 01/04/2027. |
 
 Rodada 2026-10-21, HEAD `1e4c5f67f2a5ff28c417034de58b3393769209be`: controles históricos revistos, #9/#10 mantidos como falsos positivos; 176 testes Rust + teste portable e 288 .NET aprovados, Clippy comum/all-features e builds aprovados. Nenhuma execução do app, WFP, captura ou instalador. Código preservado; só este registro documental atualizado. Evidências e limites no relatório externo.
 
 Resolução 2026-10-23, a partir de HEAD `81cb11f`: #11 e #12 resolvidos (QA visual do #12 na VM aprovado pelo titular). 178 testes Rust (+2), Clippy comum/all-features, fmt, build release, teste portable e `cargo deny` aprovados. Adendo no relatório externo.
+
+
+## Rodada transversal 2026-10-30 — 200000
+
+HEAD auditado: `b72249bfc60f1878dab725d5755e718ce4ff755f`. Relatório externo: `C:\Codes\relatorios\netlane\auditoria-2026-10-30-200000.md`. Evidências: `C:\Codes\relatorios\netlane\evidencias-2026-10-30-200000.json`.
+
+Auditoria estática e validações selecionadas; sem correção de código, commit, push ou deploy. Falta de prova operacional não foi convertida em vulnerabilidade presumida.
+
+| ID | Achado | Severidade | Status nesta rodada | Evidência |
+|---|---|---|---|---|
+| 13 | Atualização preventiva de Tokio pendente no lock | baixa | ABERTO | `Cargo.lock:1`; `deny.toml:3`; Advisory confirmado; sem exploração aplicável ao Windows demonstrada. |
+
+Reverificações e decisões históricas: #11 — Justificativa vigente preservada. O relatório detalha alcance/evidência; provas operacionais antigas não foram repetidas.
