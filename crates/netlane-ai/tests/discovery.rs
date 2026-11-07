@@ -1,4 +1,4 @@
-use netlane_ai::codex::{discover_in, validate_executable};
+use netlane_ai::codex::{discover_in, is_lexically_local, validate_executable};
 use std::{fs, path::Path};
 
 fn fixture_file(path: &Path, data: &[u8]) {
@@ -49,4 +49,28 @@ fn discovery_stops_after_64_path_entries() {
     let native = directories[63].join("codex.exe");
     fixture_file(&native, b"fixture");
     assert_eq!(discover_in(directories), Some(native));
+}
+
+#[test]
+fn remote_and_device_paths_are_refused_before_touching_the_filesystem() {
+    // Achado 17: the lexical refusal must come before `is_file`/`metadata`, so a
+    // UNC entry never opens an SMB connection. A local pipe path stands in for the
+    // remote one here: no network is used, and the message proves which check ran.
+    for path in [
+        r"\\.\pipe\netlane-absent\codex.exe",
+        r"\\?\C:\netlane-absent\codex.exe",
+        r"C:\netlane-absent\codex.exe:stream.exe",
+    ] {
+        let error = validate_executable(Path::new(path)).unwrap_err();
+        assert!(
+            error.to_string().contains("remoto ou dispositivo"),
+            "{path}: {error}"
+        );
+    }
+    assert!(!is_lexically_local(Path::new(r"\\server\share\bin")));
+    assert!(!is_lexically_local(Path::new("//server/share/bin")));
+    assert!(!is_lexically_local(Path::new(r"\\?\C:\bin")));
+    assert!(!is_lexically_local(Path::new(r"\rooted\without\drive")));
+    assert!(!is_lexically_local(Path::new(r"bin\codex")));
+    assert!(is_lexically_local(Path::new(r"C:\Program Files\nodejs")));
 }

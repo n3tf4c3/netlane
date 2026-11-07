@@ -77,21 +77,35 @@ impl Drop for Probe {
         self.cancel();
     }
 }
+/// Local drive path, decided by text alone. UNC (`\\host\…`, `//host/…`), device
+/// (`\\?\`, `\\.\`), relative paths and alternate data streams are refused, so the
+/// check never opens an SMB connection or waits on a remote host.
+pub fn is_lexically_local(path: &Path) -> bool {
+    let text = path.to_string_lossy();
+    let bytes = text.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'\\' | b'/')
+        && !text[2..].contains(':')
+        && !text.contains('\0')
+}
 pub fn validate_executable(path: &Path) -> Result<()> {
     let text = path.to_string_lossy();
-    ensure!(
-        path.is_absolute()
-            && path.is_file()
-            && path
-                .extension()
-                .is_some_and(|e| e.eq_ignore_ascii_case("exe")),
-        "Escolha o executável nativo codex.exe instalado."
-    );
+    // Lexical refusal first: nothing below may touch a remote or device path.
     ensure!(
         !text.starts_with("\\\\")
             && !text.starts_with("//")
             && !text.get(2..).is_some_and(|s| s.contains(':')),
         "Executável remoto ou dispositivo recusado."
+    );
+    ensure!(
+        is_lexically_local(path)
+            && path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("exe"))
+            && path.is_file(),
+        "Escolha o executável nativo codex.exe instalado."
     );
     Ok(())
 }
@@ -112,6 +126,11 @@ pub fn discover_in(directories: impl IntoIterator<Item = PathBuf>) -> Option<Pat
         "codex-win32-x64"
     };
     for directory in directories.into_iter().take(64) {
+        // A UNC entry in PATH would otherwise be probed (metadata, package.json)
+        // on the UI thread before any refusal.
+        if !is_lexically_local(&directory) {
+            continue;
+        }
         let direct = directory.join("codex.exe");
         if validate_executable(&direct).is_ok() {
             return Some(direct);
