@@ -23,16 +23,16 @@ if (args[0] == "--default-connection-session")
 }
 await protocol.SendAsync(new("Hello"), deadline.Token);
 var start = await protocol.ReceiveAsync(deadline.Token);
-if (start.Kind != "Start" || start.PolicyPath is null) return 2;
+// The rules travel in Start; the probe, like the service, never opens the policy file.
+if (start.Kind != "Start" || start.PolicyPath is null || start.Policies is null || start.PolicyRevision is null) return 2;
 if (Environment.GetEnvironmentVariable("NETLANE_PROBE_MODE") == "fail-start")
 {
     await protocol.SendAsync(new("Error", Detail: "Falha sintética antes do motor.", Success: false), deadline.Token);
     await protocol.SendAsync(new("Stopped", Detail: "Simulação encerrada sem tocar a rede."), deadline.Token);
     return 1;
 }
-var file = new RoutingPolicyFile(start.PolicyPath).Load();
 var snapshot = new RoutingServiceSnapshot(DateTimeOffset.UtcNow, Environment.ProcessId, start.PolicyPath,
-    file.Revision, "SyntheticControlProbe", "Ready", file.Policies.Where(p => p.Enabled)
+    start.PolicyRevision, "SyntheticControlProbe", "Ready", start.Policies.Where(p => p.Enabled)
         .Select(p => new RoutingRuleStatus(p.ApplicationId, true, "Retorno sintético, sem políticas reais.")).ToArray());
 await protocol.SendAsync(new("Snapshot", Snapshot: snapshot), deadline.Token);
 if (Environment.GetEnvironmentVariable("NETLANE_PROBE_MODE") == "abrupt-exit") return 0;
@@ -40,6 +40,13 @@ while (true)
 {
     var message = await protocol.ReceiveAsync(deadline.Token);
     if (message.Kind == "Ping") continue;
+    if (message.Kind == "Update" && message.Policies is { } updated && message.PolicyRevision is { } revision)
+    {
+        snapshot = snapshot with { PolicyRevision = revision, UpdatedAtUtc = DateTimeOffset.UtcNow, Rules = updated.Where(p => p.Enabled)
+            .Select(p => new RoutingRuleStatus(p.ApplicationId, true, "Retorno sintético, sem políticas reais.")).ToArray() };
+        await protocol.SendAsync(new("Snapshot", Snapshot: snapshot), deadline.Token);
+        continue;
+    }
     if (message.Kind != "Stop") return 2;
     await protocol.SendAsync(new("Snapshot", Snapshot: snapshot with { State = "Stopped", Rules = [], UpdatedAtUtc = DateTimeOffset.UtcNow }), deadline.Token);
     var failed = Environment.GetEnvironmentVariable("NETLANE_PROBE_MODE") == "fail-cleanup";

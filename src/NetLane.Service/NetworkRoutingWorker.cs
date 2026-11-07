@@ -20,10 +20,12 @@ internal sealed class NetworkRoutingWorker : BackgroundService
     private readonly HashSet<string> _activeAppliedRules = new(StringComparer.OrdinalIgnoreCase);
     private string? _policyRevision;
     private readonly Action<RoutingServiceSnapshot>? _sessionPublisher;
+    private readonly SessionPolicies? _sessionPolicies;
 
     public NetworkRoutingWorker(INetworkInterfaceDetector interfaceDetector, IApplicationCatalog applicationCatalog,
         IRoutingEngine routingEngine, IOptions<NetLaneRoutingOptions> options, IHostEnvironment hostEnvironment,
-        ILogger<NetworkRoutingWorker> logger, Action<RoutingServiceSnapshot>? sessionPublisher = null)
+        ILogger<NetworkRoutingWorker> logger, Action<RoutingServiceSnapshot>? sessionPublisher = null,
+        SessionPolicies? sessionPolicies = null)
     {
         _interfaceDetector = interfaceDetector;
         _applicationCatalog = applicationCatalog;
@@ -31,6 +33,9 @@ internal sealed class NetworkRoutingWorker : BackgroundService
         _logger = logger;
         _options = options.Value;
         _sessionPublisher = sessionPublisher;
+        // UI session: rules only from the authenticated channel, never from the profile file.
+        _sessionPolicies = sessionPublisher is null || sessionPolicies is not null ? sessionPolicies
+            : throw new ArgumentNullException(nameof(sessionPolicies), "A sessão exige as regras recebidas pelo canal.");
         _resolvedPolicyFilePath = string.IsNullOrWhiteSpace(_options.PolicyFilePath) ? string.Empty
             : Path.GetFullPath(_options.PolicyFilePath, hostEnvironment.ContentRootPath);
         _statusFile = new RoutingStatusFile(string.IsNullOrEmpty(_resolvedPolicyFilePath)
@@ -88,6 +93,11 @@ internal sealed class NetworkRoutingWorker : BackgroundService
         {
             stoppingToken.ThrowIfCancellationRequested();
             if (!policy.Enabled || policy.RouteMode == NetworkRouteMode.Automatic) continue;
+            if (!string.IsNullOrWhiteSpace(policy.ExecutablePath) && !LocalPath.IsLexicallyLocal(policy.ExecutablePath))
+            {
+                statuses.Add(new(policy.ApplicationId, false, "Caminho remoto ou de dispositivo recusado. Use um executável em unidade local."));
+                continue;
+            }
             var targetApp = ResolveApplication(policy, applications);
             if (targetApp is null)
             {
@@ -143,7 +153,8 @@ internal sealed class NetworkRoutingWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(appId)) return null;
         if (!string.IsNullOrWhiteSpace(policy.ExecutablePath))
         {
-            return Path.IsPathFullyQualified(policy.ExecutablePath) && File.Exists(policy.ExecutablePath)
+            // Lexical check first: File.Exists on a UNC path would open SMB as administrator.
+            return LocalPath.IsLexicallyLocal(policy.ExecutablePath) && File.Exists(policy.ExecutablePath)
                 ? new ApplicationIdentity { Id = appId, Name = Path.GetFileName(policy.ExecutablePath),
                     ExecutablePath = policy.ExecutablePath, LastSeenUtc = DateTimeOffset.UtcNow }
                 : null;
@@ -163,6 +174,13 @@ internal sealed class NetworkRoutingWorker : BackgroundService
     private IReadOnlyList<RoutingPolicy> LoadPolicies()
     {
         _policyRevision = null;
+        if (_sessionPolicies is not null)
+        {
+            // UI session: rules arrive over the authenticated pipe; never reread the user's file.
+            var received = _sessionPolicies.Current;
+            _policyRevision = received.Revision;
+            return received.Policies;
+        }
         if (!string.IsNullOrEmpty(_resolvedPolicyFilePath))
         {
             var snapshot = new RoutingPolicyFile(_resolvedPolicyFilePath).Load();

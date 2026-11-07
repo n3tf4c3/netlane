@@ -22,7 +22,8 @@ public static class RelatedExecutableResolver
             if (!policy.IncludeRelatedExecutables || !policy.Enabled
                 || policy.RouteMode == NetworkRouteMode.Automatic
                 || !string.Equals(Path.GetFileName(policy.ExecutablePath), "steam.exe", StringComparison.OrdinalIgnoreCase)
-                || !Path.IsPathFullyQualified(policy.ExecutablePath!)) continue;
+                // Lexical check before File.Exists: never probe a UNC/device tree.
+                || !LocalPath.IsLexicallyLocal(policy.ExecutablePath)) continue;
             var root = Path.GetDirectoryName(policy.ExecutablePath)!;
             // Known Steam companions only. Do not inherit arbitrary children (games, shells, launchers).
             foreach (var relatedPath in ResolveSteamRelatedExecutables(root).Where(File.Exists).Distinct(StringComparer.OrdinalIgnoreCase))

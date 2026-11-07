@@ -94,8 +94,16 @@ public sealed class RoutingPolicyFile(string path)
     private static string? RevisionOf(byte[]? content) =>
         content is null ? null : Convert.ToHexString(SHA256.HashData(content));
 
-    private static void Validate(IEnumerable<RoutingPolicy> policies)
+    /// <summary>Rules per file; a full session snapshot fits in one control frame (same as the Rust port).</summary>
+    public const int MaximumPolicies = 4096;
+
+    public static void Validate(IReadOnlyCollection<RoutingPolicy> policies)
     {
+        if (policies.Count > MaximumPolicies)
+        {
+            throw new InvalidDataException($"Limite de {MaximumPolicies} regras excedido.");
+        }
+
         var applications = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var policy in policies)
         {

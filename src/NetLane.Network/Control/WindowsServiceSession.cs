@@ -32,6 +32,8 @@ public sealed class WindowsServiceSession(string policyPath, string? serviceExec
     private Task _reader = Task.CompletedTask, _pinger = Task.CompletedTask, _exit = Task.CompletedTask;
     private bool _receivedStopped;
     private bool _cleanupConfirmed;
+    private string? _sentRevision;
+    private bool _invalidPolicyReported;
     public bool OwnsRunningProcess => _process is { HasExited: false };
     public bool IsAvailable => serviceExecutable is not null && File.Exists(serviceExecutable);
     public string? ServiceExecutablePath => serviceExecutable;
@@ -63,7 +65,8 @@ public sealed class WindowsServiceSession(string policyPath, string? serviceExec
             _lifetime?.Dispose();
             _lifetime = new();
             Snapshot = null;
-            _receivedStopped = _cleanupConfirmed = false;
+            _receivedStopped = _cleanupConfirmed = _invalidPolicyReported = false;
+            _sentRevision = null;
             // This lease is deliberately created by the unelevated UI, not by the privileged worker.
             _policyLease = new FileStream(new RoutingStatusFile(policyPath).InstanceLockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite,
                 FileShare.None, 1, FileOptions.DeleteOnClose);
@@ -97,7 +100,13 @@ public sealed class WindowsServiceSession(string policyPath, string? serviceExec
             _reader = ReadMessagesAsync(_protocol, _pipe, firstReceipt, _lifetime.Token);
             _pinger = SendKeepAliveAsync(_protocol, _lifetime.Token);
             SetStatus("Iniciando a sessão e verificando os pré-requisitos…");
-            await _protocol.SendAsync(new("Start", PolicyPath: policyPath, AllowTemporaryRoutePolicies: allowTemporaryRoutePolicies), deadline.Token);
+            // The unelevated window reads its own file and sends the rules; the elevated process
+            // never reads the user-writable profile (achado 2).
+            var rules = new RoutingPolicyFile(policyPath).Load();
+            if (rules.Revision is null) throw new InvalidOperationException("Salve as regras em um arquivo local antes de iniciar o serviço.");
+            _sentRevision = rules.Revision;
+            await _protocol.SendAsync(new("Start", PolicyPath: policyPath, AllowTemporaryRoutePolicies: allowTemporaryRoutePolicies,
+                Policies: rules.Policies, PolicyRevision: rules.Revision), deadline.Token);
             await firstReceipt.Task.WaitAsync(deadline.Token);
         }
         catch (Exception ex) when (creatingSession)
@@ -215,9 +224,38 @@ public sealed class WindowsServiceSession(string policyPath, string? serviceExec
         try
         {
             using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
-            while (await timer.WaitForNextTickAsync(token)) await protocol.SendAsync(new("Ping"), token);
+            while (await timer.WaitForNextTickAsync(token))
+            {
+                await protocol.SendAsync(new("Ping"), token);
+                await SendChangedPoliciesAsync(protocol, token);
+            }
         }
         catch (Exception ex) when (ex is IOException or OperationCanceledException or ObjectDisposedException) { }
+    }
+
+    // Saved edits reach the running session through Update, read here without elevation.
+    private async Task SendChangedPoliciesAsync(SessionProtocol protocol, CancellationToken token)
+    {
+        if (Volatile.Read(ref _sentRevision) is not { } sent) return; // Start not sent yet.
+        PolicyFileSnapshot rules;
+        try { rules = new RoutingPolicyFile(policyPath).Load(); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidDataException or System.Text.Json.JsonException)
+        {
+            if (!_invalidPolicyReported)
+            {
+                _invalidPolicyReported = true;
+                SetStatus("O arquivo de regras não pôde ser lido; a sessão mantém as últimas regras enviadas. " + ex.Message);
+            }
+            return;
+        }
+        _invalidPolicyReported = false;
+        if (rules.Revision is null || string.Equals(rules.Revision, sent, StringComparison.Ordinal)) return;
+        try { await protocol.SendAsync(new("Update", Policies: rules.Policies, PolicyRevision: rules.Revision), token); }
+        catch (MessageTooLargeException)
+        {
+            SetStatus("As regras salvas excedem o canal de controle; a sessão mantém as últimas regras enviadas.");
+        }
+        Volatile.Write(ref _sentRevision, rules.Revision);
     }
 
     private async Task ObserveExitAsync(Process process)

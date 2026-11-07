@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
+using NetLane.Core.Models;
 using NetLane.Core.Persistence;
 using NetLane.Network;
 using NetLane.Network.Control;
@@ -23,9 +24,9 @@ internal static class ManagedUiSession
         using var handshakeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(15));
         await protocol.SendAsync(new("Hello"), handshakeTimeout.Token);
         var request = await protocol.ReceiveAsync(handshakeTimeout.Token);
-        ValidateStartRequest(request);
+        var policies = ValidateStartRequest(request);
 
-        var monitor = MonitorOwnerAsync(owner, protocol, sessionStop);
+        var monitor = MonitorOwnerAsync(owner, protocol, policies, sessionStop);
         var flags = new TemporaryRoutePolicies(new WindowsRoutePolicySettings());
         var errors = new List<string>();
         IDisposable? routingLease = null;
@@ -37,20 +38,10 @@ internal static class ManagedUiSession
             routingLease = SessionPipe.AcquireRoutingLease();
             var check = WindowsRoutingPrerequisites.Check();
             if (!check.ApiAvailable || !check.IsAdministrator) throw new InvalidOperationException(check.Summary);
-            // Validate read-only before changing any machine setting. No bootstrap or elevated file writes.
-            new RoutingPolicyFile(request.PolicyPath!).Load();
             sessionStop.Token.ThrowIfCancellationRequested();
             flags.Enable(request.AllowTemporaryRoutePolicies, sessionStop.Token);
             sessionStop.Token.ThrowIfCancellationRequested();
-            host = Program.CreateHost([], request.PolicyPath, snapshot =>
-            {
-                try
-                {
-                    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
-                    protocol.SendAsync(new("Snapshot", Snapshot: snapshot), deadline.Token).GetAwaiter().GetResult();
-                }
-                catch { sessionStop.Cancel(); throw; }
-            });
+            host = Program.CreateHost([], request.PolicyPath, snapshot => PublishSnapshot(protocol, snapshot, sessionStop), policies);
             applicationStopping = host.Services.GetRequiredService<IHostApplicationLifetime>().ApplicationStopping.Register(sessionStop.Cancel);
             await host.StartAsync(sessionStop.Token);
             await Task.Delay(Timeout.InfiniteTimeSpan, sessionStop.Token);
@@ -90,15 +81,39 @@ internal static class ManagedUiSession
         return errors.Count == 0 ? 0 : 1;
     }
 
-    internal static void ValidateStartRequest(SessionMessage message)
+    // The path is only the snapshot label: checked by text, never opened by the elevated process.
+    // The rules themselves come in the message, validated before any machine setting changes.
+    internal static SessionPolicies ValidateStartRequest(SessionMessage message)
     {
-        if (message.Kind != "Start" || string.IsNullOrWhiteSpace(message.PolicyPath)
-            || !Path.IsPathFullyQualified(message.PolicyPath) || !File.Exists(message.PolicyPath)
-            || message.PolicyPath.StartsWith(@"\\", StringComparison.Ordinal))
-            throw new InvalidDataException("O início exige um arquivo local de regras existente com caminho completo.");
+        if (message.Kind != "Start" || !LocalPath.IsLexicallyLocal(message.PolicyPath))
+            throw new InvalidDataException("O início exige o caminho completo de um arquivo local de regras.");
+        return new SessionPolicies(message.Policies, message.PolicyRevision);
     }
 
-    private static async Task MonitorOwnerAsync(Process owner, SessionProtocol protocol, CancellationTokenSource stop)
+    // A snapshot too large for one frame is predictable telemetry, not a broken channel: nothing
+    // was written, so send a compact notice and keep the valid policies (achado 3). Any other
+    // failure means the controller is gone and ends the session.
+    internal static void PublishSnapshot(SessionProtocol protocol, RoutingServiceSnapshot snapshot, CancellationTokenSource sessionStop)
+    {
+        try
+        {
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+            try { protocol.SendAsync(new("Snapshot", Snapshot: snapshot), deadline.Token).GetAwaiter().GetResult(); }
+            catch (MessageTooLargeException)
+            {
+                var compact = snapshot with
+                {
+                    State = snapshot.State is "Stopped" or "Error" ? snapshot.State : "Attention",
+                    Rules = [],
+                    Error = $"Estado de {snapshot.Rules.Count} regras excede o canal de controle; as regras válidas continuam aplicadas."
+                };
+                protocol.SendAsync(new("Snapshot", Snapshot: compact), deadline.Token).GetAwaiter().GetResult();
+            }
+        }
+        catch { sessionStop.Cancel(); throw; }
+    }
+
+    private static async Task MonitorOwnerAsync(Process owner, SessionProtocol protocol, SessionPolicies policies, CancellationTokenSource stop)
     {
         async Task WatchProcess()
         {
@@ -116,6 +131,8 @@ internal static class ManagedUiSession
                     deadline.CancelAfter(TimeSpan.FromSeconds(20));
                     var message = await protocol.ReceiveAsync(deadline.Token);
                     if (message.Kind == "Stop") break;
+                    // Rules edited in the window; an invalid update ends the session like any invalid command.
+                    if (message.Kind == "Update") { policies.Replace(message.Policies, message.PolicyRevision); continue; }
                     if (message.Kind != "Ping") throw new InvalidDataException("Comando não permitido nesta sessão.");
                 }
             }

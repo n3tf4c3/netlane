@@ -13,19 +13,23 @@ using NetLane.Network.DefaultConnection;
 
 namespace NetLane.Network.Control;
 
+// Start/Update carry the validated rules over the authenticated channel: the elevated process
+// never rereads the user-writable policy file. PolicyPath is only a label for the snapshot.
 public sealed record SessionMessage(string Kind, string? PolicyPath = null, bool AllowTemporaryRoutePolicies = false,
     RoutingServiceSnapshot? Snapshot = null, string? Detail = null, bool Success = true,
-    ConnectionRequest? ConnectionRequest = null, ConnectionResult? ConnectionResult = null);
+    ConnectionRequest? ConnectionRequest = null, ConnectionResult? ConnectionResult = null,
+    IReadOnlyList<RoutingPolicy>? Policies = null, string? PolicyRevision = null);
 
 public sealed class SessionProtocol(Stream stream)
 {
-    public const int MaximumMessageBytes = 65_536;
+    /// <summary>Fits RoutingPolicyFile.MaximumPolicies and their snapshot (same as the Rust agent).</summary>
+    public const int MaximumMessageBytes = 8 * 1024 * 1024;
     private readonly SemaphoreSlim _writer = new(1, 1);
 
     public async Task SendAsync(SessionMessage message, CancellationToken cancellationToken)
     {
         var bytes = JsonSerializer.SerializeToUtf8Bytes(message);
-        if (bytes.Length > MaximumMessageBytes) throw new InvalidDataException("Mensagem de controle excede o limite.");
+        if (bytes.Length > MaximumMessageBytes) throw new MessageTooLargeException();
         await _writer.WaitAsync(cancellationToken);
         try
         {
@@ -152,3 +156,6 @@ public static class SessionPipe
     [return: MarshalAs(UnmanagedType.Bool)]
     private static extern bool GetNamedPipeServerProcessId(SafePipeHandle pipe, out uint processId);
 }
+
+/// <summary>Raised before any byte is written, so the channel is still usable.</summary>
+public sealed class MessageTooLargeException() : IOException("Mensagem de controle excede o limite.");

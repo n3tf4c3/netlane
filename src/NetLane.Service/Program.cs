@@ -33,7 +33,8 @@ internal static class Program
         return 0;
     }
 
-    internal static IHost CreateHost(string[] args, string? policyPath = null, Action<RoutingServiceSnapshot>? publisher = null)
+    internal static IHost CreateHost(string[] args, string? policyPath = null, Action<RoutingServiceSnapshot>? publisher = null,
+        SessionPolicies? sessionPolicies = null)
     {
         var builder = Host.CreateApplicationBuilder(new HostApplicationBuilderSettings
         { Args = args, ContentRootPath = policyPath is null ? null : AppContext.BaseDirectory });
@@ -60,6 +61,7 @@ internal static class Program
         if (publisher is not null)
         {
             builder.Services.AddSingleton(publisher);
+            builder.Services.AddSingleton(sessionPolicies ?? throw new ArgumentNullException(nameof(sessionPolicies)));
             builder.Services.Configure<NetLaneRoutingOptions>(options =>
             {
                 options.PolicyFilePath = policyPath!;

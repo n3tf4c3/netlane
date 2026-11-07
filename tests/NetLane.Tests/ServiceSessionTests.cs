@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO.Pipes;
 using System.Security.AccessControl;
 using System.Security.Principal;
+using NetLane.Core.Models;
 using NetLane.Core.Persistence;
 using NetLane.Network.Control;
 using NetLane.Service;
@@ -20,13 +21,13 @@ public sealed class ServiceSessionTests
         await protocol.SendAsync(new("Ping"), TestContext.Current.CancellationToken);
         stream.Position = 0;
         Assert.Equal("Ping", (await protocol.ReceiveAsync(TestContext.Current.CancellationToken)).Kind);
-        await Assert.ThrowsAsync<InvalidDataException>(() => protocol.SendAsync(new("Error", Detail: new string('x', SessionProtocol.MaximumMessageBytes)), TestContext.Current.CancellationToken));
+        await Assert.ThrowsAsync<MessageTooLargeException>(() => protocol.SendAsync(new("Error", Detail: new string('x', SessionProtocol.MaximumMessageBytes)), TestContext.Current.CancellationToken));
     }
 
     [Theory]
     [InlineData(-1)]
     [InlineData(0)]
-    [InlineData(65537)]
+    [InlineData(SessionProtocol.MaximumMessageBytes + 1)]
     public async Task InvalidFrameLengthsAreRejectedBeforeAllocation(int length)
     {
         var header = new byte[4];
@@ -81,14 +82,76 @@ public sealed class ServiceSessionTests
     public void UnexpectedPipeNamesAreRejected(string name) => Assert.False(SessionPipe.IsValidName(name));
 
     [Fact]
-    public void StartRequestIsBoundedToAnExistingLocalPolicyFile()
+    public void StartRequestCarriesValidatedRulesAndItsPathIsCheckedByTextOnly()
+    {
+        // Achado 2: the elevated process neither opens nor probes the policy path; the label is
+        // checked lexically (a missing local file is fine) and the rules travel in the message.
+        var revision = new string('A', 64);
+        var path = Path.Combine(Path.GetTempPath(), "netlane-never-created-" + Guid.NewGuid().ToString("N"), "rules.json");
+        RoutingPolicy[] rules = [new() { ApplicationId = "app.exe" }];
+        var received = ManagedUiSession.ValidateStartRequest(new("Start", PolicyPath: path, Policies: rules, PolicyRevision: revision));
+        Assert.Equal("app.exe", Assert.Single(received.Current.Policies).ApplicationId);
+        Assert.False(File.Exists(path));
+        rules[0].ApplicationId = "changed-after-validation.exe";
+        Assert.Equal("app.exe", Assert.Single(received.Current.Policies).ApplicationId);
+        SessionMessage[] refused =
+        [
+            new("RunCommand", PolicyPath: path, Policies: rules, PolicyRevision: revision),
+            new("Start", PolicyPath: "rules.json", Policies: rules, PolicyRevision: revision),
+            new("Start", PolicyPath: @"\\server\share\rules.json", Policies: rules, PolicyRevision: revision),
+            new("Start", PolicyPath: @"\\?\C:\rules.json", Policies: rules, PolicyRevision: revision),
+            new("Start", PolicyPath: path),
+            new("Start", PolicyPath: path, Policies: rules, PolicyRevision: "not-a-hash"),
+            new("Start", PolicyPath: path, Policies: [new() { ApplicationId = "a.exe" }, new() { ApplicationId = "A.EXE" }], PolicyRevision: revision),
+            new("Start", PolicyPath: path, PolicyRevision: revision,
+                Policies: Enumerable.Range(0, RoutingPolicyFile.MaximumPolicies + 1).Select(i => new RoutingPolicy { ApplicationId = $"app{i}.exe" }).ToArray()),
+        ];
+        foreach (var message in refused)
+            Assert.Throws<InvalidDataException>(() => ManagedUiSession.ValidateStartRequest(message));
+    }
+
+    [Fact]
+    public async Task OversizedSnapshotIsReplacedByACompactNoticeWithoutEndingTheSession()
+    {
+        // Achado 3: 512 long receipts used to exceed the 64 KiB frame, and the publisher then
+        // cancelled the whole session (removing every policy). Now the frame fits the rule cap,
+        // and anything larger still is sent as a compact notice, keeping the session alive.
+        using var stream = new MemoryStream();
+        var protocol = new SessionProtocol(stream);
+        using var stop = new CancellationTokenSource();
+        RoutingServiceSnapshot Snapshot(int rules, int detail) => new(DateTimeOffset.UtcNow, 42, @"C:\rules.json", new string('A', 64),
+            "Synthetic", "Ready", Enumerable.Range(0, rules).Select(i => new RoutingRuleStatus($"app{i}.exe", true, new string('x', detail))).ToArray());
+        ManagedUiSession.PublishSnapshot(protocol, Snapshot(512, 150), stop);
+        ManagedUiSession.PublishSnapshot(protocol, Snapshot(RoutingPolicyFile.MaximumPolicies, 3000), stop);
+        Assert.False(stop.IsCancellationRequested);
+        stream.Position = 0;
+        var first = (await protocol.ReceiveAsync(TestContext.Current.CancellationToken)).Snapshot!;
+        Assert.Equal(512, first.Rules.Count);
+        var compact = (await protocol.ReceiveAsync(TestContext.Current.CancellationToken)).Snapshot!;
+        Assert.Equal("Attention", compact.State);
+        Assert.Empty(compact.Rules);
+        Assert.Contains("continuam aplicadas", compact.Error);
+        Assert.Equal(stream.Length, stream.Position);
+    }
+
+    [Fact]
+    public async Task SavedRuleChangesReachTheRunningSessionOverTheChannel()
     {
         using var workspace = new TestWorkspace();
-        var path = workspace.Write("rules.json", "[]");
-        ManagedUiSession.ValidateStartRequest(new("Start", PolicyPath: path));
-        Assert.Throws<InvalidDataException>(() => ManagedUiSession.ValidateStartRequest(new("RunCommand", PolicyPath: path)));
-        Assert.Throws<InvalidDataException>(() => ManagedUiSession.ValidateStartRequest(new("Start", PolicyPath: "rules.json")));
-        Assert.Throws<InvalidDataException>(() => ManagedUiSession.ValidateStartRequest(new("Start", PolicyPath: @"\\server\share\rules.json")));
+        workspace.PolicyFile.Save([], null);
+        var session = CreateProbeSession(workspace);
+        try
+        {
+            await session.StartAsync(false, TestContext.Current.CancellationToken);
+            Assert.Equal(workspace.PolicyFile.Load().Revision, session.Snapshot!.PolicyRevision);
+            var revision = workspace.PolicyFile.Save([new() { ApplicationId = "edited.exe" }], workspace.PolicyFile.Load().Revision);
+            using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+            while (session.Snapshot!.PolicyRevision != revision) await Task.Delay(100, deadline.Token);
+            Assert.Equal("edited.exe", Assert.Single(session.Snapshot.Rules).ApplicationId);
+            await session.StopAsync(TestContext.Current.CancellationToken);
+            Assert.Contains("limpeza confirmada", session.Status);
+        }
+        finally { await session.StopAsync(TestContext.Current.CancellationToken); }
     }
 
     [Fact]

@@ -156,7 +156,8 @@ public sealed class NetworkRoutingWorkerTests
         using var uiLease = File.Open(statusFile.InstanceLockFilePath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
         var receipts = new List<RoutingServiceSnapshot>();
         var engine = new RecordingEngine();
-        using var worker = CreateWorker(workspace, engine, new(TestAdapters.Wifi()), publisher: receipts.Add);
+        using var worker = CreateWorker(workspace, engine, new(TestAdapters.Wifi()), publisher: receipts.Add,
+            sessionPolicies: Received(workspace.PolicyFile.Load()));
         await worker.StartAsync(TestContext.Current.CancellationToken);
         await worker.StopAsync(TestContext.Current.CancellationToken);
         Assert.Equal(["Ready", "Stopped"], receipts.Select(receipt => receipt.State));
@@ -174,12 +175,57 @@ public sealed class NetworkRoutingWorkerTests
         var receipts = new List<RoutingServiceSnapshot>();
         using var worker = CreateWorker(workspace, new RecordingEngine(), new(TestAdapters.Wifi()),
             options: new() { PolicyFilePath = workspace.PolicyFile.FilePath, Policies = [new() { ApplicationId = "bootstrap.exe" }] },
-            publisher: receipts.Add);
+            publisher: receipts.Add, sessionPolicies: new([], new string('0', 64)));
         await worker.StartAsync(TestContext.Current.CancellationToken);
         await worker.StopAsync(TestContext.Current.CancellationToken);
         Assert.False(File.Exists(workspace.PolicyFile.FilePath));
         Assert.Empty(Directory.GetFiles(workspace.Root));
         Assert.NotEmpty(receipts);
+    }
+
+    [Fact]
+    public void ManagedWorkerAppliesOnlyRulesReceivedOverTheSessionAndNeverRereadsTheProfileFile()
+    {
+        // Achado 2: a process that can write the profile must not change what the elevated
+        // session applies. Rules come only from Start/Update over the authenticated pipe.
+        using var workspace = new TestWorkspace();
+        SeedPolicy(workspace);
+        var engine = new RecordingEngine();
+        var received = new SessionPolicies([], new string('0', 64));
+        using var worker = CreateWorker(workspace, engine, new(TestAdapters.Wifi()), publisher: _ => { }, sessionPolicies: received);
+        worker.ApplyPolicies(CancellationToken.None);
+        Assert.Empty(engine.Applied);
+        var sent = workspace.PolicyFile.Load();
+        received.Replace(sent.Policies, sent.Revision);
+        worker.ApplyPolicies(CancellationToken.None);
+        Assert.Equal("app.exe", Assert.Single(engine.Applied).Application.Name);
+        // The file is rewritten behind the session's back: nothing changes until an Update arrives.
+        var tampered = workspace.PolicyFile.Load();
+        tampered.Policies[0].ExecutablePath = workspace.Write("tampered/other.exe", "fixture");
+        workspace.PolicyFile.Save(tampered.Policies, tampered.Revision);
+        worker.ApplyPolicies(CancellationToken.None);
+        Assert.Equal(2, engine.Applied.Count);
+        Assert.All(engine.Applied, applied => Assert.Equal(sent.Policies[0].ExecutablePath, applied.Application.ExecutablePath));
+        Assert.Throws<ArgumentNullException>(() => CreateWorker(workspace, engine, new(TestAdapters.Wifi()), publisher: _ => { }));
+    }
+
+    [Theory]
+    [InlineData(@"\\.\pipe\netlane-absent\app.exe")]
+    [InlineData(@"\\?\C:\netlane-absent\app.exe")]
+    [InlineData(@"C:\netlane-absent\app.exe:stream")]
+    public void RemoteOrDevicePathIsRefusedByTextBeforeAnyFileAccess(string path)
+    {
+        // Achado 2: File.Exists on a UNC path would open SMB as administrator. A local pipe/device
+        // path stands in for it (no network); the receipt shows which check refused it.
+        using var workspace = new TestWorkspace();
+        var receipts = new List<RoutingServiceSnapshot>();
+        var engine = new RecordingEngine();
+        var policies = new SessionPolicies([new() { ApplicationId = "app.exe", ExecutablePath = path,
+            InterfaceId = TestAdapters.WifiId, RouteMode = NetworkRouteMode.WiFi }], new string('0', 64));
+        using var worker = CreateWorker(workspace, engine, new(TestAdapters.Wifi()), publisher: receipts.Add, sessionPolicies: policies);
+        worker.ApplyPolicies(CancellationToken.None);
+        Assert.Empty(engine.Applied);
+        Assert.Contains("remoto ou de dispositivo", Assert.Single(receipts.Last().Rules).Detail);
     }
 
     [Fact]
@@ -197,10 +243,12 @@ public sealed class NetworkRoutingWorkerTests
 
     private static NetworkRoutingWorker CreateWorker(TestWorkspace workspace, RecordingEngine engine,
         FakeAdapters adapters, IApplicationCatalog? catalog = null, NetLaneRoutingOptions? options = null,
-        Action<RoutingServiceSnapshot>? publisher = null) => new(
+        Action<RoutingServiceSnapshot>? publisher = null, SessionPolicies? sessionPolicies = null) => new(
             adapters, catalog ?? new FakeCatalog(), engine,
             Options.Create(options ?? new() { PolicyFilePath = workspace.PolicyFile.FilePath }),
-            new TestHostEnvironment(workspace.Root), NullLogger<NetworkRoutingWorker>.Instance, publisher);
+            new TestHostEnvironment(workspace.Root), NullLogger<NetworkRoutingWorker>.Instance, publisher, sessionPolicies);
+
+    private static SessionPolicies Received(PolicyFileSnapshot snapshot) => new(snapshot.Policies, snapshot.Revision);
 
     private sealed class FakeCatalog(params ApplicationIdentity[] applications) : IApplicationCatalog
     {
