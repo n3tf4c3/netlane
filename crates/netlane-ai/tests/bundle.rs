@@ -473,3 +473,32 @@ fn junction_in_source_parent_is_refused_without_touching_the_target() {
     fs::remove_dir(&link).unwrap(); // Removes only the owned junction, never its target.
     assert!(original.join("deviation.pcap").is_file());
 }
+#[test]
+fn cancelled_turn_without_answer_does_not_block_the_full_investigation() {
+    // Achado 15: a cancelled turn with an empty answer is kept in the notebook,
+    // but it has no report to export; it must not abort the bundle.
+    let mut f = fixture();
+    f.book
+        .record(
+            8,
+            Draft {
+                context: f.current.clone(),
+                problem: "Intermitência fictícia".into(),
+                question: "Cancelada antes da resposta".into(),
+                response: Some(Response {
+                    provider: "Codex simulado".into(),
+                    model: "fixture".into(),
+                    status: "Cancelado pelo usuário".into(),
+                    text: String::new(),
+                }),
+            },
+        )
+        .unwrap();
+    let folder = f.root.path().join("saved-cancelled");
+    save(&f, &folder);
+    assert!(folder.join("reports/turn-0001/report.md").is_file());
+    assert!(!folder.join("reports/turn-0002").exists());
+    let opened = bundle::load(&folder, &AtomicBool::new(false), &Progress::default()).unwrap();
+    assert_eq!(opened.notebook.turns().len(), 2);
+    assert!(!opened.notebook.turns()[1].has_report());
+}

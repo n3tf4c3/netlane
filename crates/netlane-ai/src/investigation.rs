@@ -53,6 +53,18 @@ pub struct Turn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub created_unix_seconds: Option<u64>,
 }
+impl Turn {
+    /// Whether this turn produces an exportable report. A cancelled or failed turn
+    /// keeps its record in the notebook, but an empty answer has no report.
+    pub fn has_report(&self) -> bool {
+        self.references_valid
+            && self
+                .draft
+                .response
+                .as_ref()
+                .is_some_and(|r| !r.text.trim().is_empty())
+    }
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct NoteChange {
     pub unix_seconds: u64,
@@ -357,14 +369,14 @@ impl Notebook {
         ensure!(!self.is_empty(), "O caderno está vazio.");
         self.validate()?;
         let json = serde_json::to_vec_pretty(&serde_json::json!({"schema":1,"notebook":self}))?;
+        let markdown = self.markdown().into_bytes();
+        // `load` applies the same limit to both files; refuse here, before creating
+        // the folder, anything that could not be reopened.
         ensure!(
-            json.len() <= MAX_NOTEBOOK_BYTES,
-            "Caderno excede o limite de exportação."
+            json.len() <= MAX_NOTEBOOK_BYTES && markdown.len() <= MAX_NOTEBOOK_BYTES,
+            "Caderno excede o limite de exportação (24 MiB por arquivo)."
         );
-        let files = [
-            ("investigation.json", json),
-            ("investigation.md", self.markdown().into_bytes()),
-        ];
+        let files = [("investigation.json", json), ("investigation.md", markdown)];
         let receipt = Receipt {
             schema: 1,
             turns: self.turns.len(),
@@ -457,6 +469,23 @@ mod tests {
         assert!(notebook.save(&destination).is_err());
         let md = fs::read_to_string(destination.join("investigation.md"))?;
         assert!(md.contains("    <script>hipótese</script>"));
+        Ok(())
+    }
+    #[test]
+    fn notebook_that_cannot_be_reopened_is_refused_before_creating_the_folder() -> Result<()> {
+        // Achado 16: many short lines expand the indented Markdown past the
+        // limit that `load` enforces, while the JSON stays below it.
+        let mut notebook = Notebook::default();
+        let mut long = draft();
+        long.response.as_mut().unwrap().text = "a\n".repeat(64 * 1024);
+        for _ in 0..72 {
+            notebook.record(1, long.clone())?;
+        }
+        let folder = tempfile::tempdir()?;
+        let destination = folder.path().join("notebook");
+        let error = notebook.save(&destination).unwrap_err();
+        assert!(format!("{error:#}").contains("limite"), "{error:#}");
+        assert!(!destination.exists());
         Ok(())
     }
     #[test]

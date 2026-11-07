@@ -414,7 +414,7 @@ fn report_files(draft: &crate::report::Draft) -> Result<Vec<(&'static str, Vec<u
 }
 fn verify_reports(root: &Path, book: &Notebook, cancel: &AtomicBool) -> Result<()> {
     local(&root.join("reports"), true)?;
-    for turn in book.turns().iter().filter(|t| t.references_valid) {
+    for turn in book.turns().iter().filter(|t| t.has_report()) {
         check_cancel(cancel)?;
         let directory = root.join(format!("reports/turn-{:04}", turn.id));
         let receipt: crate::report::Receipt =
@@ -504,7 +504,7 @@ pub fn save_with_inputs(
     );
     book.save(&directory.join("notebook"))?;
     fs::create_dir(directory.join("reports"))?;
-    for turn in book.turns().iter().filter(|t| t.references_valid) {
+    for turn in book.turns().iter().filter(|t| t.has_report()) {
         check_cancel(cancel)?;
         turn.draft
             .save(&directory.join(format!("reports/turn-{:04}", turn.id)))?;
