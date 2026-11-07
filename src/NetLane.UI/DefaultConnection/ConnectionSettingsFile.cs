@@ -39,4 +39,23 @@ public sealed class ConnectionSettingsFile(string path)
     }
 
     public void Clear() { if (File.Exists(FilePath)) File.Delete(FilePath); }
+
+    /// <summary>
+    /// One operation per profile (achado 14): held from reading the journal until the helper's
+    /// result is recorded, so a second window can neither plan from a stale journal nor replace
+    /// the original values. Exclusive handle, deleted on close; a crash releases it.
+    /// </summary>
+    public IDisposable AcquireOperationLease()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
+        try
+        {
+            return new FileStream(FilePath + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None, 1, FileOptions.DeleteOnClose);
+        }
+        // Sharing violation, or access denied while the previous holder's delete is pending.
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new IOException("Outra janela do NetLane está alterando a conexão padrão. Aguarde a conclusão e atualize.", ex);
+        }
+    }
 }

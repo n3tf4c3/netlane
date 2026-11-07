@@ -1,3 +1,4 @@
+using System.Text.Json;
 using NetLane.Network.DefaultConnection;
 using NetLane.UI.DefaultConnection;
 
@@ -117,6 +118,59 @@ public sealed class DefaultConnectionTests
         await new DefaultConnectionViewModel(control, file).RestoreAsync();
         Assert.All(control.Settings.Snapshot.Interfaces, i => Assert.True(i.AutomaticMetric));
     }
+
+    [Fact]
+    public async Task SecondWindowOpenedBeforeTheFirstChangeKeepsTheOriginalForRestore()
+    {
+        // Achado 14: both windows load the journal (still empty) before A changes O→M. B used to
+        // plan from its stale copy, record M as "Original" and lose O for the restore.
+        using var workspace = new TestWorkspace();
+        var file = new ConnectionSettingsFile(Path.Combine(workspace.Root, "default-connection.json"));
+        var control = new FakeDefaultConnectionControl(new FakeConnectionSettings(Initial()));
+        var a = new DefaultConnectionViewModel(control, file);
+        var b = new DefaultConnectionViewModel(control, file);
+        await a.RefreshAsync(true);
+        a.Selected = a.Choices.Single(c => c.Id == Wifi);
+        await a.ApplyAsync();
+        await b.RefreshAsync(true);
+        b.Selected = b.Choices.Single(c => c.Id == Cable);
+        await b.ApplyAsync();
+        Assert.Equal("Atual: Ethernet", b.CurrentLabel);
+        Assert.All(file.Load()!.Original, c => Assert.True(c.AutomaticMetric));
+        Assert.All(JsonSerializer.Deserialize<ConnectionJournal>(File.ReadAllText(file.FilePath + ".bak"))!.Original, c => Assert.True(c.AutomaticMetric));
+        await a.RestoreAsync();
+        Assert.All(control.Settings.Snapshot.Interfaces, i => Assert.True(i.AutomaticMetric));
+        Assert.False(File.Exists(file.FilePath));
+    }
+
+    [Fact]
+    public async Task OnlyOneWindowAtATimeChangesTheDefaultConnection()
+    {
+        // Achado 14: the whole load→plan→persist→helper→finalize runs under one lease per profile.
+        using var workspace = new TestWorkspace();
+        var file = new ConnectionSettingsFile(Path.Combine(workspace.Root, "default-connection.json"));
+        var gate = new TaskCompletionSource();
+        var control = new FakeDefaultConnectionControl(new FakeConnectionSettings(Initial())) { Gate = gate.Task };
+        var a = new DefaultConnectionViewModel(control, file);
+        var b = new DefaultConnectionViewModel(control, file);
+        await a.RefreshAsync(true);
+        await b.RefreshAsync(true);
+        a.Selected = a.Choices.Single(c => c.Id == Wifi);
+        b.Selected = b.Choices.Single(c => c.Id == Cable);
+        var pending = a.ApplyAsync();
+        // Without the lease B would also reach the (blocked) helper; the timeout turns that into a failure.
+        await b.ApplyAsync().WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        Assert.Contains("Outra janela", b.Status);
+        gate.SetResult();
+        await pending;
+        Assert.Single(control.Requests);
+        Assert.Equal("Atual: Wi-Fi", a.CurrentLabel);
+        await b.RefreshAsync(true);
+        Assert.True(b.CanRestore);
+        await b.RestoreAsync();
+        Assert.All(control.Settings.Snapshot.Interfaces, i => Assert.True(i.AutomaticMetric));
+    }
+
 
     [Fact]
     public async Task StaleManualSettingsAreRejectedBeforeAnyWrite()
@@ -244,11 +298,14 @@ public sealed class DefaultConnectionTests
         public FakeConnectionSettings Settings { get; } = settings;
         public List<ConnectionRequest> Requests { get; } = [];
         public Exception? Error { get; init; }
+        public Task? Gate { get; init; }
         public Task<ConnectionSnapshot> ReadAsync(CancellationToken token = default) => Settings.ReadAsync(token);
-        public Task<ConnectionResult> ApplyAsync(ConnectionRequest request, CancellationToken token = default)
+        public async Task<ConnectionResult> ApplyAsync(ConnectionRequest request, CancellationToken token = default)
         {
             Requests.Add(request);
-            return Error is not null ? Task.FromException<ConnectionResult>(Error) : new ConnectionPriorityTransaction(Settings).ApplyAsync(request, token);
+            if (Gate is not null) await Gate;
+            if (Error is not null) throw Error;
+            return await new ConnectionPriorityTransaction(Settings).ApplyAsync(request, token);
         }
     }
 }

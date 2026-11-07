@@ -51,7 +51,7 @@ public sealed class DefaultConnectionViewModel : INotifyPropertyChanged
     {
         if (_control is null || IsBusy || _reading || !force && DateTimeOffset.UtcNow - _lastRead < TimeSpan.FromSeconds(10)) return;
         _reading = true; Notify();
-        try { Update(await _control.ReadAsync()); }
+        try { ReloadJournal(); Update(await _control.ReadAsync()); }
         catch (Exception ex) { _snapshot = null; Choices.Clear(); Selected = null; Status = "Não foi possível ler a prioridade: " + ex.Message; }
         finally { _lastRead = DateTimeOffset.UtcNow; _reading = false; Notify(); }
     }
@@ -74,8 +74,13 @@ public sealed class DefaultConnectionViewModel : INotifyPropertyChanged
         if (!CanApply || Selected is null) return;
         var selected = Selected.Id;
         IsBusy = true; Notify();
+        IDisposable? lease = null;
         try
         {
+            // Achado 14: plan from the journal on disk, under the profile lease, never from the copy
+            // loaded when this window opened; another window may have changed it since.
+            lease = _file.AcquireOperationLease();
+            _journal = _file.Load();
             var snapshot = await _control!.ReadAsync();
             CheckKnownSettings(snapshot);
             var changes = ConnectionPriority.Plan(snapshot, selected, _journal?.Original.Select(c => c.Id));
@@ -91,15 +96,19 @@ public sealed class DefaultConnectionViewModel : INotifyPropertyChanged
             if (result.Success) { _journal = planned with { Previous = [] }; _file.Save(_journal); }
         }
         catch (Exception ex) { Status = ex.Message; await ReadAfterFailureAsync(); }
-        finally { IsBusy = false; _lastRead = DateTimeOffset.UtcNow; Notify(); }
+        finally { lease?.Dispose(); IsBusy = false; _lastRead = DateTimeOffset.UtcNow; Notify(); }
     }
 
     public async Task RestoreAsync()
     {
         if (!CanRestore || _journal is null) return;
         IsBusy = true; Notify();
+        IDisposable? lease = null;
         try
         {
+            lease = _file.AcquireOperationLease();
+            _journal = _file.Load();
+            if (_journal is null) { Status = "Não há alteração do NetLane a restaurar; outra janela já concluiu a restauração."; return; }
             var snapshot = await _control!.ReadAsync();
             CheckKnownSettings(snapshot);
             if (_journal.Original.Any(c => !snapshot.Interfaces.Any(i => i.Id == c.Id)))
@@ -116,7 +125,14 @@ public sealed class DefaultConnectionViewModel : INotifyPropertyChanged
             _file.Clear(); _journal = null;
         }
         catch (Exception ex) { Status = ex.Message; await ReadAfterFailureAsync(); }
-        finally { IsBusy = false; _lastRead = DateTimeOffset.UtcNow; Notify(); }
+        finally { lease?.Dispose(); IsBusy = false; _lastRead = DateTimeOffset.UtcNow; Notify(); }
+    }
+
+    // Display only (Restore button, listed interfaces); operations reload under the lease.
+    private void ReloadJournal()
+    {
+        try { _journal = _file.Load(); _loadFailed = false; }
+        catch (Exception ex) { _journal = null; _loadFailed = true; Status = "Não foi possível ler a configuração anterior: " + ex.Message; }
     }
 
     private void CheckKnownSettings(ConnectionSnapshot snapshot)
