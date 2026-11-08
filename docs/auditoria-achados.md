@@ -62,3 +62,9 @@ Validação: 178 testes Rust, 1 portable, 288 .NET, fmt, Clippy comum/all-featur
 
 Resolução 2026-11-07, a partir de HEAD `4344966`: #2, #3, #14, #15, #16 e #17 resolvidos (detalhes na tabela principal e no adendo do relatório externo). Decisão do titular, 07/11/2026: corrigir o fallback .NET em vez de adiar ou retirá-lo. Cada correção tem teste de regressão que falhou sem ela. Rust: fmt, Clippy comum/all-features, 181 testes (+3), portable e build Release aprovados. .NET: build Release sem avisos e 296 testes (+8). Sem runtime NetLane/UAC/WFP no host; o canal .NET foi exercitado pelo ControlProbe. Pendências: smoke da sessão .NET elevada na VM; janela e serviço .NET precisam ser da mesma compilação (protocolo novo). Próximo ID: **#18**.
 
+
+## Decisão 2026-11-08 — .NET 8 fora de suporte
+
+| # | Achado | Severidade | Status | Origem / resolução |
+|---|---|---|---|---|
+| 18 | Fallback/referência .NET ainda em `net8.0`/`net8.0-windows`, sem patches de segurança a partir de 10/11/2026 | Baixa | ABERTO (aceito) — decisão do titular em 08/11/2026: sem migração agora, porque o produto distribuído é o Rust e o .NET é fallback/referência. **Reabrir** antes de distribuir qualquer binário .NET (serviço, UI ou instalador) ou se surgir advisory do runtime .NET 8 que alcance o código. Caminho previsto: .NET 10 LTS (SDK 10, `setup-dotnet` da CI e os 14 projetos) | 14 projetos em `src/`, `tests/` e `poc/`; `.github/workflows/ci.yml` com `dotnet-version: 8.0.x` |
