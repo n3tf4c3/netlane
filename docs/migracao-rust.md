@@ -103,7 +103,8 @@ como versão nova: suba `version` em `Cargo.toml` e gere outro pacote.
 Uma abertura normal usa `%LOCALAPPDATA%\NetLane-Rust` e começa em observação.
 `--profile C:\PastaAbsoluta` permite um perfil próprio. Não aponte uma prévia
 para dados instalados ou regras do checkout. Aparência usa `appearance.json`;
-regras usam `netlane-rules.json`; seleção do painel usa `interface-selection.json`.
+regras usam `netlane-rules.json`; seleção do painel usa `interface-selection.json`;
+perfis de regras usam `netlane-profiles.json`, criado só no primeiro perfil novo.
 
 ## Importar regras
 
@@ -143,6 +144,32 @@ referência .NET preserva o campo como dado adicional e não o aplica.
 Provas: planejamento e ciclo do agente cobertos por testes com adaptadores
 simulados (queda, reserva, retorno, reserva ausente, bloqueio, auxiliares Steam).
 A troca real de saída ao desconectar a interface continua pendente de QA na VM.
+
+## Perfis de regras (2026-11-09)
+
+A página **Regras** mostra **Perfil:** com um botão por perfil. **Criar perfil com
+as regras atuais** copia as regras salvas para um perfil novo, que passa a ser o
+ativo; o perfil de partida chama-se **Padrão**. Clicar em outro perfil grava as
+regras dele em `netlane-rules.json` e, com sessão ativa, envia-as à sessão como o
+Salvar. Edições salvas valem para o perfil ativo. Excluir pede confirmação e só
+vale para perfis inativos; a versão anterior da lista fica em
+`netlane-profiles.json.bak`. Com dois perfis ou mais, a bandeja lista os perfis
+sob **Perfil**, com o ativo marcado; com alterações não salvas ou operação em
+andamento, a troca fica desabilitada e o painel explica o motivo.
+
+`netlane-rules.json` continua com as regras do perfil ativo, no mesmo formato
+(agente, importação e referência .NET inalterados). `netlane-profiles.json` guarda
+o nome do ativo e uma cópia de cada perfil (até 12 perfis, nomes de até 40
+caracteres, sem distinção de caixa, mesmo teto de 4 MiB e controle de revisão das
+regras). Na leitura, o arquivo de regras prevalece para o perfil ativo. A troca
+grava primeiro as regras e depois a lista; se a lista falhar, as regras anteriores
+são regravadas; se isso também falhar, o painel mostra as regras do perfil gravado
+e bloqueia mudanças de perfil até reabrir. Perfis ilegíveis ou regras não lidas
+também bloqueiam mudanças de perfil, sem sobrescrever os arquivos.
+
+Provas: lógica, arquivo e troca em disco (incluindo a restauração) cobertos por
+testes em pasta temporária; menu da bandeja testado pelo modelo de linhas. A
+aparência da barra e os cliques reais na bandeja continuam pendentes de QA na VM.
 
 ## Bandeja e inicialização (2026-10-10)
 

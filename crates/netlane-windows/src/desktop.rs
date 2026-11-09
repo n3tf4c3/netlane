@@ -15,7 +15,7 @@ use windows_sys::Win32::{
 };
 
 const CALLBACK: u32 = WM_APP + 17;
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TrayAction {
     Open,
     Diagnostics,
@@ -23,6 +23,8 @@ pub enum TrayAction {
     Stop,
     Exit,
     Unavailable,
+    /// Switch to the named rule profile.
+    Profile(String),
 }
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TrayState {
@@ -33,17 +35,25 @@ pub struct TrayState {
     pub can_start: bool,
     pub can_stop: bool,
     pub can_exit: bool,
+    /// Rule profiles; listed in the menu only when there are at least two.
+    pub profiles: Vec<String>,
+    pub active_profile: String,
+    pub can_switch_profile: bool,
 }
+/// Menu ids from this value on select `profiles[id - PROFILE_BASE]`.
+const PROFILE_BASE: usize = 100;
 impl TrayState {
-    fn menu(&self) -> Vec<(usize, String, bool)> {
-        vec![
-            (0, self.status.clone(), false),
+    /// Rows: (command id or 0, label, enabled, checked).
+    fn menu(&self) -> Vec<(usize, String, bool, bool)> {
+        let mut rows = vec![
+            (0, self.status.clone(), false, false),
             (
                 0,
                 format!(
                     "Regras habilitadas: {} de {}",
                     self.enabled_rules, self.total_rules
                 ),
+                false,
                 false,
             ),
             (
@@ -55,26 +65,46 @@ impl TrayState {
                 }
                 .into(),
                 false,
+                false,
             ),
-            (1, "Abrir NetLane".into(), true),
-            (2, "Diagnóstico".into(), true),
-            (3, "Iniciar sessão…".into(), self.can_start),
-            (4, "Parar com segurança".into(), self.can_stop),
-            (5, "Sair".into(), self.can_exit),
-        ]
+            (1, "Abrir NetLane".into(), true, false),
+            (2, "Diagnóstico".into(), true, false),
+            (3, "Iniciar sessão…".into(), self.can_start, false),
+            (4, "Parar com segurança".into(), self.can_stop, false),
+            (5, "Sair".into(), self.can_exit, false),
+        ];
+        if self.profiles.len() > 1 {
+            let mut profiles = vec![(0, "Perfil".to_owned(), false, false)];
+            for (i, name) in self.profiles.iter().enumerate() {
+                let active = *name == self.active_profile;
+                profiles.push((
+                    PROFILE_BASE + i,
+                    name.clone(),
+                    self.can_switch_profile && !active,
+                    active,
+                ));
+            }
+            rows.splice(3..3, profiles);
+        }
+        rows
     }
 }
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
-fn action(id: usize) -> Option<TrayAction> {
+/// `model` is the state the menu was built from, so a profile id names the profile
+/// the user saw.
+fn action(model: &TrayState, id: usize) -> Option<TrayAction> {
     match id {
         1 => Some(TrayAction::Open),
         2 => Some(TrayAction::Diagnostics),
         3 => Some(TrayAction::Start),
         4 => Some(TrayAction::Stop),
         5 => Some(TrayAction::Exit),
-        _ => None,
+        _ => id
+            .checked_sub(PROFILE_BASE)
+            .and_then(|i| model.profiles.get(i))
+            .map(|name| TrayAction::Profile(name.clone())),
     }
 }
 struct CallbackState {
@@ -124,20 +154,23 @@ impl CallbackState {
     }
     fn popup(&self) {
         // Clone first: no RefCell borrow survives the native menu's nested message loop.
-        let rows = self.model.borrow().menu();
+        let model = self.model.borrow().clone();
+        let rows = model.menu();
         // SAFETY: CreatePopupMenu takes no pointers and returns an owned handle.
         let menu = unsafe { CreatePopupMenu() };
         if menu.is_null() {
             return;
         }
         let mut valid = true;
-        for (id, label, enabled) in rows {
+        for (id, label, enabled, checked) in rows {
             let text = wide(&label);
             // SAFETY: menu is live and text is nul terminated for the duration of this call.
             valid &= unsafe {
                 AppendMenuW(
                     menu,
-                    MF_STRING | if enabled { MF_ENABLED } else { MF_GRAYED },
+                    MF_STRING
+                        | if enabled { MF_ENABLED } else { MF_GRAYED }
+                        | if checked { MF_CHECKED } else { MF_UNCHECKED },
                     id,
                     text.as_ptr(),
                 )
@@ -168,7 +201,7 @@ impl CallbackState {
             DestroyMenu(menu);
             Shell_NotifyIconW(NIM_SETFOCUS, &self.data());
         }
-        if let Some(action) = action(selection) {
+        if let Some(action) = action(&model, selection) {
             let _ = self.sender.send(action);
         }
     }
@@ -194,7 +227,8 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, w: WPARAM, l: LP
         };
         #[cfg(feature = "desktop-test")]
         if message == WM_APP + 18 {
-            if let Some(action) = action(w) {
+            let model = state.model.borrow().clone();
+            if let Some(action) = action(&model, w) {
                 let _ = state.sender.send(action);
             }
             return 0;
@@ -325,6 +359,14 @@ impl Tray {
             TrayAction::Stop => 4,
             TrayAction::Exit => 5,
             TrayAction::Unavailable => 0,
+            TrayAction::Profile(name) => self
+                .state
+                .model
+                .borrow()
+                .profiles
+                .iter()
+                .position(|p| *p == name)
+                .map_or(0, |i| PROFILE_BASE + i),
         };
         // SAFETY: posts a fixture event only to this live tray window, not the desktop.
         unsafe {
@@ -441,7 +483,35 @@ mod tests {
         assert!(!rows[5].2);
         assert!(rows[6].2);
         assert!(!rows[7].2);
-        assert_eq!(action(5), Some(TrayAction::Exit));
-        assert_eq!(action(0), None);
+        assert_eq!(action(&state, 5), Some(TrayAction::Exit));
+        assert_eq!(action(&state, 0), None);
+        assert!(
+            !rows.iter().any(|r| r.1 == "Perfil"),
+            "Um perfil só: sem lista."
+        );
+    }
+    #[test]
+    fn profiles_are_listed_with_the_active_one_checked_and_resolve_by_menu_snapshot() {
+        let state = TrayState {
+            profiles: vec!["Padrão".into(), "Gaming".into(), "Trabalho".into()],
+            active_profile: "Gaming".into(),
+            can_switch_profile: true,
+            ..Default::default()
+        };
+        let rows = state.menu();
+        assert_eq!(rows[3], (0, "Perfil".into(), false, false));
+        assert_eq!(rows[4], (PROFILE_BASE, "Padrão".into(), true, false));
+        assert_eq!(rows[5], (PROFILE_BASE + 1, "Gaming".into(), false, true));
+        assert_eq!(rows[7].1, "Abrir NetLane");
+        assert_eq!(
+            action(&state, PROFILE_BASE + 2),
+            Some(TrayAction::Profile("Trabalho".into()))
+        );
+        assert_eq!(action(&state, PROFILE_BASE + 3), None);
+        let blocked = TrayState {
+            can_switch_profile: false,
+            ..state
+        };
+        assert!(blocked.menu()[4..7].iter().all(|r| !r.2));
     }
 }

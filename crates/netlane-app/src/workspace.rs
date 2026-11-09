@@ -19,6 +19,7 @@ use gpui::{
 use netlane_core::{
     NetworkSnapshot, RouteMode, RoutingPolicy,
     persistence::{PolicyFile, atomic_write, read_bounded, without_bom},
+    profiles::{PROFILES_FILE, ProfileFile, Profiles, SwitchError, switch_files},
     traffic::TrafficTracker,
 };
 use std::{
@@ -153,6 +154,20 @@ pub struct Workspace {
     hide_pending: bool,
     #[cfg(feature = "gui-test")]
     proof_session: Option<netlane_agent::SessionState>,
+    profiles: ProfileState,
+}
+/// Rule profiles. `netlane-rules.json` holds the active profile's rules; the store
+/// keeps a copy of each profile and is written only after a profile is created.
+struct ProfileState {
+    file: ProfileFile,
+    store: Profiles,
+    /// `None` while the store file does not exist.
+    revision: Option<String>,
+    /// Set when the store (or the rules it depends on) could not be read: profile
+    /// changes are refused so nothing overwrites data that was not understood.
+    broken: Option<String>,
+    name: Entity<TextInput>,
+    delete_pending: Option<String>,
 }
 impl Workspace {
     #[cfg(feature = "gui-test")]
@@ -488,6 +503,7 @@ impl Workspace {
                 Err(e) => (vec![], None, Some(format!("Falha ao ler regras: {e:#}"))),
             }
         };
+        let profiles = Self::load_profiles(&profile, is_demo, &policies, error.is_some(), cx);
         let snapshot = if is_demo {
             demo::snapshot()
         } else {
@@ -582,6 +598,7 @@ impl Workspace {
             )
         });
         let mut ws = Self {
+            profiles,
             page: Page::Overview,
             snapshot,
             policies,
@@ -749,6 +766,279 @@ impl Workspace {
             }
             Err(e) => self.error = Some(format!("Não foi possível salvar: {e:#}")),
         }
+        if !self.dirty {
+            self.sync_active_profile();
+        }
+        cx.notify();
+    }
+    fn load_profiles(
+        profile: &std::path::Path,
+        is_demo: bool,
+        policies: &[RoutingPolicy],
+        rules_failed: bool,
+        cx: &mut Context<Self>,
+    ) -> ProfileState {
+        let file = ProfileFile::new(profile.join(PROFILES_FILE));
+        let name = cx.new(|cx| TextInput::new("", "Nome do novo perfil", cx));
+        let (store, revision, broken) = if is_demo {
+            (demo::profiles(policies), None, None)
+        } else if rules_failed {
+            (
+                Profiles::implicit(policies),
+                None,
+                Some(
+                    "As regras não foram lidas; perfis indisponíveis até corrigir o arquivo."
+                        .to_owned(),
+                ),
+            )
+        } else {
+            match file.load() {
+                Ok(Some(saved)) => {
+                    let mut store = saved.profiles;
+                    // The rules file is the source of truth for the active profile.
+                    store.sync_active(policies);
+                    (store, Some(saved.revision), None)
+                }
+                Ok(None) => (Profiles::implicit(policies), None, None),
+                Err(e) => (
+                    Profiles::implicit(policies),
+                    None,
+                    Some(format!("Perfis indisponíveis: {e:#}")),
+                ),
+            }
+        };
+        ProfileState {
+            file,
+            store,
+            revision,
+            broken,
+            name,
+            delete_pending: None,
+        }
+    }
+    /// Profile changes need saved rules and a readable store.
+    fn profiles_editable(&mut self) -> bool {
+        if let Some(reason) = &self.profiles.broken {
+            self.error = Some(reason.clone());
+            false
+        } else if self.dirty {
+            self.error = Some(
+                "Salve ou descarte as alterações das regras antes de mudar de perfil.".to_owned(),
+            );
+            false
+        } else {
+            true
+        }
+    }
+    /// After a successful save, the active profile's copy follows the rules file.
+    fn sync_active_profile(&mut self) {
+        if self.demo || self.profiles.broken.is_some() {
+            self.profiles.store.sync_active(&self.policies);
+            return;
+        }
+        let mut next = self.profiles.store.clone();
+        next.sync_active(&self.policies);
+        if self.profiles.revision.is_none() {
+            // No store yet: nothing to keep in step.
+            self.profiles.store = next;
+            return;
+        }
+        match self
+            .profiles
+            .file
+            .save(&next, self.profiles.revision.as_deref())
+        {
+            Ok(revision) => {
+                self.profiles.store = next;
+                self.profiles.revision = Some(revision);
+            }
+            Err(e) => {
+                self.error = Some(format!(
+                    "Regras salvas, mas a cópia do perfil {} não foi atualizada: {e:#}",
+                    self.profiles.store.active
+                ))
+            }
+        }
+    }
+    /// Writes both files through `switch_files` and sends the new rules to an active
+    /// session. Returns whether the profile is now the requested one.
+    fn switch_profile(&mut self, name: &str, cx: &mut Context<Self>) -> bool {
+        self.profiles.delete_pending = None;
+        if !self.profiles_editable() {
+            cx.notify();
+            return false;
+        }
+        let (next, rules) = match self.profiles.store.switch(name, &self.policies) {
+            Ok(result) => result,
+            Err(e) => {
+                self.error = Some(format!("{e:#}"));
+                cx.notify();
+                return false;
+            }
+        };
+        if next.active == self.profiles.store.active {
+            return true;
+        }
+        let active = next.active.clone();
+        if self.demo {
+            self.policies = rules;
+            self.profiles.store = next;
+            self.error = None;
+            self.notice = Some(format!("Perfil {active} ativo nesta demonstração."));
+            cx.notify();
+            return true;
+        }
+        match switch_files(
+            &self.policy_file,
+            self.revision.as_deref(),
+            &self.profiles.file,
+            self.profiles.revision.as_deref(),
+            &self.profiles.store,
+            &self.policies,
+            name,
+        ) {
+            Ok(done) => {
+                self.policies = done.policies;
+                self.revision = Some(done.rules_revision);
+                self.profiles.store = done.store;
+                self.profiles.revision = Some(done.store_revision);
+                self.error = None;
+            }
+            Err(SwitchError::Refused(e)) => {
+                self.error = Some(format!("Perfil não trocado: {e:#}"));
+                cx.notify();
+                return false;
+            }
+            Err(SwitchError::Restored {
+                error,
+                rules_revision,
+            }) => {
+                self.revision = Some(rules_revision);
+                self.error = Some(format!(
+                    "Perfil não trocado: {error:#}. As regras anteriores foram mantidas."
+                ));
+                cx.notify();
+                return false;
+            }
+            Err(SwitchError::Inconsistent {
+                error,
+                restore,
+                policies,
+                rules_revision,
+            }) => {
+                // The rules file now holds the target profile: show it, and stop
+                // profile writes so no copy is overwritten by mistake.
+                self.policies = policies;
+                self.revision = Some(rules_revision);
+                self.profiles.broken = Some(format!(
+                    "As regras do perfil {active} foram gravadas, mas a lista de perfis não ({error:#}) e a restauração falhou ({restore:#}). Reabra o NetLane e confira os perfis antes de trocar."
+                ));
+                self.error = self.profiles.broken.clone();
+                cx.notify();
+                return false;
+            }
+        }
+        // The elevated session applies only rules sent by this panel.
+        match self
+            .controller
+            .as_ref()
+            .map_or(Ok(false), |c| c.update(self.policies.clone()))
+        {
+            Ok(true) => {
+                self.notice = Some(format!(
+                    "Perfil {active} ativo; regras enviadas à sessão ativa."
+                ))
+            }
+            Ok(false) => self.notice = Some(format!("Perfil {active} ativo.")),
+            Err(e) => {
+                self.error = Some(format!(
+                    "Perfil {active} ativo, mas as regras não foram enviadas à sessão ativa: {e:#}"
+                ))
+            }
+        }
+        cx.notify();
+        true
+    }
+    /// New profile with a copy of the current rules; it becomes the active one.
+    fn create_profile(&mut self, cx: &mut Context<Self>) {
+        self.profiles.delete_pending = None;
+        if !self.profiles_editable() {
+            cx.notify();
+            return;
+        }
+        let name = self.profiles.name.read(cx).text().trim().to_owned();
+        let next = match self.profiles.store.create(&name, &self.policies) {
+            Ok(next) => next,
+            Err(e) => {
+                self.error = Some(format!("{e:#}"));
+                cx.notify();
+                return;
+            }
+        };
+        if !self.demo {
+            match self
+                .profiles
+                .file
+                .save(&next, self.profiles.revision.as_deref())
+            {
+                Ok(revision) => self.profiles.revision = Some(revision),
+                Err(e) => {
+                    self.error = Some(format!("Perfil não criado: {e:#}"));
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        self.profiles.store = next;
+        self.profiles
+            .name
+            .update(cx, |input, cx| input.set_text("", cx));
+        self.error = None;
+        self.notice = Some(format!(
+            "Perfil {name} criado com as regras atuais e ativo. Edições salvas passam a valer para ele."
+        ));
+        cx.notify();
+    }
+    /// First call asks for confirmation; the second removes the inactive profile.
+    fn delete_profile(&mut self, name: String, cx: &mut Context<Self>) {
+        if self.profiles.delete_pending.as_deref() != Some(name.as_str()) {
+            self.profiles.delete_pending = Some(name);
+            cx.notify();
+            return;
+        }
+        self.profiles.delete_pending = None;
+        if let Some(reason) = &self.profiles.broken {
+            self.error = Some(reason.clone());
+            cx.notify();
+            return;
+        }
+        let next = match self.profiles.store.delete(&name) {
+            Ok(next) => next,
+            Err(e) => {
+                self.error = Some(format!("{e:#}"));
+                cx.notify();
+                return;
+            }
+        };
+        if !self.demo {
+            match self
+                .profiles
+                .file
+                .save(&next, self.profiles.revision.as_deref())
+            {
+                Ok(revision) => self.profiles.revision = Some(revision),
+                Err(e) => {
+                    self.error = Some(format!("Perfil não excluído: {e:#}"));
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        self.profiles.store = next;
+        self.error = None;
+        self.notice = Some(format!(
+            "Perfil {name} excluído. A versão anterior da lista fica em {PROFILES_FILE}.bak."
+        ));
         cx.notify();
     }
     fn reload(&mut self, cx: &mut Context<Self>) {
@@ -1211,6 +1501,9 @@ impl Workspace {
                 && state.cleanup_confirmed,
             can_stop: !blocked && state.running,
             can_exit: !blocked,
+            profiles: self.profiles.store.names(),
+            active_profile: self.profiles.store.active.clone(),
+            can_switch_profile: !blocked && !self.dirty && self.profiles.broken.is_none(),
         }
     }
     pub fn install_desktop(&mut self, startup: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1324,6 +1617,20 @@ impl Workspace {
                 TrayAction::Exit => {
                     if self.tray_state().can_exit {
                         self.request_close(window, cx);
+                    }
+                }
+                TrayAction::Profile(name) => {
+                    // A refused switch opens the panel so the reason is visible.
+                    if !self.tray_state().can_switch_profile || !self.switch_profile(&name, cx) {
+                        if self.error.is_none() {
+                            self.error = Some(
+                                "Salve ou descarte as alterações das regras antes de trocar de perfil."
+                                    .to_owned(),
+                            );
+                        }
+                        self.restore_panel();
+                        self.page = Page::Rules;
+                        cx.notify();
                     }
                 }
             }
@@ -2008,6 +2315,86 @@ impl Workspace {
                 .child(format!("{} conexões · página {}",rows.len(),page+1)).child(self.button("next","Próxima",cx).on_click(cx.listener(move|ws,_,_,cx|{let query=ws.filter.read(cx).text().to_lowercase();let count=ws.snapshot.connections.iter().filter(|c|format!("{} {} {} {} {} {}",c.name,c.pid,c.protocol,c.local_address,c.remote_address,c.interface.as_deref().unwrap_or("")).to_lowercase().contains(&query)).count();if (page+1)*50<count{ws.connection_page=page+1;}cx.notify();}))))
             .child(div().text_color(t.text_muted).child("A saída observada não comprova que a política causou o roteamento. Conexões antigas podem manter a saída anterior."))
     }
+    /// Profile chips (click to switch), delete with confirmation, and creation from the
+    /// current rules.
+    fn profile_bar(&self, cx: &mut Context<Self>) -> gpui::Div {
+        let t = cx.theme().clone();
+        let compact = AppSettings::get(cx).compact;
+        let button = |id: gpui::ElementId, label: &str, cx: &App| {
+            self.button(id, label, cx)
+                .when(compact, |b| b.px(px(8.)).py(px(3.)).text_size(px(12.)))
+        };
+        let store = &self.profiles.store;
+        let mut chips = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(6.))
+            .child(div().text_color(t.text_muted).child("Perfil:"));
+        for (i, name) in store.names().into_iter().enumerate() {
+            let active = name == store.active;
+            let target = name.clone();
+            chips = chips.child(
+                button(("profile", i).into(), &name, cx)
+                    .when(active, |d| {
+                        d.bg(t.selected).border_color(t.accent).cursor_default()
+                    })
+                    .when(!active, |d| {
+                        d.on_click(cx.listener(move |ws, _, _, cx| {
+                            ws.switch_profile(&target, cx);
+                        }))
+                    }),
+            );
+            if !active {
+                let pending = self.profiles.delete_pending.as_deref() == Some(name.as_str());
+                let target = name.clone();
+                chips = chips.child(
+                    button(
+                        ("profile-delete", i).into(),
+                        if pending { "Confirmar exclusão" } else { "×" },
+                        cx,
+                    )
+                    .when(pending, |d| d.text_color(t.warning))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.delete_profile(target.clone(), cx);
+                    })),
+                );
+            }
+        }
+        if self.profiles.delete_pending.is_some() {
+            chips = chips.child(
+                button("profile-delete-cancel".into(), "Cancelar", cx).on_click(cx.listener(
+                    |ws, _, _, cx| {
+                        ws.profiles.delete_pending = None;
+                        cx.notify();
+                    },
+                )),
+            );
+        }
+        let create = div()
+            .flex()
+            .items_center()
+            .gap(px(8.))
+            .child(div().w(px(220.)).child(self.profiles.name.clone()))
+            .child(
+                button(
+                    "profile-create".into(),
+                    "Criar perfil com as regras atuais",
+                    cx,
+                )
+                .on_click(cx.listener(|ws, _, _, cx| ws.create_profile(cx))),
+            );
+        div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(12.))
+            .child(chips)
+            .child(create)
+            .when_some(self.profiles.broken.clone(), |d, reason| {
+                d.child(div().text_color(t.warning).child(reason))
+            })
+    }
     /// "Se a interface cair" row of an Ethernet/Wi-Fi rule: Windows decides (default),
     /// the other interface type, or block. The same type is offered only when the
     /// primary adapter is pinned, since otherwise it could never take over.
@@ -2323,6 +2710,7 @@ impl Workspace {
                 "Edite as regras e salve para que sejam lidas pela próxima sessão.",
                 cx,
             ))
+            .child(self.profile_bar(cx))
             .child(
                 div()
                     .flex()

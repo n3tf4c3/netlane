@@ -65,3 +65,29 @@ pub fn policies() -> Vec<RoutingPolicy> {
     wifi.interface_id = Some("d3ae43d2-8203-41d6-9d7f-0b6fa59518fd".to_owned());
     vec![ethernet, wifi]
 }
+/// Two fictitious profiles: the demo rules and a copy where everything is Automático.
+pub fn profiles(current: &[RoutingPolicy]) -> netlane_core::profiles::Profiles {
+    use netlane_core::profiles::{DEFAULT_PROFILE, Profile, Profiles};
+    let automatic = current
+        .iter()
+        .cloned()
+        .map(|mut p| {
+            p.route_mode = RouteMode::Automatic;
+            p.interface_id = None;
+            p
+        })
+        .collect();
+    Profiles {
+        active: DEFAULT_PROFILE.to_owned(),
+        profiles: vec![
+            Profile {
+                name: DEFAULT_PROFILE.to_owned(),
+                policies: current.to_vec(),
+            },
+            Profile {
+                name: "Tudo automático".to_owned(),
+                policies: automatic,
+            },
+        ],
+    }
+}
