@@ -43,6 +43,9 @@ impl<'de> Deserialize<'de> for RouteMode {
 fn yes() -> bool {
     true
 }
+fn is_automatic(mode: &RouteMode) -> bool {
+    *mode == RouteMode::Automatic
+}
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,7 +55,16 @@ pub struct RoutingPolicy {
     pub interface_id: Option<String>,
     pub interface_type_hint: Option<String>,
     pub route_mode: RouteMode,
+    /// Adapter pinned for the fallback; `None` takes any connected adapter of
+    /// `fallback_route_mode`.
     pub fallback_interface_id: Option<String>,
+    /// What to do while the chosen Ethernet/Wi-Fi interface is unavailable:
+    /// `Automatic` (Windows decides; the default and the behavior of older files),
+    /// `Ethernet`/`WiFi` (route through that interface type) or `Blocked`.
+    /// Omitted when `Automatic`, so rules without a fallback serialize exactly as
+    /// before and as the .NET reference does (which keeps the field as extension data).
+    #[serde(skip_serializing_if = "is_automatic")]
+    pub fallback_route_mode: RouteMode,
     pub enabled: bool,
     pub include_related_executables: bool,
     #[serde(flatten)]
@@ -67,6 +79,7 @@ impl RoutingPolicy {
             interface_type_hint: None,
             route_mode: RouteMode::Automatic,
             fallback_interface_id: None,
+            fallback_route_mode: RouteMode::Automatic,
             enabled: true,
             include_related_executables: true,
             additional_data: BTreeMap::new(),
@@ -90,6 +103,8 @@ impl<'de> Deserialize<'de> for RoutingPolicy {
             route_mode: RouteMode,
             #[serde(default)]
             fallback_interface_id: Option<String>,
+            #[serde(default)]
+            fallback_route_mode: RouteMode,
             #[serde(default = "yes")]
             enabled: bool,
             #[serde(default = "yes")]
@@ -109,6 +124,7 @@ impl<'de> Deserialize<'de> for RoutingPolicy {
             "interfaceTypeHint",
             "routeMode",
             "fallbackInterfaceId",
+            "fallbackRouteMode",
             "enabled",
             "includeRelatedExecutables",
         ] {
@@ -135,6 +151,7 @@ impl<'de> Deserialize<'de> for RoutingPolicy {
             interface_type_hint: w.interface_type_hint,
             route_mode: w.route_mode,
             fallback_interface_id: w.fallback_interface_id,
+            fallback_route_mode: w.fallback_route_mode,
             enabled: w.enabled,
             include_related_executables: w.include_related_executables,
             additional_data: w.additional_data,
@@ -155,14 +172,16 @@ pub fn validate_policies(policies: &[RoutingPolicy]) -> Result<()> {
         if !names.insert(p.application_id.trim().to_lowercase()) {
             bail!("Há mais de uma regra para {}.", p.application_id);
         }
-        if let Some(id) = &p.interface_id
-            && !id.trim().is_empty()
-            && Uuid::parse_str(id).is_err()
+        for id in [&p.interface_id, &p.fallback_interface_id]
+            .into_iter()
+            .flatten()
         {
-            bail!(
-                "Identificador de adaptador inválido para {}.",
-                p.application_id
-            );
+            if !id.trim().is_empty() && Uuid::parse_str(id).is_err() {
+                bail!(
+                    "Identificador de adaptador inválido para {}.",
+                    p.application_id
+                );
+            }
         }
     }
     Ok(())
@@ -216,11 +235,32 @@ pub fn resolve_interface<'a>(
     policy: &RoutingPolicy,
     adapters: &'a [Adapter],
 ) -> Option<&'a Adapter> {
+    resolve_target(policy.route_mode, policy.interface_id.as_deref(), adapters)
+}
+/// The connected adapter for the rule's fallback when `fallback_route_mode` names an
+/// interface type (Ethernet/Wi-Fi); same matching as the primary choice.
+pub fn resolve_fallback_interface<'a>(
+    policy: &RoutingPolicy,
+    adapters: &'a [Adapter],
+) -> Option<&'a Adapter> {
+    resolve_target(
+        policy.fallback_route_mode,
+        policy.fallback_interface_id.as_deref(),
+        adapters,
+    )
+}
+/// A pinned adapter is matched only by id, never replaced by another one of the same
+/// type; without a pin, the first connected adapter of `mode` by name.
+fn resolve_target<'a>(
+    mode: RouteMode,
+    interface_id: Option<&str>,
+    adapters: &'a [Adapter],
+) -> Option<&'a Adapter> {
     let mut matching: Vec<_> = adapters
         .iter()
-        .filter(|a| a.connected && a.mode() == Some(policy.route_mode))
+        .filter(|a| a.connected && a.mode() == Some(mode))
         .collect();
-    if let Some(id) = &policy.interface_id
+    if let Some(id) = interface_id
         && !id.trim().is_empty()
     {
         return matching.into_iter().find(|a| same_interface(&a.id, id));

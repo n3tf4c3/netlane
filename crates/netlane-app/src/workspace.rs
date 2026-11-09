@@ -2008,6 +2008,96 @@ impl Workspace {
                 .child(format!("{} conexões · página {}",rows.len(),page+1)).child(self.button("next","Próxima",cx).on_click(cx.listener(move|ws,_,_,cx|{let query=ws.filter.read(cx).text().to_lowercase();let count=ws.snapshot.connections.iter().filter(|c|format!("{} {} {} {} {} {}",c.name,c.pid,c.protocol,c.local_address,c.remote_address,c.interface.as_deref().unwrap_or("")).to_lowercase().contains(&query)).count();if (page+1)*50<count{ws.connection_page=page+1;}cx.notify();}))))
             .child(div().text_color(t.text_muted).child("A saída observada não comprova que a política causou o roteamento. Conexões antigas podem manter a saída anterior."))
     }
+    /// "Se a interface cair" row of an Ethernet/Wi-Fi rule: Windows decides (default),
+    /// the other interface type, or block. The same type is offered only when the
+    /// primary adapter is pinned, since otherwise it could never take over.
+    fn fallback_choices(
+        &self,
+        i: usize,
+        p: &RoutingPolicy,
+        compact: bool,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = cx.theme().clone();
+        let button = |id: gpui::ElementId, label: &str, cx: &App| {
+            self.button(id, label, cx)
+                .when(compact, |b| b.px(px(8.)).py(px(3.)).text_size(px(12.)))
+        };
+        let pinned = p.interface_id.as_deref().filter(|id| !id.trim().is_empty());
+        let mut row = div()
+            .flex()
+            .flex_wrap()
+            .items_center()
+            .gap(px(if compact { 4. } else { 6. }))
+            .child(
+                div()
+                    .text_color(t.text_muted)
+                    .when(compact, |d| d.text_size(px(12.)))
+                    .child("Se a interface cair:"),
+            );
+        for (mode, label) in [
+            (RouteMode::Automatic, "Windows decide"),
+            (RouteMode::Ethernet, "Ethernet"),
+            (RouteMode::WiFi, "Wi-Fi"),
+            (RouteMode::Blocked, "Bloquear"),
+        ] {
+            if mode == p.route_mode && pinned.is_none() {
+                continue;
+            }
+            row = row.child(
+                button(
+                    gpui::SharedString::from(format!("fallback-{i}-{mode:?}")).into(),
+                    label,
+                    cx,
+                )
+                .when(p.fallback_route_mode == mode, |d| {
+                    d.bg(t.selected).border_color(t.accent)
+                })
+                .on_click(cx.listener(move |ws, _, _, cx| {
+                    let policy = &mut ws.policies[i];
+                    policy.fallback_route_mode = mode;
+                    policy.fallback_interface_id = None;
+                    ws.dirty = true;
+                    cx.notify();
+                })),
+            );
+        }
+        if matches!(p.fallback_route_mode, RouteMode::Ethernet | RouteMode::WiFi) {
+            for a in self.snapshot.adapters.iter().filter(|a| {
+                a.mode() == Some(p.fallback_route_mode)
+                    && pinned.is_none_or(|id| !netlane_core::same_interface(id, &a.id))
+            }) {
+                let id = a.id.clone();
+                row = row.child(
+                    button(
+                        gpui::SharedString::from(format!("fallback-target-{i}-{id}")).into(),
+                        &a.name,
+                        cx,
+                    )
+                    .when(
+                        p.fallback_interface_id
+                            .as_deref()
+                            .is_some_and(|s| netlane_core::same_interface(s, &id)),
+                        |d| d.border_color(t.accent),
+                    )
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        ws.policies[i].fallback_interface_id = Some(id.clone());
+                        ws.dirty = true;
+                        cx.notify();
+                    })),
+                );
+            }
+        }
+        if p.fallback_route_mode == RouteMode::Blocked {
+            row = row.child(
+                div()
+                    .text_color(t.warning)
+                    .when(compact, |d| d.text_size(px(12.)))
+                    .child("Sem a interface escolhida, o aplicativo fica sem rede."),
+            );
+        }
+        row
+    }
     fn rules(&self, cx: &mut Context<Self>) -> gpui::Div {
         let t = cx.theme().clone();
         let compact = AppSettings::get(cx).compact;
@@ -2042,8 +2132,14 @@ impl Workspace {
                         d.bg(t.selected).border_color(t.accent)
                     })
                     .on_click(cx.listener(move |ws, _, _, cx| {
-                        ws.policies[i].route_mode = mode;
-                        ws.policies[i].interface_id = None;
+                        let policy = &mut ws.policies[i];
+                        policy.route_mode = mode;
+                        policy.interface_id = None;
+                        // Without a pinned adapter, a fallback of the same type never applies.
+                        if policy.fallback_route_mode == mode {
+                            policy.fallback_route_mode = RouteMode::Automatic;
+                            policy.fallback_interface_id = None;
+                        }
                         ws.dirty = true;
                         cx.notify();
                     })),
@@ -2094,6 +2190,8 @@ impl Workspace {
                         .child("Interface salva indisponível. A escolha será preservada."),
                 );
             }
+            let fallback = matches!(p.route_mode, RouteMode::Ethernet | RouteMode::WiFi)
+                .then(|| self.fallback_choices(i, p, compact, cx));
             let icon = self.application_icon(p.executable_path.as_deref(), t.text_muted);
             let name = div()
                 .font_weight(FontWeight::SEMIBOLD)
@@ -2180,6 +2278,7 @@ impl Workspace {
                             .child(div().flex_1())
                             .child(related),
                     )
+                    .children(fallback)
             } else {
                 card.p(px(16.))
                     .gap(px(12.))
@@ -2203,6 +2302,7 @@ impl Workspace {
                     )
                     .child(modes)
                     .child(targets)
+                    .children(fallback)
                     .child(related)
             });
         }

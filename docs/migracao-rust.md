@@ -114,13 +114,35 @@ automática do produto instalado. Campos adicionais, GUIDs salvos e preferência
 de auxiliares são preservados. Há controle de revisão e backup na gravação.
 
 O leitor aceita nomes de propriedades sem distinção de caixa, modos numéricos
-ou texto e BOM UTF-8. A comparação com .NET cobre oito fixtures documentadas
+ou texto e BOM UTF-8. A comparação com .NET cobre nove fixtures documentadas
 no script; não é uma prova de equivalência para todo JSON possível. Campos
 conhecidos repetidos com caixas diferentes são recusados em Rust. Regras antigas
 sem caminho executável precisam ser associadas a um `.exe` local para aplicação.
 Use **Escolher .exe** na própria regra; o modo, a interface e os campos adicionais
 permanecem preservados até salvar a edição no perfil Rust.
 Uma interface escolhida explicitamente não é substituída silenciosamente.
+
+## Interface reserva (2026-11-09)
+
+Regras Ethernet/Wi-Fi têm a linha **Se a interface cair** no cartão:
+**Windows decide** (padrão), o outro tipo de interface, opcionalmente um adaptador
+específico, ou **Bloquear**. O mesmo tipo só é oferecido quando a interface
+principal está fixada em um adaptador. A reserva vale somente enquanto a interface
+escolhida está ausente ou desconectada; o plano é refeito a cada ciclo da sessão,
+então a principal volta a valer assim que reconecta. Reserva fixada indisponível
+devolve a decisão ao Windows (fail open); **Bloquear** deixa o aplicativo sem rede
+até a interface voltar, e o aviso aparece no cartão. Auxiliares do Steam herdam a
+reserva. Regras desativadas, Automático e Bloqueado ignoram a reserva.
+
+No JSON, `fallbackRouteMode` (`Automatic`, `Ethernet`, `WiFi`, `Blocked`) com o
+`fallbackInterfaceId` já existente. O campo só é gravado quando diferente de
+`Automatic`, então arquivos sem reserva ficam idênticos aos anteriores; arquivos
+antigos com `fallbackInterfaceId` e sem modo continuam sem reserva, como antes. A
+referência .NET preserva o campo como dado adicional e não o aplica.
+
+Provas: planejamento e ciclo do agente cobertos por testes com adaptadores
+simulados (queda, reserva, retorno, reserva ausente, bloqueio, auxiliares Steam).
+A troca real de saída ao desconectar a interface continua pendente de QA na VM.
 
 ## Bandeja e inicialização (2026-10-10)
 
@@ -458,7 +480,7 @@ preservados; mensagens do assistente/cancelamento continuam pendentes.
 | Ícones por processo | implementados; cache/recursos testados e prova GPU com executável do próprio build; QA instalado pendente |
 | Qualidade por conexão | lógica/controles/provedores portados; testes e prova GPU com simulações; sondagens Windows reais e hover/DPI pendentes |
 | Alteração/restauração da conexão padrão | lógica, recuperação, painel e comando portados; simulações aprovadas; UAC/métricas/reboot reais pendentes |
-| Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port |
+| Runtime de roteamento, suspensão, perda de interface, QUIC/IPv6 | QA específico pendente; evidência antiga da implementação .NET não valida o port. Interface reserva por regra implementada e testada com simulações; troca real pendente |
 | Instalador, upgrade/remoção, assinatura e publicação | instalação/UI demo/reinstalação 0.4.0/remoção aprovadas no Sandbox; demais gates runtime, assinatura e publicação pendentes |
 | Licenças transitivas e entrega pública | inventário/textos transitivos coletados; lacunas e revisão final pendentes |
 

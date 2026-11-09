@@ -617,6 +617,41 @@ mod tests {
     }
 
     #[test]
+    fn fallback_takes_over_while_the_interface_is_down_and_hands_back_on_return() {
+        let active = Rc::new(RefCell::new(Vec::new()));
+        let mut engine = RoutingEngine::new(FakeSession {
+            active: active.clone(),
+            pending: vec![],
+            fail: None,
+        });
+        let mut both = ethernet();
+        both.push(Adapter {
+            id: "aa6f3b88-072a-45b6-b0cb-8afe9567e62f".into(),
+            name: "Wi-Fi".into(),
+            kind: "Wireless80211".into(),
+            connected: true,
+            luid: 9,
+            ipv4: true,
+            ..Default::default()
+        });
+        let mut policy = wired("C:\\Apps\\a.exe");
+        policy.fallback_route_mode = RouteMode::WiFi;
+        let policies = [policy];
+        let rules = apply_cycle(&mut engine, &policies, Ok(both.clone()), |_| true).unwrap();
+        assert_eq!((rules[0].mode, rules[0].luid), (RouteMode::Ethernet, 7));
+        // Ethernet unplugged: the next cycle moves the rule to the Wi-Fi fallback.
+        both[0].connected = false;
+        let rules = apply_cycle(&mut engine, &policies, Ok(both.clone()), |_| true).unwrap();
+        assert_eq!((rules[0].mode, rules[0].luid), (RouteMode::WiFi, 9));
+        assert_eq!(*active.borrow(), ["C:\\Apps\\a.exe"]);
+        // Ethernet back: the primary choice is restored without user action.
+        both[0].connected = true;
+        let rules = apply_cycle(&mut engine, &policies, Ok(both), |_| true).unwrap();
+        assert_eq!((rules[0].mode, rules[0].luid), (RouteMode::Ethernet, 7));
+        assert_eq!(*active.borrow(), ["C:\\Apps\\a.exe"]);
+    }
+
+    #[test]
     fn remote_executables_are_retired_without_touching_the_filesystem() {
         let active = Rc::new(RefCell::new(Vec::new()));
         let mut engine = RoutingEngine::new(FakeSession {

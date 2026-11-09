@@ -58,6 +58,8 @@ fn invalid_input_is_not_replaced() {
         "[{",
         "[{\"applicationId\":\"x\",\"routeMode\":99}]",
         "[{\"applicationId\":\"x\",\"interfaceId\":\"bad\"}]",
+        "[{\"applicationId\":\"x\",\"fallbackInterfaceId\":\"bad\"}]",
+        "[{\"applicationId\":\"x\",\"fallbackRouteMode\":\"cellular\"}]",
         "[{\"applicationId\":\"X\"},{\"applicationId\":\"x\"}]",
     ] {
         let dir = tempfile::tempdir().unwrap();
@@ -133,6 +135,129 @@ fn explicit_interface_never_falls_back() {
     );
     policy.interface_id = None;
     assert_eq!(resolve_interface(&policy, &adapters).unwrap().luid, 4);
+}
+fn ethernet_and_wifi() -> Vec<Adapter> {
+    vec![
+        Adapter {
+            id: "d3ae43d2-8203-41d6-9d7f-0b6fa59518fd".into(),
+            name: "Ethernet".into(),
+            kind: "Ethernet".into(),
+            connected: false,
+            luid: 7,
+            ipv4: true,
+            ..Default::default()
+        },
+        Adapter {
+            id: "aa6f3b88-072a-45b6-b0cb-8afe9567e62f".into(),
+            name: "Wi-Fi".into(),
+            kind: "Wireless80211".into(),
+            connected: true,
+            luid: 9,
+            ipv4: true,
+            ipv6: true,
+            ..Default::default()
+        },
+    ]
+}
+#[test]
+fn older_rules_without_fallback_mode_keep_failing_open_and_new_field_roundtrips() {
+    // A .NET file may carry fallbackInterfaceId, which was never acted on.
+    let json = r#"[{"applicationId":"a.exe","executablePath":"C:\\a.exe","routeMode":"Ethernet","fallbackInterfaceId":"aa6f3b88-072a-45b6-b0cb-8afe9567e62f"}]"#;
+    let policies: Vec<RoutingPolicy> = serde_json::from_str(json).unwrap();
+    assert_eq!(policies[0].fallback_route_mode, RouteMode::Automatic);
+    // Without a fallback the field is not written: same output as the .NET reference.
+    assert!(
+        !serde_json::to_string(&policies)
+            .unwrap()
+            .contains("fallbackRouteMode")
+    );
+    let rule = &plan(&policies, &ethernet_and_wifi())[0];
+    assert_eq!(rule.mode, RouteMode::Automatic);
+    assert!(rule.detail.contains("política retirada"));
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("rules.json");
+    let file = PolicyFile::new(&path);
+    let mut policy = RoutingPolicy::new("C:\\a.exe");
+    policy.route_mode = RouteMode::Ethernet;
+    policy.fallback_route_mode = RouteMode::Blocked;
+    file.save(&[policy], None).unwrap();
+    assert_eq!(
+        file.load().unwrap().policies[0].fallback_route_mode,
+        RouteMode::Blocked
+    );
+    let numeric: Vec<RoutingPolicy> =
+        serde_json::from_str(r#"[{"applicationId":"a.exe","FALLBACKROUTEMODE":2}]"#).unwrap();
+    assert_eq!(numeric[0].fallback_route_mode, RouteMode::WiFi);
+}
+#[test]
+fn fallback_applies_only_while_the_chosen_interface_is_unavailable() {
+    let mut adapters = ethernet_and_wifi();
+    let mut policy = RoutingPolicy::new("C:\\a.exe");
+    policy.route_mode = RouteMode::Ethernet;
+    policy.fallback_route_mode = RouteMode::WiFi;
+
+    let rule = &plan(&[policy.clone()], &adapters)[0];
+    assert_eq!((rule.mode, rule.luid), (RouteMode::WiFi, 9));
+    assert_eq!(rule.interface_id.as_deref(), Some(adapters[1].id.as_str()));
+    assert!(rule.ipv6, "Família do adaptador de reserva.");
+    assert!(rule.detail.contains("reserva Wi-Fi"));
+
+    adapters[0].connected = true;
+    let rule = &plan(&[policy.clone()], &adapters)[0];
+    assert_eq!((rule.mode, rule.luid), (RouteMode::Ethernet, 7));
+
+    // Disabled rules and Automatic rules ignore the fallback.
+    adapters[0].connected = false;
+    let mut disabled = policy.clone();
+    disabled.enabled = false;
+    assert_eq!(plan(&[disabled], &adapters)[0].mode, RouteMode::Automatic);
+    let mut automatic = policy.clone();
+    automatic.route_mode = RouteMode::Automatic;
+    assert_eq!(plan(&[automatic], &adapters)[0].mode, RouteMode::Automatic);
+}
+#[test]
+fn unavailable_fallback_fails_open_and_block_fallback_blocks() {
+    let mut adapters = ethernet_and_wifi();
+    let mut policy = RoutingPolicy::new("C:\\a.exe");
+    policy.route_mode = RouteMode::Ethernet;
+    policy.fallback_route_mode = RouteMode::WiFi;
+    // A pinned fallback is never replaced by another adapter of the same type.
+    policy.fallback_interface_id = Some("5c7e2f0a-1111-4222-8333-944455556666".into());
+    let rule = &plan(&[policy.clone()], &adapters)[0];
+    assert_eq!(rule.mode, RouteMode::Automatic);
+    assert!(rule.detail.contains("reserva ausentes"));
+
+    policy.fallback_interface_id = None;
+    adapters[1].connected = false;
+    assert_eq!(
+        plan(&[policy.clone()], &adapters)[0].mode,
+        RouteMode::Automatic
+    );
+
+    policy.fallback_route_mode = RouteMode::Blocked;
+    let rule = &plan(&[policy.clone()], &adapters)[0];
+    assert_eq!((rule.mode, rule.luid), (RouteMode::Blocked, 0));
+    assert!(rule.ipv4 && rule.ipv6);
+    assert!(rule.detail.contains("bloqueio"));
+
+    // Same-type fallback without a pinned primary can never take over.
+    policy.fallback_route_mode = RouteMode::Ethernet;
+    assert_eq!(plan(&[policy], &adapters)[0].mode, RouteMode::Automatic);
+}
+#[test]
+fn steam_helpers_inherit_the_fallback() {
+    let mut steam = RoutingPolicy::new("C:\\Steam\\steam.exe");
+    steam.route_mode = RouteMode::Ethernet;
+    steam.fallback_route_mode = RouteMode::WiFi;
+    let expanded = expand_related(&[steam], |_| true);
+    assert!(expanded.len() > 1);
+    let rules = plan(&expanded, &ethernet_and_wifi());
+    assert!(
+        rules
+            .iter()
+            .all(|r| (r.mode, r.luid) == (RouteMode::WiFi, 9))
+    );
 }
 #[test]
 fn explicit_disabled_companion_wins_and_arbitrary_children_are_not_inherited() {

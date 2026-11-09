@@ -13,6 +13,7 @@ $fixtures = @(
     @{Name='empty'; Json='[]'; Valid=$true; Bom=$false},
     @{Name='numeric-pascal'; Json='[{"ApplicationId":"app.exe","ExecutablePath":"C:\\Apps\\app.exe","RouteMode":2,"InterfaceId":"{AA6F3B88-072A-45B6-B0CB-8AFE9567E62F}","FallbackInterfaceId":"D3AE43D2-8203-41D6-9D7F-0B6FA59518FD","futureSetting":{"value":42}}]'; Valid=$true; Bom=$false},
     @{Name='string-bom'; Json='[{"applicationId":"other.exe","routeMode":"Blocked","enabled":false,"includeRelatedExecutables":false}]'; Valid=$true; Bom=$true},
+    @{Name='fallback-mode'; Json='[{"applicationId":"fallback.exe","routeMode":"Ethernet","fallbackRouteMode":"WiFi"}]'; Valid=$true; Bom=$false},
     @{Name='mixed-case'; Json='[{"APPLICATIONID":"mixed.exe","ROUTEMODE":"wifi","ENABLED":true}]'; Valid=$true; Bom=$false},
     @{Name='null'; Json='null'; Valid=$false; Bom=$false},
     @{Name='invalid-mode'; Json='[{"applicationId":"app.exe","routeMode":99}]'; Valid=$false; Bom=$false},

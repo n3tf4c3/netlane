@@ -1,4 +1,4 @@
-use crate::{Adapter, RouteMode, RoutingPolicy, resolve_interface};
+use crate::{Adapter, RouteMode, RoutingPolicy, resolve_fallback_interface, resolve_interface};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -16,28 +16,36 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
     policies
         .iter()
         .map(|p| {
-            let target = resolve_interface(p, adapters);
+            let primary = resolve_interface(p, adapters);
             let actionable = p.enabled && p.route_mode != RouteMode::Automatic;
-            let detail = if !actionable {
-                "Windows decide; remover política NetLane.".to_owned()
+            let (mode, target, detail) = if !actionable {
+                (
+                    RouteMode::Automatic,
+                    primary,
+                    "Windows decide; remover política NetLane.".to_owned(),
+                )
             } else if p.route_mode == RouteMode::Blocked {
-                "Bloqueio IPv4/IPv6 solicitado.".to_owned()
-            } else if let Some(a) = target {
-                format!(
-                    "Saída solicitada: {}. Tráfego ainda não verificado.",
-                    a.name
+                (
+                    RouteMode::Blocked,
+                    primary,
+                    "Bloqueio IPv4/IPv6 solicitado.".to_owned(),
+                )
+            } else if let Some(a) = primary {
+                (
+                    p.route_mode,
+                    Some(a),
+                    format!(
+                        "Saída solicitada: {}. Tráfego ainda não verificado.",
+                        a.name
+                    ),
                 )
             } else {
-                "Interface selecionada ausente/desconectada; política retirada.".to_owned()
+                fallback(p, adapters)
             };
             PlannedRule {
                 application: p.application_id.clone(),
                 executable: p.executable_path.clone(),
-                mode: if actionable && (p.route_mode == RouteMode::Blocked || target.is_some()) {
-                    p.route_mode
-                } else {
-                    RouteMode::Automatic
-                },
+                mode,
                 interface_id: target.map(|a| a.id.clone()),
                 luid: target.map_or(0, |a| a.luid),
                 ipv4: target.is_none_or(|a| a.ipv4),
@@ -46,6 +54,45 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
             }
         })
         .collect()
+}
+/// The rule's chosen Ethernet/Wi-Fi interface is absent or disconnected. Without a
+/// fallback, Windows decides (fail open). The plan is rebuilt every cycle, so the
+/// primary interface takes over again as soon as it reconnects.
+fn fallback<'a>(
+    p: &RoutingPolicy,
+    adapters: &'a [Adapter],
+) -> (RouteMode, Option<&'a Adapter>, String) {
+    match p.fallback_route_mode {
+        RouteMode::Automatic => (
+            RouteMode::Automatic,
+            None,
+            "Interface selecionada ausente/desconectada; política retirada.".to_owned(),
+        ),
+        RouteMode::Blocked => (
+            RouteMode::Blocked,
+            None,
+            "Interface selecionada ausente/desconectada; bloqueio IPv4/IPv6 da reserva ativo."
+                .to_owned(),
+        ),
+        mode @ (RouteMode::Ethernet | RouteMode::WiFi) => {
+            match resolve_fallback_interface(p, adapters) {
+                Some(a) => (
+                    mode,
+                    Some(a),
+                    format!(
+                        "Interface selecionada ausente/desconectada; saída pela reserva {}. Tráfego ainda não verificado.",
+                        a.name
+                    ),
+                ),
+                None => (
+                    RouteMode::Automatic,
+                    None,
+                    "Interface selecionada e reserva ausentes/desconectadas; política retirada."
+                        .to_owned(),
+                ),
+            }
+        }
+    }
 }
 /// Actionable rules whose executable is not a present local file fall back to Windows'
 /// choice. `exists` is never called for a remote or device path.
