@@ -92,6 +92,21 @@ impl TrayState {
 fn wide(s: &str) -> Vec<u16> {
     s.encode_utf16().chain(Some(0)).collect()
 }
+/// Copies `text` as nul-terminated UTF-16 into a fixed Win32 buffer, ending with "…"
+/// when it does not fit and never splitting a surrogate pair.
+fn fill_truncated(target: &mut [u16], text: &str) {
+    let capacity = target.len() - 1;
+    let mut units: Vec<u16> = text.encode_utf16().collect();
+    if units.len() > capacity {
+        units.truncate(capacity - 1);
+        if units.last().is_some_and(|u| (0xD800..0xDC00).contains(u)) {
+            units.pop();
+        }
+        units.push('…' as u16);
+    }
+    target[..units.len()].copy_from_slice(&units);
+    target[units.len()..].fill(0);
+}
 /// `model` is the state the menu was built from, so a profile id names the profile
 /// the user saw.
 fn action(model: &TrayState, id: usize) -> Option<TrayAction> {
@@ -244,7 +259,11 @@ unsafe extern "system" fn window_proc(hwnd: HWND, message: u32, w: WPARAM, l: LP
             let event = (l as u32) & 0xffff;
             if event == WM_CONTEXTMENU {
                 state.popup();
-            } else if event == NIN_SELECT || event == (NIN_SELECT | 1) || event == WM_LBUTTONUP {
+            } else if event == NIN_SELECT
+                || event == (NIN_SELECT | 1)
+                || event == WM_LBUTTONUP
+                || event == NIN_BALLOONUSERCLICK
+            {
                 let _ = state.sender.send(TrayAction::Open);
             }
             return 0;
@@ -332,6 +351,21 @@ impl Tray {
     }
     pub fn available(&self) -> bool {
         self.state.available.get()
+    }
+    /// Shows a notification from the tray icon (a toast on Windows 10/11), honoring
+    /// Windows quiet hours. Clicking it opens the panel. Returns whether Windows
+    /// accepted it.
+    pub fn notify(&self, title: &str, body: &str, warning: bool) -> bool {
+        if !self.available() {
+            return false;
+        }
+        let mut data = self.state.data();
+        data.uFlags = NIF_INFO;
+        fill_truncated(&mut data.szInfoTitle, title);
+        fill_truncated(&mut data.szInfo, body);
+        data.dwInfoFlags = if warning { NIIF_WARNING } else { NIIF_INFO } | NIIF_RESPECT_QUIET_TIME;
+        // SAFETY: modifies only this process's own icon; data is fully initialized.
+        unsafe { Shell_NotifyIconW(NIM_MODIFY, &data) != 0 }
     }
     pub fn take_action(&self) -> Option<TrayAction> {
         self.receiver.try_recv().ok()
@@ -489,6 +523,24 @@ mod tests {
             !rows.iter().any(|r| r.1 == "Perfil"),
             "Um perfil só: sem lista."
         );
+    }
+    #[test]
+    fn notification_text_fits_win32_buffers_without_splitting_characters() {
+        let mut title = [0xFFFFu16; 64];
+        fill_truncated(&mut title, "Curto");
+        assert_eq!(String::from_utf16_lossy(&title[..5]), "Curto");
+        assert!(title[5..].iter().all(|u| *u == 0));
+        // 61 ASCII units put the emoji's high surrogate exactly at the cut point.
+        let long = format!("{}😀 fim", "a".repeat(61));
+        fill_truncated(&mut title, &long);
+        let end = title.iter().position(|u| *u == 0).unwrap();
+        let text = String::from_utf16(&title[..end]).expect("sem metade de par");
+        assert!(text.ends_with('…'));
+        assert!(end <= 63);
+        let mut body = [0u16; 256];
+        fill_truncated(&mut body, &"x".repeat(1000));
+        assert_eq!(body[254], '…' as u16);
+        assert_eq!(body[255], 0);
     }
     #[test]
     fn profiles_are_listed_with_the_active_one_checked_and_resolve_by_menu_snapshot() {

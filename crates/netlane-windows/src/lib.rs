@@ -16,4 +16,6 @@ pub mod session;
 #[cfg(windows)]
 pub mod startup;
 #[cfg(windows)]
+pub mod usage;
+#[cfg(windows)]
 pub mod wfp;

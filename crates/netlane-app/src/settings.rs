@@ -12,6 +12,9 @@ pub struct Settings {
     pub sidebar_width: u16,
     /// Icon-only navigation rail.
     pub sidebar_collapsed: bool,
+    /// Tray notifications when a rule moves to its fallback, loses its interface or
+    /// returns to it. On by default, also for files written before the option.
+    pub notifications: bool,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -21,6 +24,7 @@ impl Default for Settings {
             compact: true,
             sidebar_width: 200,
             sidebar_collapsed: false,
+            notifications: true,
         }
     }
 }
@@ -76,6 +80,8 @@ mod tests {
         assert_eq!(settings.value.sidebar_width, 180);
         // Files written before the collapsible menu keep the full menu.
         assert!(!settings.value.sidebar_collapsed);
+        // Files written before notifications existed keep them on.
+        assert!(settings.value.notifications);
         std::fs::write(&path, r#"{"sidebar_collapsed":true}"#).unwrap();
         assert!(AppSettings::load(path).unwrap().value.sidebar_collapsed);
     }

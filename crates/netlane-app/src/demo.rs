@@ -91,3 +91,59 @@ pub fn profiles(current: &[RoutingPolicy]) -> netlane_core::profiles::Profiles {
         ],
     }
 }
+/// Fictitious data usage; larger periods scale the same mix.
+pub fn usage(period: netlane_core::usage::Period) -> Vec<netlane_core::usage::NetworkUsage> {
+    use netlane_core::usage::{AppBytes, NetworkKind, NetworkUsage, Period};
+    let scale = match period {
+        Period::Today => 1,
+        Period::Week => 6,
+        Period::Month => 23,
+    };
+    let app = |id: &str, path: Option<&str>, received: u64, sent: u64| AppBytes {
+        id: id.to_owned(),
+        path: path.map(str::to_owned),
+        received: received * scale,
+        sent: sent * scale,
+    };
+    vec![
+        NetworkUsage {
+            name: "Rede cabeada".to_owned(),
+            kind: NetworkKind::Wired,
+            apps: vec![
+                app(
+                    r"\device\harddiskvolume3\demo\navegador.exe",
+                    Some(r"C:\Demo\Navegador.exe"),
+                    3_840_000_000,
+                    212_000_000,
+                ),
+                app(
+                    r"\device\harddiskvolume3\demo\jogos.exe",
+                    Some(r"C:\Demo\Jogos.exe"),
+                    11_200_000_000,
+                    96_000_000,
+                ),
+                app("System", None, 42_000_000, 18_000_000),
+                app("", None, 156_000_000, 21_000_000),
+            ],
+        },
+        NetworkUsage {
+            name: "Casa 5G".to_owned(),
+            kind: NetworkKind::WiFi,
+            apps: vec![
+                app(
+                    r"\device\harddiskvolume3\demo\sincronização.exe",
+                    Some(r"C:\Demo\Sincronização.exe"),
+                    1_260_000_000,
+                    2_480_000_000,
+                ),
+                app(
+                    r"\device\harddiskvolume3\demo\navegador.exe",
+                    Some(r"C:\Demo\Navegador.exe"),
+                    310_000_000,
+                    24_000_000,
+                ),
+                app("Demo.Mensagens_0demo0000000", None, 188_000_000, 61_000_000),
+            ],
+        },
+    ]
+}

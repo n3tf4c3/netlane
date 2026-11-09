@@ -171,6 +171,49 @@ Provas: lógica, arquivo e troca em disco (incluindo a restauração) cobertos p
 testes em pasta temporária; menu da bandeja testado pelo modelo de linhas. A
 aparência da barra e os cliques reais na bandeja continuam pendentes de QA na VM.
 
+## Notificações de interface (2026-11-09)
+
+Com sessão ativa, a bandeja mostra uma notificação do Windows quando uma regra do
+usuário passa para a reserva (ou para o bloqueio da reserva), fica sem a interface
+escolhida (o Windows decide) ou volta a ela. Mudanças do mesmo ciclo viram um só
+aviso, com até quatro linhas e "e mais N regras"; auxiliares do Steam não aparecem.
+Clicar no aviso abre o painel. O primeiro plano da sessão não avisa, e o plano que
+chega até 15 s depois de Salvar ou trocar de perfil vira a nova referência sem aviso,
+porque reflete a edição e não uma queda. **Configurações → Avisar mudanças de
+interface** desliga os avisos (ligado por padrão, também em `appearance.json` antigo).
+As notificações respeitam o modo não perturbe do Windows.
+
+Cada regra planejada traz `state` (`Inactive`, `Applied`, `Fallback`, `Unavailable`,
+`Missing`) no canal do agente; um agente sem o campo lê como `Inactive` e não gera
+avisos. Provas: transições, resumo, silêncio após edição e corte do texto UTF-16
+cobertos por testes; a exibição real do aviso e o clique continuam pendentes de QA na VM.
+
+## Consumo por aplicativo (2026-11-09)
+
+A página **Consumo** mostra o total, o recebido/enviado e a soma por tipo de rede
+(Ethernet, Wi-Fi, celular), cada rede do Windows (cada SSID é uma rede) e os
+aplicativos com barra, ícone, `↓/↑` e, quando o período usou mais de um tipo de rede,
+a divisão por tipo, útil para conferir se uma regra levou o app à interface escolhida.
+Apps com regra recebem o selo "com regra". Períodos: Hoje (desde a meia-noite local),
+7 dias e 30 dias.
+
+A fonte é o histórico que o próprio Windows mantém
+(`ConnectionProfile.GetAttributedNetworkUsageAsync`, o mesmo de Configurações › Rede e
+Internet › Uso de dados): cobre também o tempo com o NetLane fechado, não exige
+elevação, agente, captura nem driver, e funciona no portátil. Programas Win32 chegam
+como caminho NT (`\device\harddiskvolumeN\…`), convertido para letra de unidade com
+`QueryDosDeviceW`; apps da Store chegam pelo nome do pacote; `System` e `System\…`
+somam como "Windows (sistema)", e o tráfego sem programa aparece como "Não
+identificado". A leitura roda em segundo plano só com a página aberta, no máximo uma
+vez por minuto (ou em **Atualizar**). Ensaio da API no Windows Sandbox (09/11/2026,
+via PowerShell): a soma por app coincidiu com o total da rede, o download de teste
+apareceu atribuído ao `powershell.exe` e a leitura funcionou com token sem
+administrador. Os binários Rust sem assinatura foram bloqueados pelo Smart App Control
+do Sandbox (como nas rodadas anteriores; a proteção foi preservada), então a tela e a
+leitura pelo código Rust ficam para a VM. Provas: fusão entre redes, divisão por tipo,
+nomes, formatação e mapeamento de volume (`volume1` ≠ `volume12`) cobertos por
+testes; a captura `26-usage-dark.png` entra na prova visual (22 cenas).
+
 ## Bandeja e inicialização (2026-10-10)
 
 O painel Rust usa o ícone da identidade NetLane com `Shell_NotifyIconW` e menu nativo do

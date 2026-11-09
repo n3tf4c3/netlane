@@ -156,6 +156,10 @@ pub fn start(window: WindowHandle<Workspace>, directory: PathBuf, cx: &mut App) 
                 cx.background_executor().timer(Duration::from_millis(450)).await;
                 cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join(name)).unwrap();}).unwrap();
             }
+            // Consumo with the fictitious usage: per-type tiles, networks and app bars.
+            this.update(cx,|ws,cx|{ws.page=Page::Usage;Themes::set_active(cx,"NetLane Dark");ws.refresh_usage(true,cx);assert!(ws.proof_usage_ready());}).unwrap();
+            cx.background_executor().timer(Duration::from_millis(450)).await;
+            cx.update(|w,cx|{w.refresh();w.draw(cx).clear(cx);w.render_to_image().unwrap().save(directory.join("26-usage-dark.png")).unwrap();}).unwrap();
             // Changing a row to a remote path immediately removes its old image, without I/O.
             this.update(cx,|ws,cx|{ws.page=Page::Rules;ws.proof_icon_remote_fallback(cx);}).unwrap();
             cx.background_executor().timer(Duration::from_millis(450)).await;

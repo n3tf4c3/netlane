@@ -30,6 +30,7 @@ pub fn icon(name: &'static str, size: f32, color: Hsla) -> impl IntoElement {
         "warning" => "icons/warning.svg",
         "tune" => "icons/tune.svg",
         "arrow_downward" => "icons/arrow_downward.svg",
+        "bar_chart" => "icons/bar_chart.svg",
         "arrow_upward" => "icons/arrow_upward.svg",
         "check_box" => "icons/check_box.svg",
         "check_box_outline_blank" => "icons/check_box_outline_blank.svg",

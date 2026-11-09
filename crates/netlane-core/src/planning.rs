@@ -1,6 +1,22 @@
 use crate::{Adapter, RouteMode, RoutingPolicy, resolve_fallback_interface, resolve_interface};
 use serde::{Deserialize, Serialize};
 
+/// Why a planned rule has its mode, for the panel and notifications.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PlanState {
+    /// Disabled or Automatic rule: Windows decides by choice. Also the value read
+    /// from an agent that predates this field, so it never triggers a notification.
+    #[default]
+    Inactive,
+    /// Applied as the user chose (interface or block).
+    Applied,
+    /// The chosen interface is unavailable and the rule's fallback is applied.
+    Fallback,
+    /// The chosen interface (and any fallback) is unavailable: Windows decides.
+    Unavailable,
+    /// Executable missing or remote: Windows decides.
+    Missing,
+}
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PlannedRule {
     pub application: String,
@@ -11,6 +27,8 @@ pub struct PlannedRule {
     pub ipv4: bool,
     pub ipv6: bool,
     pub detail: String,
+    #[serde(default)]
+    pub state: PlanState,
 }
 pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule> {
     policies
@@ -18,17 +36,19 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
         .map(|p| {
             let primary = resolve_interface(p, adapters);
             let actionable = p.enabled && p.route_mode != RouteMode::Automatic;
-            let (mode, target, detail) = if !actionable {
+            let (mode, target, detail, state) = if !actionable {
                 (
                     RouteMode::Automatic,
                     primary,
                     "Windows decide; remover política NetLane.".to_owned(),
+                    PlanState::Inactive,
                 )
             } else if p.route_mode == RouteMode::Blocked {
                 (
                     RouteMode::Blocked,
                     primary,
                     "Bloqueio IPv4/IPv6 solicitado.".to_owned(),
+                    PlanState::Applied,
                 )
             } else if let Some(a) = primary {
                 (
@@ -38,6 +58,7 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
                         "Saída solicitada: {}. Tráfego ainda não verificado.",
                         a.name
                     ),
+                    PlanState::Applied,
                 )
             } else {
                 fallback(p, adapters)
@@ -51,6 +72,7 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
                 ipv4: target.is_none_or(|a| a.ipv4),
                 ipv6: target.is_none_or(|a| a.ipv6),
                 detail,
+                state,
             }
         })
         .collect()
@@ -61,18 +83,20 @@ pub fn plan(policies: &[RoutingPolicy], adapters: &[Adapter]) -> Vec<PlannedRule
 fn fallback<'a>(
     p: &RoutingPolicy,
     adapters: &'a [Adapter],
-) -> (RouteMode, Option<&'a Adapter>, String) {
+) -> (RouteMode, Option<&'a Adapter>, String, PlanState) {
     match p.fallback_route_mode {
         RouteMode::Automatic => (
             RouteMode::Automatic,
             None,
             "Interface selecionada ausente/desconectada; política retirada.".to_owned(),
+            PlanState::Unavailable,
         ),
         RouteMode::Blocked => (
             RouteMode::Blocked,
             None,
             "Interface selecionada ausente/desconectada; bloqueio IPv4/IPv6 da reserva ativo."
                 .to_owned(),
+            PlanState::Fallback,
         ),
         mode @ (RouteMode::Ethernet | RouteMode::WiFi) => {
             match resolve_fallback_interface(p, adapters) {
@@ -83,12 +107,14 @@ fn fallback<'a>(
                         "Interface selecionada ausente/desconectada; saída pela reserva {}. Tráfego ainda não verificado.",
                         a.name
                     ),
+                    PlanState::Fallback,
                 ),
                 None => (
                     RouteMode::Automatic,
                     None,
                     "Interface selecionada e reserva ausentes/desconectadas; política retirada."
                         .to_owned(),
+                    PlanState::Unavailable,
                 ),
             }
         }
@@ -106,6 +132,7 @@ pub fn retire_missing(rules: &mut [PlannedRule], exists: impl Fn(&str) -> bool) 
         {
             rule.mode = RouteMode::Automatic;
             rule.detail = "Executável ausente ou remoto; política retirada.".to_owned();
+            rule.state = PlanState::Missing;
         }
     }
 }

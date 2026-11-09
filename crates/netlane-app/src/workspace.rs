@@ -4,6 +4,7 @@ use crate::{
     desktop::Desktop,
     executable_icons::ExecutableIcons,
     lifecycle::{ExitDecision, exit_decision},
+    notifications::Alerts,
     packet_view::PacketView,
     scrollbar::ScrollbarExt,
     settings::{AppSettings, Settings},
@@ -30,6 +31,8 @@ use std::{
 mod default_connection_view;
 #[path = "quality_view.rs"]
 mod quality_view;
+#[path = "usage_view.rs"]
+mod usage_view;
 
 /// Portable builds may run from any user-writable folder (Downloads, USB). They never
 /// launch the elevated agent, so a planted or replaced executable cannot ride the UAC
@@ -71,6 +74,7 @@ pub enum Page {
     Overview,
     Packets,
     Connections,
+    Usage,
     Rules,
     Diagnostics,
     Settings,
@@ -81,6 +85,7 @@ impl Page {
             Self::Overview => "Visão geral",
             Self::Packets => "Pacotes",
             Self::Connections => "Conexões",
+            Self::Usage => "Consumo",
             Self::Rules => "Regras",
             Self::Diagnostics => "Diagnóstico",
             Self::Settings => "Configurações",
@@ -91,6 +96,7 @@ impl Page {
             Self::Overview => "lan",
             Self::Packets => "search",
             Self::Connections => "desktop_windows",
+            Self::Usage => "bar_chart",
             Self::Rules => "tune",
             Self::Diagnostics => "info",
             Self::Settings => "settings",
@@ -115,6 +121,7 @@ pub struct Workspace {
     executable: Entity<TextInput>,
     selected: Vec<String>,
     traffic: TrafficTracker,
+    usage: usage_view::UsageView,
     icons: ExecutableIcons,
     quality: netlane_core::quality::Monitor,
     quality_preferences: netlane_core::quality::Settings,
@@ -155,6 +162,7 @@ pub struct Workspace {
     #[cfg(feature = "gui-test")]
     proof_session: Option<netlane_agent::SessionState>,
     profiles: ProfileState,
+    alerts: Alerts,
 }
 /// Rule profiles. `netlane-rules.json` holds the active profile's rules; the store
 /// keeps a copy of each profile and is written only after a profile is created.
@@ -615,6 +623,7 @@ impl Workspace {
             executable,
             selected,
             traffic: TrafficTracker::default(),
+            usage: Default::default(),
             icons: ExecutableIcons::new(!is_demo),
             quality: netlane_core::quality::Monitor::default(),
             quality_preferences,
@@ -658,6 +667,7 @@ impl Workspace {
             packet_dialog,
             capture_active,
             hide_pending: false,
+            alerts: Alerts::default(),
             #[cfg(feature = "gui-test")]
             proof_session: None,
         };
@@ -666,7 +676,13 @@ impl Workspace {
         cx.spawn(async move |this, cx| {
             loop {
                 cx.background_executor().timer(Duration::from_secs(1)).await;
-                if this.update(cx, |ws, cx| ws.refresh_quality(cx)).is_err() {
+                if this
+                    .update(cx, |ws, cx| {
+                        ws.refresh_quality(cx);
+                        ws.refresh_usage(false, cx);
+                    })
+                    .is_err()
+                {
                     break;
                 }
             }
@@ -748,6 +764,7 @@ impl Workspace {
                 self.dirty = false;
                 self.error = None;
                 // The elevated session applies only rules sent by this panel.
+                self.alerts.hush();
                 let sent = self
                     .controller
                     .as_ref()
@@ -939,6 +956,7 @@ impl Workspace {
             }
         }
         // The elevated session applies only rules sent by this panel.
+        self.alerts.hush();
         match self
             .controller
             .as_ref()
@@ -1577,8 +1595,42 @@ impl Workspace {
             desktop.restore();
         }
     }
+    /// Tray notification when the running session's new plan moves one of the user's
+    /// rules to its fallback, off its interface, or back to it.
+    fn notify_rule_changes(&mut self, cx: &App) {
+        let session = self.session_state();
+        let Some(previous) = self
+            .alerts
+            .advance(session.running, &session.rules, Instant::now())
+        else {
+            return;
+        };
+        if !AppSettings::get(cx).notifications {
+            return;
+        }
+        let alert = netlane_core::alerts::rule_alert(
+            &previous,
+            &session.rules,
+            |app| {
+                self.policies
+                    .iter()
+                    .any(|p| p.application_id.eq_ignore_ascii_case(app))
+            },
+            |id| {
+                self.snapshot
+                    .adapters
+                    .iter()
+                    .find(|a| netlane_core::same_interface(&a.id, id))
+                    .map(|a| a.name.clone())
+            },
+        );
+        if let (Some(alert), Some(desktop)) = (alert, &self.desktop) {
+            desktop.notify(&alert);
+        }
+    }
     fn poll_desktop(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         use netlane_windows::desktop::TrayAction;
+        self.notify_rule_changes(cx);
         let state = self.tray_state();
         let actions = self
             .desktop
@@ -2031,6 +2083,7 @@ impl Workspace {
                 .iter()
                 .filter_map(|p| p.executable_path.clone())
                 .collect(),
+            Page::Usage => self.usage_icon_paths(),
             Page::Connections => {
                 let rows = self.connection_rows(cx);
                 let page = self.connection_page.min(rows.len().saturating_sub(1) / 50);
@@ -2806,6 +2859,9 @@ impl Workspace {
             .child(div().p(px(20.)).bg(t.panel).rounded(px(6.)).border_1().border_color(t.border).flex().flex_col().gap(px(12.))
                 .child(div().font_weight(FontWeight::SEMIBOLD).child("Bandeja e inicialização"))
                 .child(div().text_color(t.text_muted).child("X e Minimizar mantêm o painel na bandeja, com suas edições. Use Sair para encerrar com segurança."))
+                .child(self.button("notifications",if settings.notifications { "✓ Avisar mudanças de interface" } else { "Avisar mudanças de interface" },cx)
+                    .on_click(cx.listener(|ws,_,_,cx|ws.change_settings(cx,|s|s.notifications = !s.notifications))))
+                .child(div().text_color(t.text_muted).child("Com a sessão ativa, a bandeja avisa quando uma regra passa para a reserva, fica sem a interface escolhida ou volta a ela. Respeita o modo não perturbe do Windows."))
                 .child(self.button("startup",if self.startup_enabled { "✓ Abrir com o Windows" } else { "Abrir com o Windows" },cx)
                     .when(self.startup_registration.as_ref().is_none_or(|r|!r.available()),|d|d.text_color(t.text_disabled).cursor_default())
                     .on_click(cx.listener(|ws,_,_,cx|ws.toggle_startup(cx))))
@@ -2842,6 +2898,7 @@ impl Render for Workspace {
             Page::Overview,
             Page::Packets,
             Page::Connections,
+            Page::Usage,
             Page::Rules,
             Page::Diagnostics,
             Page::Settings,
@@ -2882,6 +2939,7 @@ impl Render for Workspace {
                         }
                         ws.page = page;
                         ws.connection_page = 0;
+                        ws.refresh_usage(false, cx);
                         cx.notify();
                     }))
                     .child(icon(
@@ -2927,6 +2985,7 @@ impl Render for Workspace {
             Page::Overview => self.overview(cx),
             Page::Packets => div().child(self.packets.clone()),
             Page::Connections => self.connections(cx),
+            Page::Usage => self.usage_page(cx),
             Page::Rules => self.rules(cx),
             Page::Diagnostics => self.diagnostics(cx),
             Page::Settings => self.settings(cx),

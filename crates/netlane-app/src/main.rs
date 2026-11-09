@@ -9,6 +9,7 @@ mod lifecycle;
 mod live_capture;
 #[cfg(feature = "gui-test")]
 mod loopback_qa;
+mod notifications;
 mod packet_view;
 #[cfg(feature = "gui-test")]
 mod proof;

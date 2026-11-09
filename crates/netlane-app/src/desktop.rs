@@ -40,6 +40,11 @@ impl Desktop {
     pub fn restore(&self) {
         self.panel.restore();
     }
+    pub fn notify(&self, alert: &netlane_core::alerts::Alert) -> bool {
+        self.tray
+            .as_ref()
+            .is_some_and(|t| t.notify(&alert.title, &alert.body, alert.warning))
+    }
     pub fn poll(&mut self, state: TrayState) -> Vec<TrayAction> {
         let Some(tray) = &self.tray else {
             return vec![];
